@@ -1,0 +1,3 @@
+sounddevice
+numpy
+google-generativeai
