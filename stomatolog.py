@@ -138,6 +138,12 @@ class StomatologApp:
             command=lambda: self._copy_to_clipboard(self.transcript_text)
         ).pack(side=tk.RIGHT)
 
+        ttk.Button(
+            trans_btn_row,
+            text="🗑️ Wyczyść",
+            command=lambda: self.transcript_text.delete("1.0", tk.END)
+        ).pack(side=tk.RIGHT, padx=(0, 5))
+
         self.transcript_text = tk.Text(trans_frame, height=6, wrap=tk.WORD)
         self.transcript_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
@@ -316,9 +322,14 @@ class StomatologApp:
                 pass
 
     def _set_transcript(self, text):
-        """Ustawia tekst transkrypcji."""
-        self.transcript_text.delete("1.0", tk.END)
-        self.transcript_text.insert("1.0", text)
+        """Dopisuje tekst transkrypcji na końcu."""
+        current = self.transcript_text.get("1.0", tk.END).strip()
+        if current:
+            # Dopisz z nową linią
+            self.transcript_text.insert(tk.END, "\n" + text)
+        else:
+            # Pierwsze nagranie
+            self.transcript_text.insert("1.0", text)
 
     def _update_status(self, status):
         """Aktualizuje status (thread-safe)."""
