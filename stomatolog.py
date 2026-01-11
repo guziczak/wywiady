@@ -36,6 +36,15 @@ except ImportError:
     types = None
     GENAI_AVAILABLE = False
 
+# Import modułu transkrypcji
+try:
+    from core.transcriber import TranscriberManager, TranscriberType
+    TRANSCRIBER_MANAGER_AVAILABLE = True
+except ImportError:
+    TranscriberManager = None
+    TranscriberType = None
+    TRANSCRIBER_MANAGER_AVAILABLE = False
+
 # Import proxy z claude-code-py
 import sys
 sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
@@ -104,6 +113,18 @@ def load_claude_token():
         return None
 
 
+# ========== DEBUG LOG ==========
+DEBUG_LOG = Path(__file__).parent / "debug.log"
+
+def debug_log(msg):
+    """Zapisuje debug do pliku."""
+    with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+        f.write(f"{msg}\n")
+
+# Wyczyść log przy starcie
+if DEBUG_LOG.exists():
+    DEBUG_LOG.unlink()
+
 # ========== GŁÓWNA APLIKACJA ==========
 
 def main(page: ft.Page):
@@ -129,6 +150,22 @@ def main(page: ft.Page):
     sample_rate = 16000
     stream_ref = {"stream": None}
     proxy_state = {"started": False, "port": None}
+
+    # Inicjalizacja managera transkrypcji
+    transcriber_manager = TranscriberManager() if TRANSCRIBER_MANAGER_AVAILABLE else None
+    if transcriber_manager:
+        # Ustaw API key z config
+        transcriber_manager.set_gemini_api_key(config.get("api_key", ""))
+        # Przywróć poprzednio wybrany backend
+        saved_backend = config.get("transcriber_backend", "gemini_cloud")
+        try:
+            transcriber_manager.set_current_backend(TranscriberType(saved_backend))
+        except (ValueError, KeyError):
+            pass
+        # Przywróć wybrany model
+        saved_model = config.get("transcriber_model", "small")
+        current_backend = transcriber_manager.get_current_backend()
+        current_backend.set_model(saved_model)
 
     # === KOMPONENTY UI ===
 
@@ -297,6 +334,25 @@ def main(page: ft.Page):
     record_button.on_click = toggle_recording
 
     def transcribe_audio(audio_path):
+        # Użyj TranscriberManager jeśli dostępny
+        if transcriber_manager:
+            # Zaktualizuj API key
+            api_key = gemini_key_field.value.strip() if gemini_key_field.value else ""
+            transcriber_manager.set_gemini_api_key(api_key)
+
+            try:
+                transcript = transcriber_manager.transcribe(audio_path, language="pl")
+                page.run_thread(lambda: update_after_transcription(None, transcript))
+            except Exception as ex:
+                page.run_thread(lambda: update_after_transcription(str(ex)[:150], None))
+            finally:
+                try:
+                    os.unlink(audio_path)
+                except Exception:
+                    pass
+            return
+
+        # Fallback do starej metody (Gemini)
         api_key = gemini_key_field.value.strip() if gemini_key_field.value else ""
 
         if not api_key:
@@ -676,14 +732,382 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         debug_field,
     ], spacing=12)
 
+    # === UI WYBORU BACKENDU TRANSKRYPCJI ===
+    # UWAGA: on_change musi być funkcja zdefiniowana PRZED dropdown
+    def on_backend_change(e):
+        """Zmiana backendu transkrypcji."""
+        selected_value = e.control.value if e else backend_radio.value
+        debug_log(f"[DEBUG] on_backend_change CALLED! value={selected_value}")
+        show_snackbar(f"Wybrano: {selected_value}", ft.Colors.BLUE_700)
+
+        if not transcriber_manager:
+            show_snackbar("Brak managera transkrypcji!", ft.Colors.RED_700)
+            return
+
+        try:
+            refresh_backends_info()
+            debug_log(f"[DEBUG] Selected: {selected_value}")
+
+            # Znajdź info
+            info = None
+            for b in backends_info["data"]:
+                if b.type.value == selected_value:
+                    info = b
+                    break
+
+            if not info:
+                show_snackbar(f"Nie znaleziono: {selected_value}", ft.Colors.RED_700)
+                return
+
+            debug_log(f"[DEBUG] Backend: {info.name}, installed: {info.is_installed}")
+
+            if not info.is_installed:
+                # Dialog instalacji
+                def close_dlg(ev):
+                    dlg.open = False
+                    page.update()
+
+                def do_install(ev):
+                    dlg.open = False
+                    page.update()
+                    on_install_click(None)
+
+                dlg = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text(f"Instalacja: {info.name}"),
+                    content=ft.Text(
+                        f"Pakiet '{info.pip_package}' nie jest zainstalowany.\n\n"
+                        f"Kliknij 'Zainstaluj' aby pobrać automatycznie.\n"
+                        f"(może potrwać 1-3 minuty)"
+                    ),
+                    actions=[
+                        ft.TextButton("Anuluj", on_click=close_dlg),
+                        ft.ElevatedButton("Zainstaluj", on_click=do_install),
+                    ],
+                )
+                page.overlay.append(dlg)
+                dlg.open = True
+                page.update()
+                debug_log("[DEBUG] Dialog shown!")
+
+            elif info.is_available:
+                new_type = TranscriberType(selected_value)
+                transcriber_manager.set_current_backend(new_type)
+                config["transcriber_backend"] = new_type.value
+                save_config(config)
+                show_snackbar(f"Wybrano: {info.name}", ft.Colors.GREEN_700)
+
+            update_ui_for_current_backend()
+
+        except Exception as ex:
+            debug_log(f"[DEBUG] ERROR: {ex}")
+            show_snackbar(f"Błąd: {str(ex)[:80]}", ft.Colors.RED_700)
+
+    def on_model_dropdown_change(e):
+        """Zmiana modelu."""
+        debug_log(f"[DEBUG] on_model_dropdown_change: {e.control.value if e else 'None'}")
+        if not transcriber_manager:
+            return
+        try:
+            backend = transcriber_manager.get_current_backend()
+            model_name = model_dropdown.value
+            if backend.set_model(model_name):
+                config["transcriber_model"] = model_name
+                save_config(config)
+                update_model_status()
+        except Exception:
+            pass
+
+    # RadioGroup zamiast Dropdown (bo Dropdown w Flet 0.70+ ma problemy z on_change)
+    backend_radio = ft.RadioGroup(
+        content=ft.Column([
+            ft.Radio(value="gemini_cloud", label="Gemini Cloud (online)"),
+            ft.Radio(value="faster_whisper", label="Faster Whisper (offline) - REKOMENDOWANY"),
+            ft.Radio(value="openai_whisper", label="OpenAI Whisper (offline)"),
+        ], spacing=5),
+        value="gemini_cloud",
+        on_change=lambda e: on_backend_change(e),
+    )
+
+    model_dropdown = ft.Dropdown(
+        label="Model",
+        width=200,
+        visible=False,
+    )
+
+    # Alias dla kompatybilności
+    backend_dropdown = backend_radio
+
+    # Statusy i przyciski
+    backend_status_text = ft.Text("", size=13, weight=ft.FontWeight.W_500)
+    install_button = ft.Button("Zainstaluj silnik", icon=ft.Icons.DOWNLOAD, visible=False)
+    download_model_button = ft.Button("Pobierz model", icon=ft.Icons.DOWNLOAD, visible=False)
+    action_progress = ft.ProgressRing(visible=False, width=24, height=24, stroke_width=3, color=ft.Colors.BLUE_600)
+
+    # Cache info o backendach
+    backends_info = {"data": []}
+
+    def refresh_backends_info():
+        """Odświeża informacje o backendach."""
+        if transcriber_manager:
+            backends_info["data"] = transcriber_manager.get_available_backends()
+
+    def populate_backend_options():
+        """Wypełnia dropdown backendami."""
+        debug_log("[DEBUG] populate_backend_options called")
+        if not transcriber_manager:
+            debug_log("[DEBUG] No transcriber_manager in populate!")
+            return
+
+        refresh_backends_info()
+        backends = backends_info["data"]
+        print(f"[DEBUG] Found {len(backends)} backends")
+
+        options = []
+        for b in backends:
+            print(f"[DEBUG] Adding option: {b.name}, installed: {b.is_installed}")
+            # Status w zależności od instalacji
+            if not b.is_installed:
+                status = " (wymaga instalacji)"
+            elif not b.is_available:
+                status = f" ({b.unavailable_reason})"
+            else:
+                status = ""
+
+            options.append(ft.dropdown.Option(
+                key=b.type.value,
+                text=f"{b.name}{status}",
+            ))
+
+        backend_dropdown.options = options
+        backend_radio.value = transcriber_manager.get_current_type().value
+        update_ui_for_current_backend()
+
+    def get_current_backend_info():
+        """Zwraca info o aktualnie wybranym backendzie."""
+        current_type = backend_radio.value
+        for b in backends_info["data"]:
+            if b.type.value == current_type:
+                return b
+        return None
+
+    def update_ui_for_current_backend():
+        """Aktualizuje UI w zależności od wybranego backendu."""
+        if not transcriber_manager:
+            return
+
+        info = get_current_backend_info()
+        if not info:
+            backend_status_text.value = "Błąd ładowania informacji o backendzie"
+            backend_status_text.color = ft.Colors.RED_700
+            page.update()
+            return
+
+        # Reset widoczności
+        install_button.visible = False
+        download_model_button.visible = False
+        model_dropdown.visible = False
+        action_progress.visible = False
+
+        if not info.is_installed:
+            # Backend nie zainstalowany - pokaż przycisk instalacji
+            backend_status_text.value = f"Kliknij 'Zainstaluj silnik' aby pobrać: {info.pip_package}"
+            backend_status_text.color = ft.Colors.ORANGE_700
+            install_button.visible = True
+            install_button.disabled = False
+        elif info.type == TranscriberType.GEMINI_CLOUD:
+            # Gemini Cloud - nie wymaga modeli lokalnych
+            if info.is_available:
+                backend_status_text.value = "Cloud API - gotowy do użycia"
+                backend_status_text.color = ft.Colors.GREEN_700
+            else:
+                backend_status_text.value = "Wprowadź Gemini API Key i kliknij 'Zapisz ustawienia'"
+                backend_status_text.color = ft.Colors.ORANGE_700
+        else:
+            # Offline backend - pokaż wybór modelu
+            model_dropdown.visible = True
+            update_model_options()
+
+        page.update()
+
+    def update_model_options():
+        """Aktualizuje opcje modeli dla wybranego backendu offline."""
+        if not transcriber_manager:
+            return
+
+        try:
+            backend = transcriber_manager.get_current_backend()
+        except Exception:
+            return
+
+        models = backend.get_models()
+
+        options = []
+        for m in models:
+            size_str = f" - {m.size_mb}MB" if m.size_mb > 0 else ""
+            status = " [gotowy]" if m.is_downloaded else ""
+            options.append(ft.dropdown.Option(
+                key=m.name,
+                text=f"{m.name}{size_str}{status}"
+            ))
+
+        model_dropdown.options = options
+        current_model = backend.get_current_model()
+        if current_model:
+            model_dropdown.value = current_model
+
+        update_model_status()
+
+    def update_model_status():
+        """Aktualizuje status modelu (pobrany/do pobrania)."""
+        if not transcriber_manager:
+            return
+
+        try:
+            backend = transcriber_manager.get_current_backend()
+            models = backend.get_models()
+            current_model_name = model_dropdown.value
+
+            for m in models:
+                if m.name == current_model_name:
+                    if m.is_downloaded:
+                        download_model_button.visible = False
+                        backend_status_text.value = f"Model '{m.name}' gotowy"
+                        backend_status_text.color = ft.Colors.GREEN_700
+                    else:
+                        download_model_button.visible = True
+                        backend_status_text.value = f"Model '{m.name}' wymaga pobrania ({m.size_mb}MB)"
+                        backend_status_text.color = ft.Colors.ORANGE_700
+                    break
+        except Exception:
+            pass
+
+        page.update()
+
+    def on_install_click(e):
+        """Instalacja pakietu backendu."""
+        if not transcriber_manager:
+            return
+
+        info = get_current_backend_info()
+        if not info or not info.pip_package:
+            return
+
+        # Wyraźny feedback
+        install_button.visible = False
+        action_progress.visible = True
+        backend_status_text.value = f"Instaluję {info.pip_package}... (może potrwać 1-3 min)"
+        backend_status_text.color = ft.Colors.BLUE_700
+        show_snackbar(f"Rozpoczynam instalację {info.pip_package}...", ft.Colors.BLUE_700)
+        page.update()
+
+        def do_install():
+            def progress_cb(msg):
+                def update_ui():
+                    backend_status_text.value = msg
+                    page.update()
+                page.run_thread(update_ui)
+
+            success, message = transcriber_manager.install_backend(
+                TranscriberType(backend_radio.value),
+                progress_cb
+            )
+            page.run_thread(lambda: finish_install(success, message))
+
+        threading.Thread(target=do_install, daemon=True).start()
+
+    def finish_install(success, message):
+        action_progress.visible = False
+
+        if success:
+            show_snackbar("Zainstalowano! Uruchom ponownie aplikację.", ft.Colors.GREEN_700)
+            backend_status_text.value = "ZAINSTALOWANO! Zamknij i uruchom aplikację ponownie."
+            backend_status_text.color = ft.Colors.GREEN_700
+            install_button.visible = False
+        else:
+            show_snackbar(f"Błąd: {message}", ft.Colors.RED_700)
+            backend_status_text.value = f"Błąd instalacji: {message[:80]}"
+            backend_status_text.color = ft.Colors.RED_700
+            install_button.visible = True
+            install_button.disabled = False
+
+        page.update()
+
+    def on_download_model_click(e):
+        """Pobieranie modelu."""
+        if not transcriber_manager:
+            return
+
+        model_name = model_dropdown.value
+        download_model_button.visible = False
+        action_progress.visible = True
+        backend_status_text.value = f"Pobieram model '{model_name}'... (może potrwać kilka minut)"
+        backend_status_text.color = ft.Colors.BLUE_700
+        show_snackbar(f"Rozpoczynam pobieranie modelu {model_name}...", ft.Colors.BLUE_700)
+        page.update()
+
+        def do_download():
+            def progress_cb(p):
+                def update_ui():
+                    backend_status_text.value = f"Pobieranie '{model_name}': {int(p*100)}%"
+                    page.update()
+                page.run_thread(update_ui)
+
+            try:
+                backend = transcriber_manager.get_current_backend()
+                success = backend.download_model(model_name, progress_cb)
+                page.run_thread(lambda: finish_model_download(success))
+            except Exception as ex:
+                page.run_thread(lambda: finish_model_download(False))
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def finish_model_download(success):
+        action_progress.visible = False
+
+        if success:
+            show_snackbar("Model pobrany! Gotowy do użycia.", ft.Colors.GREEN_700)
+            backend_status_text.value = "Model pobrany - gotowy do transkrypcji!"
+            backend_status_text.color = ft.Colors.GREEN_700
+            download_model_button.visible = False
+            refresh_backends_info()
+            update_model_options()
+        else:
+            show_snackbar("Błąd pobierania modelu", ft.Colors.RED_700)
+            backend_status_text.value = "Błąd pobierania - spróbuj ponownie"
+            backend_status_text.color = ft.Colors.RED_700
+            download_model_button.visible = True
+            download_model_button.disabled = False
+
+        page.update()
+
+    # Przypisz handlery (dropdown on_change już przypisane w konstruktorze)
+    install_button.on_click = on_install_click
+    download_model_button.on_click = on_download_model_click
+
+    # Wypełnij opcje przy starcie
+    if transcriber_manager:
+        populate_backend_options()
+
     # Sekcja ustawień (w ExpansionTile)
     settings_section = ft.ExpansionTile(
-        title=ft.Text("Ustawienia API", weight=ft.FontWeight.W_500),
+        title=ft.Text("Ustawienia", weight=ft.FontWeight.W_500),
         leading=ft.Icon(ft.Icons.SETTINGS),
         expanded=False,
         controls=[
             ft.Container(
                 content=ft.Column([
+                    ft.Text("Transkrypcja (Speech-to-Text)", weight=ft.FontWeight.W_600, size=14),
+                    backend_radio,
+                    model_dropdown,
+                    ft.Row([
+                        backend_status_text,
+                        action_progress,
+                        install_button,
+                        download_model_button,
+                    ], spacing=8, wrap=True),
+                    ft.Divider(height=20),
+                    ft.Text("Klucze API", weight=ft.FontWeight.W_600, size=14),
                     gemini_key_field,
                     ft.Row([
                         session_key_field,
@@ -692,7 +1116,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                     ft.Row([
                         ft.Button("Zapisz ustawienia", icon=ft.Icons.SAVE, on_click=save_settings),
                     ], alignment=ft.MainAxisAlignment.END),
-                ], spacing=16),
+                ], spacing=12),
                 padding=ft.Padding(left=16, right=16, top=0, bottom=16),
             ),
         ],
