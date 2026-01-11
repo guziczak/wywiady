@@ -118,8 +118,7 @@ try:
                     print(f"💬 [Proxy] Chat created: {chat_uuid}")
 
                     # 3. SEND MESSAGE WITH ATTACHMENT
-                    # Using Haiku model which is faster and usually available
-                    # We ask for a simple verbatim transcript.
+                    # Using the latest Sonnet model (often referred to as 3.5 New or similar)
                     prompt = "Please transcribe this audio file verbatim. Output ONLY the text, no preamble."
                     
                     payload = {
@@ -133,7 +132,7 @@ try:
                         "files": [],
                         "prompt": prompt,
                         "timezone": "Europe/Warsaw",
-                        "model": "claude-3-haiku-20240307",
+                        "model": "claude-4-5-sonnet-latest",
                         "rendering_mode": "raw"
                     }
 
@@ -898,7 +897,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         # Proxy zawsze zwraca stream, więc musimy go obsłużyć
         stream = client.messages.create(
-            model="claude-sonnet-4-20250514", # Model zostanie podmieniony przez claude.ai na webowy
+            model="claude-4-5-sonnet-latest", # Model zostanie podmieniony przez claude.ai na webowy
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
             stream=True
