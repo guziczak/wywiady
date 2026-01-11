@@ -1,3 +1,5 @@
 sounddevice
 numpy
-google-generativeai
+google-genai
+flet
+requests

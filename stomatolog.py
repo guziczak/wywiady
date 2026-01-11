@@ -1,46 +1,40 @@
 """
-Minimalistyczne GUI do generowania opisów stomatologicznych z wywiadu głosowego.
-Używa Gemini Flash do speech-to-text i przetwarzania tekstu.
+Wywiad+ - Nowoczesne GUI do generowania opisów stomatologicznych z wywiadu głosowego.
+Używa Gemini Flash do speech-to-text i Claude/Gemini do przetwarzania tekstu.
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+import flet as ft
 import threading
 import tempfile
 import wave
 import os
-import webbrowser
-import base64
 import json
+import time
+from pathlib import Path
+from datetime import datetime
 
-# Ścieżka do pliku konfiguracyjnego
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-ICD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icd10.json")
+# Ścieżki konfiguracji
+CONFIG_FILE = Path(__file__).parent / "config.json"
+ICD_FILE = Path(__file__).parent / "icd10.json"
 
 # Zewnętrzne zależności
 try:
     import sounddevice as sd
     import numpy as np
+    AUDIO_AVAILABLE = True
 except ImportError:
     sd = None
     np = None
+    AUDIO_AVAILABLE = False
 
 try:
     from google import genai
     from google.genai import types
+    GENAI_AVAILABLE = True
 except ImportError:
     genai = None
     types = None
-
-try:
-    import requests as req_lib
-except ImportError:
-    req_lib = None
-
-try:
-    import cloudscraper
-except ImportError:
-    cloudscraper = None
+    GENAI_AVAILABLE = False
 
 # Import proxy z claude-code-py
 import sys
@@ -48,7 +42,6 @@ sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
 try:
     from proxy import start_proxy_server, get_proxy_base_url
     from anthropic import Anthropic
-    # Próba importu auto-extractora
     try:
         from utils.auto_session_extractor import extract_session_key_auto
         AUTO_EXTRACTOR_AVAILABLE = True
@@ -60,457 +53,265 @@ except ImportError:
     AUTO_EXTRACTOR_AVAILABLE = False
     Anthropic = None
 
+
+def load_config():
+    """Ładuje konfigurację z pliku."""
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"api_key": "", "session_key": ""}
+
+
+def save_config(config):
+    """Zapisuje konfigurację do pliku."""
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f)
+    except Exception:
+        pass
+
+
+def load_icd10():
+    """Ładuje kody ICD-10 z pliku JSON."""
+    try:
+        if ICD_FILE.exists():
+            with open(ICD_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
 def load_claude_token():
-    """Ładuje token z Claude Code (~/.claude/.credentials.json)."""
-    from pathlib import Path
-    from datetime import datetime
-
-    # Nowa lokalizacja w Claude Code
+    """Ładuje token OAuth z Claude Code."""
     creds_path = Path.home() / ".claude" / ".credentials.json"
-
     if not creds_path.exists():
         return None
-
     try:
         with open(creds_path, "r") as f:
             creds = json.load(f)
-
-        # Token jest w claudeAiOauth
         oauth_data = creds.get("claudeAiOauth", {})
-
-        # Sprawdź czy token nie wygasł
         expires_at_ms = oauth_data.get("expiresAt", 0)
         if expires_at_ms:
             expires_at = datetime.fromtimestamp(expires_at_ms / 1000.0)
             if datetime.now() >= expires_at:
                 return None
-
         return oauth_data.get("accessToken")
     except Exception:
         return None
 
 
-class StomatologApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Wywiad Stomatologiczny")
-        self.root.geometry("700x850")  # Zwiększono wysokość
-        self.root.resizable(True, True)
+# ========== GŁÓWNA APLIKACJA ==========
 
-        # Stan nagrywania
-        self.is_recording = False
-        self.audio_data = []
-        self.sample_rate = 16000
-        self.api_key_var = tk.StringVar()
-        self.session_key_var = tk.StringVar()
-        self.icd10_codes = {}
+def main(page: ft.Page):
+    # === KONFIGURACJA STRONY ===
+    page.title = "Wywiad+"
+    page.window.width = 800
+    page.window.height = 900
+    page.window.min_width = 600
+    page.window.min_height = 700
+    page.padding = 0
+    page.theme_mode = ft.ThemeMode.LIGHT
+    page.theme = ft.Theme(
+        color_scheme_seed=ft.Colors.BLUE,
+        font_family="Segoe UI",
+    )
 
-        self._create_widgets()
-        self._load_config()
-        self._load_icd10()
+    # === STAN APLIKACJI ===
+    config = load_config()
+    icd10_codes = load_icd10()
 
-        # Zapisz config przy zamknięciu
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+    is_recording = {"value": False}
+    audio_data = []
+    sample_rate = 16000
+    stream_ref = {"stream": None}
+    proxy_state = {"started": False, "port": None}
 
-    def _load_icd10(self):
-        """Ładuje kody ICD-10 z pliku JSON."""
-        try:
-            if os.path.exists(ICD_FILE):
-                with open(ICD_FILE, "r", encoding="utf-8") as f:
-                    self.icd10_codes = json.load(f)
-        except Exception as e:
-            print(f"Błąd ładowania ICD-10: {e}")
+    # === KOMPONENTY UI ===
 
-    def _load_config(self):
-        """Ładuje zapisaną konfigurację."""
-        try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, "r") as f:
-                    config = json.load(f)
-                    self.api_key_var.set(config.get("api_key", ""))
-                    self.session_key_var.set(config.get("session_key", ""))
-            
-            self._update_claude_status()
-        except:
-            pass
+    # Snackbar do powiadomień
+    def show_snackbar(message, color=ft.Colors.GREEN_700):
+        page.snack_bar = ft.SnackBar(
+            content=ft.Text(message, color=ft.Colors.WHITE),
+            bgcolor=color,
+            duration=3000,
+        )
+        page.snack_bar.open = True
+        page.update()
 
-    def _save_config(self):
-        """Zapisuje konfigurację."""
-        try:
-            config = {
-                "api_key": self.api_key_var.get(),
-                "session_key": self.session_key_var.get()
-            }
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f)
-        except:
-            pass
+    # --- Pola konfiguracji ---
+    gemini_key_field = ft.TextField(
+        label="Gemini API Key",
+        value=config.get("api_key", ""),
+        password=True,
+        can_reveal_password=True,
+        prefix_icon=ft.Icons.KEY,
+        hint_text="Pobierz z aistudio.google.com",
+        expand=True,
+    )
 
-    def _update_claude_status(self):
-        """Aktualizuje status tokena Claude."""
+    session_key_field = ft.TextField(
+        label="Claude Session Key",
+        value=config.get("session_key", ""),
+        password=True,
+        can_reveal_password=True,
+        prefix_icon=ft.Icons.LOCK,
+        hint_text="sk-ant-sid01-...",
+        expand=True,
+    )
+
+    claude_status_text = ft.Text("", size=12)
+
+    def update_claude_status():
         oauth_token = load_claude_token()
-        session_key = self.session_key_var.get().strip()
+        session_key = session_key_field.value.strip() if session_key_field.value else ""
 
         if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
-            self.claude_status.config(
-                text="✓ Session Key aktywny - pełny dostęp do claude.ai",
-                foreground="green"
-            )
+            claude_status_text.value = "Session Key aktywny"
+            claude_status_text.color = ft.Colors.GREEN_700
         elif oauth_token and PROXY_AVAILABLE:
-            self.claude_status.config(
-                text="✓ Token OAuth dostępny (może wymagać Session Key)",
-                foreground="orange"
-            )
+            claude_status_text.value = "OAuth Token dostępny"
+            claude_status_text.color = ft.Colors.ORANGE_700
         elif not PROXY_AVAILABLE:
-            self.claude_status.config(
-                text="Brak modułu Proxy - tylko Gemini",
-                foreground="gray"
-            )
+            claude_status_text.value = "Brak modułu Proxy"
+            claude_status_text.color = ft.Colors.GREY_500
         else:
-            self.claude_status.config(
-                text="Brak tokena Claude - używam Gemini Flash",
-                foreground="gray"
-            )
+            claude_status_text.value = "Tylko Gemini"
+            claude_status_text.color = ft.Colors.GREY_500
+        page.update()
 
-    def _on_close(self):
-        """Obsługuje zamknięcie okna."""
-        self._save_config()
-        self.root.destroy()
+    def save_settings(e):
+        config["api_key"] = gemini_key_field.value or ""
+        config["session_key"] = session_key_field.value or ""
+        save_config(config)
+        update_claude_status()
+        show_snackbar("Ustawienia zapisane")
 
-    def _create_widgets(self):
-        # Główny kontener z paddingiem
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+    def clear_session_key(e):
+        session_key_field.value = ""
+        config["session_key"] = ""
+        save_config(config)
+        update_claude_status()
+        show_snackbar("Session Key usunięty", ft.Colors.ORANGE_700)
 
-        # === SEKCJA API KEY & CONFIG ===
-        api_frame = ttk.LabelFrame(main_frame, text="Konfiguracja AI", padding="5")
-        api_frame.pack(fill=tk.X, pady=(0, 10))
+    # --- Nagrywanie ---
+    record_button = ft.Button(
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.MIC, size=28),
+                ft.Text("Rozpocznij nagrywanie", size=16, weight=ft.FontWeight.W_500),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+        ),
+        style=ft.ButtonStyle(
+            padding=ft.Padding(left=32, right=32, top=20, bottom=20),
+            shape=ft.RoundedRectangleBorder(radius=12),
+            bgcolor=ft.Colors.BLUE_600,
+            color=ft.Colors.WHITE,
+        ),
+        width=280,
+        height=64,
+    )
 
-        # --- Google Gemini ---
-        gemini_row = ttk.Frame(api_frame)
-        gemini_row.pack(fill=tk.X, pady=(0, 5))
-        
-        link_label = ttk.Label(gemini_row, text="Gemini API Key:", cursor="hand2", foreground="blue")
-        link_label.pack(side=tk.LEFT)
-        link_label.bind("<Button-1>", lambda e: webbrowser.open("https://aistudio.google.com/app/apikey"))
-        
-        self.api_key_entry = ttk.Entry(gemini_row, textvariable=self.api_key_var, width=40, show="*")
-        self.api_key_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
+    record_status = ft.Text("Gotowy do nagrywania", size=14, color=ft.Colors.GREY_600)
+    recording_indicator = ft.ProgressRing(visible=False, width=20, height=20, stroke_width=2)
 
-        # --- Claude Session Key ---
-        claude_row = ttk.Frame(api_frame)
-        claude_row.pack(fill=tk.X, pady=(5, 0))
+    transcript_field = ft.TextField(
+        label="Transkrypcja wywiadu",
+        multiline=True,
+        min_lines=4,
+        max_lines=8,
+        expand=True,
+        hint_text="Tutaj pojawi się transkrypcja nagrania...",
+    )
 
-        ttk.Label(claude_row, text="Claude Session Key:").pack(side=tk.LEFT)
-        self.session_key_entry = ttk.Entry(claude_row, textvariable=self.session_key_var, width=40, show="*")
-        self.session_key_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
-
-        # Przycisk czyszczenia klucza
-        ttk.Button(
-            claude_row,
-            text="🗑️",
-            width=3,
-            command=self._clear_session_key
-        ).pack(side=tk.LEFT, padx=(2, 0))
-        
-        # Przycisk Auto-Login
-        if AUTO_EXTRACTOR_AVAILABLE:
-            self.auto_login_btn = ttk.Button(
-                claude_row, 
-                text="🔑 Auto-login (Selenium)", 
-                command=self._start_auto_login
-            )
-            self.auto_login_btn.pack(side=tk.LEFT, padx=(5, 0))
-
-        # Checkbox do pokazania kluczy
-        self.show_key_var = tk.BooleanVar()
-        ttk.Checkbutton(
-            api_frame,
-            text="Pokaż klucze",
-            variable=self.show_key_var,
-            command=self._toggle_key_visibility
-        ).pack(anchor=tk.W, pady=(5, 0))
-
-        # Info o Claude
-        self.claude_status = ttk.Label(api_frame, text="", foreground="gray")
-        self.claude_status.pack(anchor=tk.W, pady=(5, 0))
-        
-        # === SEKCJA NAGRYWANIA ===
-        record_frame = ttk.LabelFrame(main_frame, text="Nagrywanie", padding="5")
-        record_frame.pack(fill=tk.X, pady=(0, 10))
-        self.record_btn = ttk.Button(
-            record_frame,
-            text="🎤 Rozpocznij nagrywanie",
-            command=self._toggle_recording
-        )
-        self.record_btn.pack(pady=5)
-
-        self.record_status = ttk.Label(record_frame, text="Status: Gotowy")
-        self.record_status.pack()
-
-        # === SEKCJA TRANSKRYPCJI ===
-        trans_frame = ttk.LabelFrame(main_frame, text="Transkrypcja wywiadu", padding="5")
-        trans_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        trans_btn_row = ttk.Frame(trans_frame)
-        trans_btn_row.pack(fill=tk.X)
-
-        trans_copy_btn = ttk.Button(trans_btn_row, text="📋 Kopiuj")
-        trans_copy_btn.config(command=lambda: self._copy_to_clipboard(self.transcript_text, trans_copy_btn))
-        trans_copy_btn.pack(side=tk.RIGHT)
-
-        ttk.Button(
-            trans_btn_row,
-            text="🗑️ Wyczyść",
-            command=lambda: self.transcript_text.delete("1.0", tk.END)
-        ).pack(side=tk.RIGHT, padx=(0, 5))
-
-        self.transcript_text = tk.Text(trans_frame, height=6, wrap=tk.WORD)
-        self.transcript_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-
-        # === PRZYCISK GENEROWANIA ===
-        gen_frame = ttk.Frame(main_frame)
-        gen_frame.pack(pady=10)
-
-        self.gen_btn = ttk.Button(
-            gen_frame,
-            text="⚡ Generuj opis",
-            command=self._generate_description
-        )
-        self.gen_btn.pack(side=tk.LEFT)
-
-        self.progress = ttk.Progressbar(gen_frame, mode='indeterminate', length=200)
-        # Progress pakujemy dynamicznie w _set_loading_state
-
-        self.model_indicator = ttk.Label(gen_frame, text="", foreground="gray")
-        self.model_indicator.pack(side=tk.LEFT, padx=(10, 0))
-
-        # === SEKCJA WYNIKÓW (GŁÓWNA) ===
-        # Używamy PanedWindow dla elastyczności lub po prostu frame z expand
-        results_frame = ttk.LabelFrame(main_frame, text="Wygenerowany opis", padding="5")
-        results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        # Kontener na pola wyników
-        self.results_container = ttk.Frame(results_frame)
-        self.results_container.pack(fill=tk.BOTH, expand=True)
-
-        # Rozpoznanie
-        self._create_result_field(self.results_container, "Rozpoznanie:", "recognition", height=4)
-
-        # Świadczenie
-        self._create_result_field(self.results_container, "Świadczenie:", "service", height=4)
-
-        # Procedura - to pole często jest najdłuższe
-        self._create_result_field(self.results_container, "Procedura:", "procedure", height=8)
-
-        # === DEBUG (ZWIJANY) ===
-        debug_ctrl_frame = ttk.Frame(main_frame)
-        debug_ctrl_frame.pack(fill=tk.X, pady=(5, 0))
-
-        self.debug_visible = False
-        self.debug_toggle_btn = ttk.Button(
-            debug_ctrl_frame, 
-            text="🐞 Pokaż Debug", 
-            command=self._toggle_debug_section
-        )
-        self.debug_toggle_btn.pack(side=tk.LEFT)
-
-        # Ramka debuga (domyślnie nie spakowana)
-        self.debug_frame = ttk.LabelFrame(main_frame, text="Raw output z Gemini/Claude", padding="5")
-        
-        debug_btn_row = ttk.Frame(self.debug_frame)
-        debug_btn_row.pack(fill=tk.X)
-
-        debug_copy_btn = ttk.Button(debug_btn_row, text="📋 Kopiuj")
-        debug_copy_btn.config(command=lambda: self._copy_to_clipboard(self.debug_text, debug_copy_btn))
-        debug_copy_btn.pack(side=tk.RIGHT)
-
-        self.debug_text = tk.Text(self.debug_frame, height=10, wrap=tk.WORD, bg="#f0f0f0")
-        self.debug_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-
-    def _set_loading_state(self, is_loading):
-        """Zarządza stanem ładowania UI."""
-        if is_loading:
-            self.gen_btn.config(state="disabled", text="⏳ Przetwarzanie...")
-            self.progress.pack(side=tk.LEFT, padx=10)
-            self.progress.start(15)
-            
-            # Placeholdery
-            for field in [self.recognition_text, self.service_text, self.procedure_text]:
-                field.delete("1.0", tk.END)
-                field.insert("1.0", "Generowanie...")
-                field.config(foreground="gray")
-        else:
-            self.gen_btn.config(state="normal", text="⚡ Generuj opis")
-            self.progress.stop()
-            self.progress.pack_forget()
-            
-            # Przywróć kolor tekstu (jeśli był zmieniony)
-            for field in [self.recognition_text, self.service_text, self.procedure_text]:
-                field.config(foreground="black")
-
-    def _toggle_debug_section(self):
-        """Pokazuje/ukrywa sekcję debugowania."""
-        if self.debug_visible:
-            self.debug_frame.pack_forget()
-            self.debug_toggle_btn.config(text="🐞 Pokaż Debug")
-            self.debug_visible = False
-        else:
-            self.debug_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
-            self.debug_toggle_btn.config(text="🐞 Ukryj Debug")
-            self.debug_visible = True
-            # Scroll na dół żeby pokazać debug
-            self.root.after(100, lambda: self.debug_text.see(tk.END))
-
-    def _create_result_field(self, parent, label_text, attr_name, height=3):
-        """Tworzy pole wynikowe z etykietą i przyciskiem kopiowania."""
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-
-        header = ttk.Frame(frame)
-        header.pack(fill=tk.X)
-
-        ttk.Label(header, text=label_text, font=("", 9, "bold")).pack(side=tk.LEFT)
-
-        text_widget = tk.Text(frame, height=height, wrap=tk.WORD)
-        text_widget.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-
-        copy_btn = ttk.Button(header, text="📋 Kopiuj")
-        copy_btn.config(command=lambda tw=text_widget, cb=copy_btn: self._copy_to_clipboard(tw, cb))
-        copy_btn.pack(side=tk.RIGHT)
-
-        setattr(self, f"{attr_name}_text", text_widget)
-
-    def _clear_session_key(self):
-        """Czyści zapisany klucz sesji."""
-        self.session_key_var.set("")
-        self._save_config()
-        self._update_claude_status()
-        messagebox.showinfo("Info", "Klucz sesji został usunięty.")
-
-    def _toggle_key_visibility(self):
-        """Przełącza widoczność kluczy API."""
-        show_char = "" if self.show_key_var.get() else "*"
-        self.api_key_entry.config(show=show_char)
-        self.session_key_entry.config(show=show_char)
-
-    def _start_auto_login(self):
-        """Uruchamia auto-login w tle."""
-        if not AUTO_EXTRACTOR_AVAILABLE:
-            messagebox.showerror("Błąd", "Brak modułu Selenium/WebDriver!")
-            return
-            
-        self.claude_status.config(text="⏳ Otwieram przeglądarkę... Zaloguj się!", foreground="blue")
-        threading.Thread(target=self._process_auto_login, daemon=True).start()
-
-    def _process_auto_login(self):
-        """Logika auto-logowania."""
-        try:
-            key = extract_session_key_auto()
-            if key:
-                self.root.after(0, lambda: self.session_key_var.set(key))
-                self.root.after(0, lambda: self._save_config())
-                self.root.after(0, lambda: self._update_claude_status())
-                self.root.after(0, lambda: messagebox.showinfo("Sukces", "Pobrano Session Key!"))
-            else:
-                self.root.after(0, lambda: self.claude_status.config(text="❌ Nie udało się pobrać klucza", foreground="red"))
-        except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Błąd", f"Błąd logowania: {e}"))
-            self.root.after(0, lambda: self.claude_status.config(text="❌ Błąd logowania", foreground="red"))
-
-    def _copy_to_clipboard(self, text_widget, btn=None):
-        """Kopiuje zawartość pola tekstowego do schowka."""
-        content = text_widget.get("1.0", tk.END).strip()
-        if content:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(content)
-            # Krótki feedback wizualny na przycisku
-            if btn:
-                original = btn.cget("text")
-                btn.config(text="✓ OK")
-                self.root.after(800, lambda: btn.config(text=original))
-
-    def _toggle_recording(self):
-        """Rozpoczyna lub kończy nagrywanie."""
-        if sd is None:
-            messagebox.showerror("Błąd", "Brak biblioteki sounddevice!\nZainstaluj: pip install sounddevice numpy")
+    def start_recording():
+        if not AUDIO_AVAILABLE:
+            show_snackbar("Brak biblioteki audio (sounddevice)", ft.Colors.RED_700)
             return
 
-        if not self.is_recording:
-            self._start_recording()
-        else:
-            self._stop_recording()
+        is_recording["value"] = True
+        audio_data.clear()
 
-    def _start_recording(self):
-        """Rozpoczyna nagrywanie z mikrofonu."""
-        self.is_recording = True
-        self.audio_data = []
-        self.record_btn.config(text="⏹️ Zatrzymaj nagrywanie")
-        self.record_status.config(text="Status: Nagrywanie...")
+        record_button.style.bgcolor = ft.Colors.RED_600
+        record_button.content.controls[0].name = ft.Icons.STOP
+        record_button.content.controls[1].value = "Zatrzymaj"
+        record_status.value = "Nagrywanie..."
+        record_status.color = ft.Colors.RED_600
+        recording_indicator.visible = True
+        page.update()
 
-        def audio_callback(indata, frames, time, status):
-            if self.is_recording:
-                self.audio_data.append(indata.copy())
+        def audio_callback(indata, frames, time_info, status):
+            if is_recording["value"]:
+                audio_data.append(indata.copy())
 
-        self.stream = sd.InputStream(
-            samplerate=self.sample_rate,
+        stream_ref["stream"] = sd.InputStream(
+            samplerate=sample_rate,
             channels=1,
             dtype=np.int16,
             callback=audio_callback
         )
-        self.stream.start()
+        stream_ref["stream"].start()
 
-    def _stop_recording(self):
-        """Zatrzymuje nagrywanie i wysyła do transkrypcji."""
-        self.is_recording = False
-        self.stream.stop()
-        self.stream.close()
+    def stop_recording():
+        is_recording["value"] = False
+        if stream_ref["stream"]:
+            stream_ref["stream"].stop()
+            stream_ref["stream"].close()
 
-        self.record_btn.config(text="🎤 Rozpocznij nagrywanie")
-        self.record_status.config(text="Status: Przetwarzanie...")
+        record_button.style.bgcolor = ft.Colors.BLUE_600
+        record_button.content.controls[0].name = ft.Icons.MIC
+        record_button.content.controls[1].value = "Rozpocznij nagrywanie"
+        record_status.value = "Przetwarzanie..."
+        record_status.color = ft.Colors.ORANGE_700
+        recording_indicator.visible = True
+        page.update()
 
-        # Zapisz audio do pliku tymczasowego
-        if self.audio_data:
-            audio_array = np.concatenate(self.audio_data, axis=0)
-
-            # Zapisz jako WAV
+        if audio_data:
+            audio_array = np.concatenate(audio_data, axis=0)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 temp_path = f.name
                 with wave.open(f.name, 'wb') as wf:
                     wf.setnchannels(1)
-                    wf.setsampwidth(2)  # 16-bit
-                    wf.setframerate(self.sample_rate)
+                    wf.setsampwidth(2)
+                    wf.setframerate(sample_rate)
                     wf.writeframes(audio_array.tobytes())
 
-            # Transkrybuj w tle
-            threading.Thread(
-                target=self._transcribe_audio,
-                args=(temp_path,),
-                daemon=True
-            ).start()
+            threading.Thread(target=transcribe_audio, args=(temp_path,), daemon=True).start()
         else:
-            self.record_status.config(text="Status: Brak nagrania")
+            record_status.value = "Brak nagrania"
+            record_status.color = ft.Colors.GREY_600
+            recording_indicator.visible = False
+            page.update()
 
-    def _transcribe_audio(self, audio_path):
-        """Wysyła audio do Gemini i otrzymuje transkrypcję."""
-        api_key = self.api_key_var.get().strip()
+    def toggle_recording(e):
+        if not is_recording["value"]:
+            start_recording()
+        else:
+            stop_recording()
+
+    record_button.on_click = toggle_recording
+
+    def transcribe_audio(audio_path):
+        api_key = gemini_key_field.value.strip() if gemini_key_field.value else ""
 
         if not api_key:
-            self._update_status("Status: Brak API key!")
+            page.run_thread(lambda: update_after_transcription("Brak API key!", None))
             return
 
-        if genai is None:
-            self._update_status("Status: Brak biblioteki google-genai!")
+        if not GENAI_AVAILABLE:
+            page.run_thread(lambda: update_after_transcription("Brak biblioteki google-genai!", None))
             return
 
         try:
             client = genai.Client(api_key=api_key)
-
-            # Wczytaj plik audio
             with open(audio_path, "rb") as f:
                 audio_bytes = f.read()
 
-            # Wyślij do Gemini
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=[
@@ -519,77 +320,143 @@ class StomatologApp:
                     types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
                 ]
             )
-
             transcript = response.text.strip()
-
-            # Aktualizuj UI
-            self.root.after(0, lambda: self._set_transcript(transcript))
-            self._update_status("Status: Gotowy")
-
-        except Exception as e:
-            self._update_status(f"Status: Błąd - {str(e)[:50]}")
+            page.run_thread(lambda: update_after_transcription(None, transcript))
+        except Exception as ex:
+            page.run_thread(lambda: update_after_transcription(str(ex)[:100], None))
         finally:
-            # Usuń plik tymczasowy
             try:
                 os.unlink(audio_path)
-            except:
+            except Exception:
                 pass
 
-    def _set_transcript(self, text):
-        """Dopisuje tekst transkrypcji na końcu."""
-        current = self.transcript_text.get("1.0", tk.END).strip()
-        if current:
-            # Dopisz z nową linią
-            self.transcript_text.insert(tk.END, "\n" + text)
+    def update_after_transcription(error, transcript):
+        recording_indicator.visible = False
+        if error:
+            record_status.value = f"Błąd: {error}"
+            record_status.color = ft.Colors.RED_700
+            show_snackbar(f"Błąd transkrypcji: {error}", ft.Colors.RED_700)
         else:
-            # Pierwsze nagranie
-            self.transcript_text.insert("1.0", text)
+            record_status.value = "Gotowy"
+            record_status.color = ft.Colors.GREEN_700
+            current = transcript_field.value or ""
+            if current.strip():
+                transcript_field.value = current + "\n" + transcript
+            else:
+                transcript_field.value = transcript
+            show_snackbar("Transkrypcja zakończona")
+        page.update()
 
-    def _update_status(self, status):
-        """Aktualizuje status (thread-safe)."""
-        self.root.after(0, lambda: self.record_status.config(text=status))
+    # --- Generowanie opisu ---
+    generate_button = ft.Button(
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.AUTO_AWESOME, size=24),
+                ft.Text("Generuj opis", size=16, weight=ft.FontWeight.W_500),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=8,
+        ),
+        style=ft.ButtonStyle(
+            padding=ft.Padding(left=24, right=24, top=16, bottom=16),
+            shape=ft.RoundedRectangleBorder(radius=10),
+            bgcolor=ft.Colors.GREEN_600,
+            color=ft.Colors.WHITE,
+        ),
+    )
 
-    def _generate_description(self):
-        """Generuje opis medyczny na podstawie transkrypcji."""
-        gemini_key = self.api_key_var.get().strip()
-        session_key = self.session_key_var.get().strip()
+    generate_progress = ft.ProgressRing(visible=False, width=24, height=24, stroke_width=3)
+    model_indicator = ft.Text("", size=12, color=ft.Colors.GREY_600)
+
+    # Pola wyników
+    recognition_field = ft.TextField(
+        label="Rozpoznanie (z kodem ICD-10)",
+        multiline=True,
+        min_lines=2,
+        max_lines=4,
+        read_only=False,
+        expand=True,
+    )
+
+    service_field = ft.TextField(
+        label="Świadczenie",
+        multiline=True,
+        min_lines=2,
+        max_lines=4,
+        read_only=False,
+        expand=True,
+    )
+
+    procedure_field = ft.TextField(
+        label="Procedura",
+        multiline=True,
+        min_lines=4,
+        max_lines=8,
+        read_only=False,
+        expand=True,
+    )
+
+    debug_field = ft.TextField(
+        label="Debug (raw output)",
+        multiline=True,
+        min_lines=3,
+        max_lines=6,
+        read_only=True,
+        visible=False,
+    )
+
+    def copy_to_clipboard(field, label):
+        def do_copy(e):
+            if field.value:
+                page.set_clipboard(field.value)
+                show_snackbar(f"Skopiowano: {label}")
+        return do_copy
+
+    def generate_description(e):
+        gemini_key = gemini_key_field.value.strip() if gemini_key_field.value else ""
+        session_key = session_key_field.value.strip() if session_key_field.value else ""
         claude_token = load_claude_token()
-        
-        transcript = self.transcript_text.get("1.0", tk.END).strip()
+        transcript = transcript_field.value.strip() if transcript_field.value else ""
 
         if not transcript:
-            messagebox.showerror("Błąd", "Brak transkrypcji do przetworzenia!")
+            show_snackbar("Brak transkrypcji do przetworzenia!", ft.Colors.RED_700)
             return
 
-        # Wybierz model - priorytet Session Key -> Token Claude -> Gemini
+        # Wybierz model
         if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
             model_type = "claude"
-            self.model_indicator.config(text="→ claude.ai (Session Key)", foreground="green")
+            model_indicator.value = "Claude (Session Key)"
+            model_indicator.color = ft.Colors.GREEN_700
         elif claude_token and PROXY_AVAILABLE:
             model_type = "claude"
-            self.model_indicator.config(text="→ claude.ai (OAuth Token)", foreground="purple")
-        elif gemini_key and genai:
+            model_indicator.value = "Claude (OAuth)"
+            model_indicator.color = ft.Colors.PURPLE_700
+        elif gemini_key and GENAI_AVAILABLE:
             model_type = "gemini"
-            self.model_indicator.config(text="→ Gemini Flash", foreground="blue")
+            model_indicator.value = "Gemini Flash"
+            model_indicator.color = ft.Colors.BLUE_700
         else:
-            messagebox.showerror("Błąd", "Brak Session Key/Tokena Claude ani Gemini API key!")
+            show_snackbar("Brak klucza API!", ft.Colors.RED_700)
             return
 
-        # Ustaw stan ładowania
-        self._set_loading_state(True)
+        # UI loading state
+        generate_button.disabled = True
+        generate_progress.visible = True
+        recognition_field.value = "Generowanie..."
+        service_field.value = "Generowanie..."
+        procedure_field.value = "Generowanie..."
+        page.update()
 
-        # Przetwarzaj w tle
         threading.Thread(
-            target=self._process_transcript,
+            target=process_transcript,
             args=(gemini_key, session_key, claude_token, transcript, model_type),
             daemon=True
         ).start()
 
-    def _process_transcript(self, gemini_key, session_key, claude_token, transcript, model_type):
-        """Przetwarza transkrypcję na opis medyczny."""
+    generate_button.on_click = generate_description
 
-        # Przygotuj listę kodów do promptu
-        icd_context = json.dumps(self.icd10_codes, indent=2, ensure_ascii=False)
+    def process_transcript(gemini_key, session_key, claude_token, transcript, model_type):
+        icd_context = json.dumps(icd10_codes, indent=2, ensure_ascii=False)
 
         prompt = f"""Jesteś asystentem do formatowania dokumentacji stomatologicznej.
 Twoim zadaniem jest przekształcenie surowych notatek z wywiadu stomatologa na sformatowany tekst dokumentacji.
@@ -615,89 +482,65 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         try:
             if model_type == "claude":
-                # Użyj session_key jeśli jest, w przeciwnym razie tokena z pliku
                 auth_key = session_key if session_key and session_key.startswith("sk-ant-sid01-") else claude_token
-                result_text = self._call_claude(auth_key, prompt)
+                result_text = call_claude(auth_key, prompt, proxy_state)
             else:
-                result_text = self._call_gemini(gemini_key, prompt)
+                result_text = call_gemini(gemini_key, prompt)
 
-            # Pokaż raw output w debug
-            self.root.after(0, lambda rt=result_text: self._set_debug(rt))
+            page.run_thread(lambda: set_debug(result_text))
 
-            # Wyczyść markdown jeśli jest
-            cleaned_text = result_text
-            if cleaned_text.startswith("```"):
-                cleaned_text = cleaned_text.split("```")[1]
-                if cleaned_text.startswith("json"):
-                    cleaned_text = cleaned_text[4:]
-            cleaned_text = cleaned_text.strip()
+            # Parse JSON
+            cleaned = result_text
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
 
-            # Parsuj JSON
-            result = json.loads(cleaned_text)
+            result = json.loads(cleaned)
 
-            # Formatuj rozpoznanie z kodem ICD-10
             icd_code = result.get("icd10", "")
             diagnosis = result.get("rozpoznanie", "-")
-            
             if icd_code and icd_code != "-":
-                # Pobierz opis z bazy jeśli dostępny, lub użyj tego z JSON
-                icd_desc = self.icd10_codes.get(icd_code, "")
                 final_diagnosis = f"[{icd_code}] {diagnosis}"
             else:
                 final_diagnosis = diagnosis
 
-            # Nadpisz w obiekcie wynikowym dla UI
-            result["rozpoznanie"] = final_diagnosis
+            page.run_thread(lambda: set_results(final_diagnosis, result.get("swiadczenie", "-"), result.get("procedura", "-")))
 
-            # Aktualizuj UI
-            self.root.after(0, lambda: self._set_results(result))
-
-        except json.JSONDecodeError as e:
-            self.root.after(0, lambda: messagebox.showerror("Błąd", f"JSON parse error: {str(e)}"))
-        except Exception as e:
-            error_msg = str(e)
-            self.root.after(0, lambda em=error_msg: self._set_debug(f"ERROR: {em}"))
-            self.root.after(0, lambda em=error_msg: messagebox.showerror("Błąd", f"Błąd: {em}"))
+        except json.JSONDecodeError as je:
+            page.run_thread(lambda: show_error(f"JSON parse error: {je}"))
+        except Exception as ex:
+            page.run_thread(lambda: show_error(str(ex)))
         finally:
-            # Zawsze przywróć stan UI
-            self.root.after(0, lambda: self._set_loading_state(False))
+            page.run_thread(finish_generation)
 
-    def _call_claude(self, auth_token, prompt):
-        """Wywołuje Claude przez proxy do claude.ai."""
-        import os
-        import time
+    def call_claude(auth_token, prompt, proxy_state):
         import io
-        import sys
+        import sys as system_module
 
         if not auth_token:
-             raise ValueError("Brak tokena/klucza Claude!")
+            raise ValueError("Brak tokena Claude!")
 
-        # Uruchom proxy jeśli jeszcze nie działa
-        if not hasattr(self, '_proxy_started') or not self._proxy_started:
-            # Wycisz printy z proxy (mają emoji które nie działają na Windows)
-            old_stdout = sys.stdout
-            sys.stdout = io.StringIO()
+        if not proxy_state["started"]:
+            old_stdout = system_module.stdout
+            system_module.stdout = io.StringIO()
             try:
-                # Przekazujemy token - proxy samo rozpozna czy to sessionKey czy OAuth
                 success, port = start_proxy_server(auth_token, port=8765)
             finally:
-                sys.stdout = old_stdout
+                system_module.stdout = old_stdout
 
             if success:
-                self._proxy_started = True
-                self._proxy_port = port
+                proxy_state["started"] = True
+                proxy_state["port"] = port
                 os.environ["ANTHROPIC_BASE_URL"] = get_proxy_base_url(port)
-                time.sleep(2)  # Daj czas proxy
+                time.sleep(2)
             else:
-                raise Exception("Nie udalo sie uruchomic proxy")
+                raise Exception("Nie udało się uruchomić proxy")
 
-        # Użyj Anthropic SDK przez proxy
-        # Używamy auth_token jako api_key dla SDK (proxy go zignoruje, ale SDK wymaga)
         client = Anthropic(api_key=auth_token)
-
-        # Proxy zawsze zwraca stream, więc musimy go obsłużyć
         stream = client.messages.create(
-            model="claude-sonnet-4-20250514", # Model zostanie podmieniony przez claude.ai na webowy
+            model="claude-sonnet-4-20250514",
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
             stream=True
@@ -707,14 +550,13 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         for event in stream:
             if event.type == "content_block_delta":
                 if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
-                     text_chunk = event.delta.text
-                     if text_chunk:
-                         full_text += text_chunk
-        
+                    text_chunk = event.delta.text
+                    if text_chunk:
+                        full_text += text_chunk
+
         return full_text.strip()
 
-    def _call_gemini(self, api_key, prompt):
-        """Wywołuje Gemini API."""
+    def call_gemini(api_key, prompt):
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model="gemini-2.0-flash",
@@ -722,28 +564,157 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         )
         return response.text.strip()
 
-    def _set_debug(self, text):
-        """Ustawia tekst w polu debug."""
-        self.debug_text.delete("1.0", tk.END)
-        self.debug_text.insert("1.0", text)
+    def set_debug(text):
+        debug_field.value = text
+        page.update()
 
-    def _set_results(self, result):
-        """Ustawia wyniki w polach tekstowych."""
-        self.recognition_text.delete("1.0", tk.END)
-        self.recognition_text.insert("1.0", result.get("rozpoznanie", "-"))
+    def set_results(recognition, service, procedure):
+        recognition_field.value = recognition
+        service_field.value = service
+        procedure_field.value = procedure
+        show_snackbar("Opis wygenerowany!")
+        page.update()
 
-        self.service_text.delete("1.0", tk.END)
-        self.service_text.insert("1.0", result.get("swiadczenie", "-"))
+    def show_error(msg):
+        show_snackbar(f"Błąd: {msg}", ft.Colors.RED_700)
+        recognition_field.value = ""
+        service_field.value = ""
+        procedure_field.value = ""
+        page.update()
 
-        self.procedure_text.delete("1.0", tk.END)
-        self.procedure_text.insert("1.0", result.get("procedura", "-"))
+    def finish_generation():
+        generate_button.disabled = False
+        generate_progress.visible = False
+        page.update()
 
+    def toggle_debug(e):
+        debug_field.visible = not debug_field.visible
+        e.control.text = "Ukryj Debug" if debug_field.visible else "Pokaż Debug"
+        page.update()
 
-def main():
-    root = tk.Tk()
-    app = StomatologApp(root)
-    root.mainloop()
+    # === LAYOUT ===
+    update_claude_status()
+
+    # Header
+    header = ft.Container(
+        content=ft.Row(
+            [
+                ft.Row([
+                    ft.Icon(ft.Icons.MEDICAL_SERVICES, size=32, color=ft.Colors.WHITE),
+                    ft.Text("Wywiad+", size=24, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ], spacing=12),
+                ft.Row([
+                    claude_status_text,
+                ]),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        ),
+        bgcolor=ft.Colors.BLUE_700,
+        padding=ft.Padding(left=24, right=24, top=16, bottom=16),
+    )
+
+    # Sekcja nagrywania
+    recording_section = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("Nagrywanie wywiadu", size=18, weight=ft.FontWeight.W_600),
+                ft.Divider(height=1),
+                ft.Container(
+                    content=ft.Column([
+                        record_button,
+                        ft.Row([recording_indicator, record_status], spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
+                    padding=ft.Padding(left=0, right=0, top=16, bottom=16),
+                ),
+                transcript_field,
+                ft.Row([
+                    ft.TextButton("Wyczyść", icon=ft.Icons.DELETE_OUTLINE,
+                                  on_click=lambda e: setattr(transcript_field, 'value', '') or page.update()),
+                    ft.TextButton("Kopiuj", icon=ft.Icons.COPY, on_click=copy_to_clipboard(transcript_field, "Transkrypcja")),
+                ], alignment=ft.MainAxisAlignment.END),
+            ], spacing=12),
+            padding=20,
+        ),
+        elevation=2,
+    )
+
+    # Sekcja generowania
+    generate_section = ft.Container(
+        content=ft.Row([
+            generate_button,
+            generate_progress,
+            model_indicator,
+        ], spacing=16, alignment=ft.MainAxisAlignment.CENTER),
+        padding=ft.Padding(left=0, right=0, top=8, bottom=8),
+    )
+
+    # Sekcja wyników
+    def result_card(field, label):
+        return ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Row([
+                        ft.Text(label, size=14, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_700),
+                        ft.IconButton(ft.Icons.COPY, icon_size=18, tooltip="Kopiuj",
+                                      on_click=copy_to_clipboard(field, label)),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    field,
+                ], spacing=4),
+                padding=16,
+            ),
+            elevation=1,
+        )
+
+    results_section = ft.Column([
+        ft.Text("Wygenerowany opis", size=18, weight=ft.FontWeight.W_600),
+        result_card(recognition_field, "Rozpoznanie"),
+        result_card(service_field, "Świadczenie"),
+        result_card(procedure_field, "Procedura"),
+        ft.Row([
+            ft.TextButton("Pokaż Debug", icon=ft.Icons.BUG_REPORT, on_click=toggle_debug),
+        ], alignment=ft.MainAxisAlignment.END),
+        debug_field,
+    ], spacing=12)
+
+    # Sekcja ustawień (w ExpansionTile)
+    settings_section = ft.ExpansionTile(
+        title=ft.Text("Ustawienia API", weight=ft.FontWeight.W_500),
+        leading=ft.Icon(ft.Icons.SETTINGS),
+        expanded=False,
+        controls=[
+            ft.Container(
+                content=ft.Column([
+                    gemini_key_field,
+                    ft.Row([
+                        session_key_field,
+                        ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="Usuń klucz", on_click=clear_session_key),
+                    ]),
+                    ft.Row([
+                        ft.Button("Zapisz ustawienia", icon=ft.Icons.SAVE, on_click=save_settings),
+                    ], alignment=ft.MainAxisAlignment.END),
+                ], spacing=16),
+                padding=ft.Padding(left=16, right=16, top=0, bottom=16),
+            ),
+        ],
+    )
+
+    # Główny layout
+    content = ft.Column([
+        header,
+        ft.Container(
+            content=ft.Column([
+                settings_section,
+                recording_section,
+                generate_section,
+                results_section,
+            ], spacing=16, scroll=ft.ScrollMode.AUTO),
+            padding=20,
+            expand=True,
+        ),
+    ], spacing=0, expand=True)
+
+    page.add(content)
 
 
 if __name__ == "__main__":
-    main()
+    ft.run(main)
