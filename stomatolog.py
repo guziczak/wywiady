@@ -54,137 +54,6 @@ try:
         AUTO_EXTRACTOR_AVAILABLE = True
     except ImportError:
         AUTO_EXTRACTOR_AVAILABLE = False
-
-    # --- MONKEY PATCH FIX FOR PROXY UPLOAD ---
-    try:
-        import importlib
-        # Try to find the class in the module directly
-        proxy_module = importlib.import_module("proxy.local_proxy")
-        # The class is named ClaudeAIProxyServer
-        ProxyClass = getattr(proxy_module, "ClaudeAIProxyServer", None)
-        
-        if ProxyClass:
-            def patched_convert_document(self, file_content: bytes, file_name: str):
-                """Convert document/audio to text using claude.ai upload API (PATCHED V4)."""
-                import mimetypes
-                import json
-                import uuid
-                
-                org_id = self._get_organization_id()
-                if not org_id:
-                    print("❌ [Proxy] Cannot convert document - no organization ID")
-                    return None
-
-                try:
-                    # 1. UPLOAD FILE
-                    mime_type, _ = mimetypes.guess_type(file_name)
-                    if not mime_type:
-                        mime_type = "audio/wav" if file_name.endswith(".wav") else "application/octet-stream"
-
-                    files = {
-                        "file": (file_name, file_content, mime_type),
-                        "orgUuid": (None, org_id)
-                    }
-                    headers = {"Content-Type": None}
-
-                    print(f"📤 [Proxy] Uploading {file_name} ({len(file_content)} bytes, {mime_type})")
-                    upload_resp = self.session.post(
-                        f"{self.base_url}/api/{org_id}/upload",
-                        headers=headers,
-                        files=files,
-                        timeout=120
-                    )
-
-                    if upload_resp.status_code != 200:
-                        print(f"❌ [Proxy] Upload failed: {upload_resp.status_code} - {upload_resp.text[:300]}")
-                        return None
-                    
-                    upload_data = upload_resp.json()
-                    file_uuid = upload_data.get('file_uuid')
-                    print(f"✅ [Proxy] Uploaded. UUID: {file_uuid}")
-
-                    # 2. CREATE CONVERSATION
-                    chat_name = f"Transcribe {file_name} {str(uuid.uuid4())[:8]}"
-                    chat_resp = self.session.post(
-                        f"{self.base_url}/api/organizations/{org_id}/chat_conversations",
-                        json={"uuid": None, "name": chat_name},
-                        timeout=30
-                    )
-                    if chat_resp.status_code not in (200, 201):
-                         print(f"❌ [Proxy] Create chat failed: {chat_resp.status_code}")
-                         return None
-                    
-                    chat_uuid = chat_resp.json()['uuid']
-                    print(f"💬 [Proxy] Chat created: {chat_uuid}")
-
-                    # 3. SEND MESSAGE WITH ATTACHMENT
-                    # Using Haiku model which is faster and usually available
-                    # We ask for a simple verbatim transcript.
-                    prompt = "Please transcribe this audio file verbatim. Output ONLY the text, no preamble."
-                    
-                    payload = {
-                        "attachments": [{
-                            "file_uuid": file_uuid,
-                            "file_name": file_name,
-                            "file_type": mime_type,
-                            "file_size": len(file_content),
-                            "extracted_content": ""
-                        }],
-                        "files": [],
-                        "prompt": prompt,
-                        "timezone": "Europe/Warsaw",
-                        "model": "claude-3-haiku-20240307",
-                        "rendering_mode": "raw"
-                    }
-
-                    print(f"🔄 [Proxy] Requesting transcription...")
-                    msg_resp = self.session.post(
-                        f"{self.base_url}/api/organizations/{org_id}/chat_conversations/{chat_uuid}/completion",
-                        json=payload,
-                        stream=True,
-                        timeout=120
-                    )
-
-                    full_text = ""
-                    if msg_resp.status_code == 200:
-                        for line in msg_resp.iter_lines():
-                            if line:
-                                line = line.decode('utf-8').strip()
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    try:
-                                        data = json.loads(data_str)
-                                        if data.get('type') == 'completion':
-                                            full_text += data.get('completion', '')
-                                    except:
-                                        pass
-                    else:
-                        print(f"❌ [Proxy] Transcription request failed: {msg_resp.status_code} - {msg_resp.text[:500]}")
-                        return None
-
-                    # 4. DELETE CHAT (Cleanup)
-                    try:
-                        self.session.delete(f"{self.base_url}/api/organizations/{org_id}/chat_conversations/{chat_uuid}")
-                    except:
-                        pass
-                    
-                    final_text = full_text.strip()
-                    print(f"✅ [Proxy] Transcription complete ({len(final_text)} chars)")
-                    return final_text
-
-                except Exception as e:
-                    print(f"❌ [Proxy] Conversion error: {e}")
-                    return None
-            
-            ProxyClass._convert_document = patched_convert_document
-            print(f"✅ Applied hotfix for {ProxyClass.__name__} upload")
-        else:
-            print("⚠️ Could not find ClaudeAIProxyServer class to patch")
-            
-    except Exception as e:
-        print(f"⚠️ Could not apply proxy fix: {e}")
-    # ----------------------------------------
-
     PROXY_AVAILABLE = True
 except ImportError:
     PROXY_AVAILABLE = False
@@ -803,24 +672,9 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             if model_type == "claude":
                 # Użyj session_key jeśli jest, w przeciwnym razie tokena z pliku
                 auth_key = session_key if session_key and session_key.startswith("sk-ant-sid01-") else claude_token
-                try:
-                    result_text = self._call_claude(auth_key, prompt)
-                except Exception as e:
-                    print(f"Claude fail: {e}")
-                    # Fallback do Gemini
-                    if gemini_key and genai:
-                        self.root.after(0, lambda: self._set_debug(f"⚠️ Claude Error: {e}\n🔄 Fallback to Gemini..."))
-                        model_type = "gemini" # Update for logic below
-                        result_text = self._call_gemini(gemini_key, prompt)
-                    else:
-                        raise e
-            
-            if model_type == "gemini": # Nowy if zamiast else, bo model_type mogl sie zmienic w fallbacku
+                result_text = self._call_claude(auth_key, prompt)
+            else:
                 result_text = self._call_gemini(gemini_key, prompt)
-
-            # Update UI with used model
-            final_model_name = "Claude" if model_type == "claude" else "Gemini Flash"
-            self.root.after(0, lambda: self.model_indicator.config(text=f"✓ Użyto: {final_model_name}", foreground="green" if model_type == "claude" else "blue"))
 
             # Pokaż raw output w debug
             self.root.after(0, lambda rt=result_text: self._set_debug(rt))
