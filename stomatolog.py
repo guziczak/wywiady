@@ -252,11 +252,15 @@ class StomatologApp:
         gen_frame = ttk.Frame(main_frame)
         gen_frame.pack(pady=10)
 
-        ttk.Button(
+        self.gen_btn = ttk.Button(
             gen_frame,
             text="⚡ Generuj opis",
             command=self._generate_description
-        ).pack(side=tk.LEFT)
+        )
+        self.gen_btn.pack(side=tk.LEFT)
+
+        self.progress = ttk.Progressbar(gen_frame, mode='indeterminate', length=200)
+        # Progress pakujemy dynamicznie w _set_loading_state
 
         self.model_indicator = ttk.Label(gen_frame, text="", foreground="gray")
         self.model_indicator.pack(side=tk.LEFT, padx=(10, 0))
@@ -303,6 +307,27 @@ class StomatologApp:
 
         self.debug_text = tk.Text(self.debug_frame, height=10, wrap=tk.WORD, bg="#f0f0f0")
         self.debug_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+
+    def _set_loading_state(self, is_loading):
+        """Zarządza stanem ładowania UI."""
+        if is_loading:
+            self.gen_btn.config(state="disabled", text="⏳ Przetwarzanie...")
+            self.progress.pack(side=tk.LEFT, padx=10)
+            self.progress.start(15)
+            
+            # Placeholdery
+            for field in [self.recognition_text, self.service_text, self.procedure_text]:
+                field.delete("1.0", tk.END)
+                field.insert("1.0", "Generowanie...")
+                field.config(foreground="gray")
+        else:
+            self.gen_btn.config(state="normal", text="⚡ Generuj opis")
+            self.progress.stop()
+            self.progress.pack_forget()
+            
+            # Przywróć kolor tekstu (jeśli był zmieniony)
+            for field in [self.recognition_text, self.service_text, self.procedure_text]:
+                field.config(foreground="black")
 
     def _toggle_debug_section(self):
         """Pokazuje/ukrywa sekcję debugowania."""
