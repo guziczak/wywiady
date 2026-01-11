@@ -344,7 +344,8 @@ def main(page: ft.Page):
                 transcript = transcriber_manager.transcribe(audio_path, language="pl")
                 page.run_thread(lambda: update_after_transcription(None, transcript))
             except Exception as ex:
-                page.run_thread(lambda: update_after_transcription(str(ex)[:150], None))
+                error_msg = str(ex)[:150]
+                page.run_thread(lambda msg=error_msg: update_after_transcription(msg, None))
             finally:
                 try:
                     os.unlink(audio_path)
@@ -379,7 +380,8 @@ def main(page: ft.Page):
             transcript = response.text.strip()
             page.run_thread(lambda: update_after_transcription(None, transcript))
         except Exception as ex:
-            page.run_thread(lambda: update_after_transcription(str(ex)[:100], None))
+            error_msg = str(ex)[:100]
+            page.run_thread(lambda msg=error_msg: update_after_transcription(msg, None))
         finally:
             try:
                 os.unlink(audio_path)
@@ -565,9 +567,11 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             page.run_thread(lambda: set_results(final_diagnosis, result.get("swiadczenie", "-"), result.get("procedura", "-")))
 
         except json.JSONDecodeError as je:
-            page.run_thread(lambda: show_error(f"JSON parse error: {je}"))
+            err = f"JSON parse error: {je}"
+            page.run_thread(lambda e=err: show_error(e))
         except Exception as ex:
-            page.run_thread(lambda: show_error(str(ex)))
+            err = str(ex)
+            page.run_thread(lambda e=err: show_error(e))
         finally:
             page.run_thread(finish_generation)
 
@@ -840,7 +844,9 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
     # Statusy i przyciski
     backend_status_text = ft.Text("", size=13, weight=ft.FontWeight.W_500)
+    ffmpeg_status_text = ft.Text("", size=12)
     install_button = ft.Button("Zainstaluj silnik", icon=ft.Icons.DOWNLOAD, visible=False)
+    install_ffmpeg_button = ft.Button("Zainstaluj ffmpeg", icon=ft.Icons.DOWNLOAD, visible=False)
     download_model_button = ft.Button("Pobierz model", icon=ft.Icons.DOWNLOAD, visible=False)
     action_progress = ft.ProgressRing(visible=False, width=24, height=24, stroke_width=3, color=ft.Colors.BLUE_600)
 
@@ -905,9 +911,11 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         # Reset widoczności
         install_button.visible = False
+        install_ffmpeg_button.visible = False
         download_model_button.visible = False
         model_dropdown.visible = False
         action_progress.visible = False
+        ffmpeg_status_text.value = ""
 
         if not info.is_installed:
             # Backend nie zainstalowany - pokaż przycisk instalacji
@@ -924,9 +932,21 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                 backend_status_text.value = "Wprowadź Gemini API Key i kliknij 'Zapisz ustawienia'"
                 backend_status_text.color = ft.Colors.ORANGE_700
         else:
-            # Offline backend - pokaż wybór modelu
-            model_dropdown.visible = True
-            update_model_options()
+            # Offline backend - sprawdź ffmpeg
+            if info.requires_ffmpeg and not info.ffmpeg_installed:
+                ffmpeg_status_text.value = "Brak ffmpeg - wymagany do transkrypcji offline"
+                ffmpeg_status_text.color = ft.Colors.RED_700
+                install_ffmpeg_button.visible = True
+                install_ffmpeg_button.disabled = False
+                backend_status_text.value = "Zainstaluj ffmpeg aby używać tego backendu"
+                backend_status_text.color = ft.Colors.ORANGE_700
+            else:
+                if info.requires_ffmpeg:
+                    ffmpeg_status_text.value = "ffmpeg OK"
+                    ffmpeg_status_text.color = ft.Colors.GREEN_700
+                # Pokaż wybór modelu
+                model_dropdown.visible = True
+                update_model_options()
 
         page.update()
 
@@ -968,15 +988,22 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             models = backend.get_models()
             current_model_name = model_dropdown.value
 
+            # Policz pobrane modele
+            downloaded_models = [m for m in models if m.is_downloaded]
+
             for m in models:
                 if m.name == current_model_name:
                     if m.is_downloaded:
                         download_model_button.visible = False
-                        backend_status_text.value = f"Model '{m.name}' gotowy"
+                        if len(downloaded_models) > 1:
+                            backend_status_text.value = f"Model '{m.name}' aktywny ({len(downloaded_models)} pobrane)"
+                        else:
+                            backend_status_text.value = f"Model '{m.name}' gotowy"
                         backend_status_text.color = ft.Colors.GREEN_700
                     else:
                         download_model_button.visible = True
-                        backend_status_text.value = f"Model '{m.name}' wymaga pobrania ({m.size_mb}MB)"
+                        download_model_button.text = f"Pobierz '{m.name}' ({m.size_mb}MB)"
+                        backend_status_text.value = f"Model '{m.name}' - kliknij aby pobrać"
                         backend_status_text.color = ft.Colors.ORANGE_700
                     break
         except Exception:
@@ -1061,6 +1088,50 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         page.update()
 
+    def on_install_ffmpeg_click(e):
+        """Instalacja ffmpeg."""
+        if not transcriber_manager:
+            return
+
+        install_ffmpeg_button.visible = False
+        action_progress.visible = True
+        backend_status_text.value = "Instaluję ffmpeg..."
+        backend_status_text.color = ft.Colors.BLUE_700
+        show_snackbar("Instalacja ffmpeg - może potrwać kilka minut...", ft.Colors.BLUE_700)
+        page.update()
+
+        def do_install():
+            def progress_cb(msg):
+                def update_ui():
+                    backend_status_text.value = msg
+                    page.update()
+                page.run_thread(update_ui)
+
+            success, message = transcriber_manager.install_ffmpeg(progress_cb)
+            page.run_thread(lambda: finish_ffmpeg_install(success, message))
+
+        threading.Thread(target=do_install, daemon=True).start()
+
+    def finish_ffmpeg_install(success, message):
+        action_progress.visible = False
+
+        if success:
+            show_snackbar("ffmpeg zainstalowany!", ft.Colors.GREEN_700)
+            ffmpeg_status_text.value = "ffmpeg OK"
+            ffmpeg_status_text.color = ft.Colors.GREEN_700
+            install_ffmpeg_button.visible = False
+            # Odśwież UI
+            refresh_backends_info()
+            update_ui_for_current_backend()
+        else:
+            show_snackbar(f"Błąd: {message}", ft.Colors.RED_700)
+            backend_status_text.value = f"Błąd instalacji ffmpeg: {message[:60]}"
+            backend_status_text.color = ft.Colors.RED_700
+            install_ffmpeg_button.visible = True
+            install_ffmpeg_button.disabled = False
+
+        page.update()
+
     def on_download_model_click(e):
         """Pobieranie modelu."""
         if not transcriber_manager:
@@ -1111,6 +1182,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
     # Przypisz handlery (dropdown on_change już przypisane w konstruktorze)
     install_button.on_click = on_install_click
+    install_ffmpeg_button.on_click = on_install_ffmpeg_click
     download_model_button.on_click = on_download_model_click
 
     # Wypełnij opcje przy starcie
@@ -1130,8 +1202,10 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                     model_dropdown,
                     ft.Row([
                         backend_status_text,
+                        ffmpeg_status_text,
                         action_progress,
                         install_button,
+                        install_ffmpeg_button,
                         download_model_button,
                     ], spacing=8, wrap=True),
                     ft.Divider(height=20),

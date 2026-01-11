@@ -4,15 +4,150 @@ Wspiera: Gemini Cloud, faster-whisper, openai-whisper
 """
 
 import os
+import shutil
+import subprocess
+import sys
 import threading
+import zipfile
+import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable, Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from enum import Enum
 
-# Ścieżka do modeli
+# Ścieżka do modeli i narzędzi
 MODELS_DIR = Path(__file__).parent.parent / "models"
+TOOLS_DIR = Path(__file__).parent.parent / "tools"
+
+
+# ========== FFMPEG MANAGER ==========
+
+class FFmpegManager:
+    """Zarządza instalacją i dostępnością ffmpeg."""
+
+    FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+
+    @staticmethod
+    def is_installed() -> bool:
+        """Sprawdza czy ffmpeg jest dostępny."""
+        # Sprawdź w PATH
+        if shutil.which("ffmpeg"):
+            return True
+        # Sprawdź w lokalnym folderze tools
+        local_ffmpeg = TOOLS_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
+        if local_ffmpeg.exists():
+            # Dodaj do PATH dla tego procesu
+            FFmpegManager._add_to_path()
+            return True
+        return False
+
+    @staticmethod
+    def _add_to_path():
+        """Dodaje lokalny ffmpeg do PATH."""
+        ffmpeg_bin = TOOLS_DIR / "ffmpeg" / "bin"
+        if ffmpeg_bin.exists():
+            current_path = os.environ.get("PATH", "")
+            if str(ffmpeg_bin) not in current_path:
+                os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + current_path
+
+    @staticmethod
+    def get_install_status() -> Tuple[bool, str]:
+        """Zwraca status instalacji ffmpeg."""
+        if shutil.which("ffmpeg"):
+            return True, "ffmpeg zainstalowany (systemowy)"
+        local_ffmpeg = TOOLS_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
+        if local_ffmpeg.exists():
+            return True, "ffmpeg zainstalowany (lokalny)"
+        return False, "ffmpeg nie zainstalowany"
+
+    @staticmethod
+    def install(progress_callback: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+        """Instaluje ffmpeg. Najpierw próbuje winget, potem pobiera binaria."""
+
+        # Metoda 1: Spróbuj winget (Windows 10/11)
+        if progress_callback:
+            progress_callback("Sprawdzam winget...")
+
+        try:
+            result = subprocess.run(
+                ["winget", "--version"],
+                capture_output=True,
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            )
+            if result.returncode == 0:
+                if progress_callback:
+                    progress_callback("Instaluję ffmpeg przez winget...")
+
+                subprocess.run(
+                    ["winget", "install", "ffmpeg", "--accept-package-agreements", "--accept-source-agreements", "-h"],
+                    capture_output=True,
+                    timeout=600,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                    encoding="utf-8",
+                    errors="ignore"
+                )
+
+                # Sprawdź czy ffmpeg jest teraz dostępny w PATH
+                if shutil.which("ffmpeg"):
+                    return True, "ffmpeg zainstalowany przez winget"
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+
+        # Metoda 2: Pobierz binaria
+        if progress_callback:
+            progress_callback("Pobieram ffmpeg (~100MB)...")
+
+        try:
+            TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+            zip_path = TOOLS_DIR / "ffmpeg.zip"
+
+            # Pobierz z progress
+            def download_progress(block_num, block_size, total_size):
+                if progress_callback and total_size > 0:
+                    percent = int(block_num * block_size * 100 / total_size)
+                    progress_callback(f"Pobieranie ffmpeg: {min(percent, 100)}%")
+
+            urllib.request.urlretrieve(FFmpegManager.FFMPEG_URL, zip_path, download_progress)
+
+            if progress_callback:
+                progress_callback("Rozpakowuję ffmpeg...")
+
+            # Rozpakuj
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                namelist = zf.namelist()
+                for member in namelist:
+                    if '/bin/' in member and not member.endswith('/'):
+                        filename = Path(member).name
+                        if filename:
+                            target_path = TOOLS_DIR / "ffmpeg" / "bin" / filename
+                            target_path.parent.mkdir(parents=True, exist_ok=True)
+                            with zf.open(member) as src, open(target_path, 'wb') as dst:
+                                dst.write(src.read())
+
+            # Usuń zip
+            zip_path.unlink()
+
+            # Sprawdź czy ffmpeg istnieje
+            ffmpeg_exe = TOOLS_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
+            if ffmpeg_exe.exists():
+                FFmpegManager._add_to_path()
+                if progress_callback:
+                    progress_callback("ffmpeg zainstalowany!")
+                return True, "ffmpeg pobrany i zainstalowany lokalnie"
+            else:
+                return False, "Błąd: ffmpeg.exe nie został wypakowany"
+
+        except Exception as e:
+            return False, f"Błąd instalacji ffmpeg: {str(e)}"
+
+    @staticmethod
+    def ensure_available(progress_callback: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+        """Upewnia się że ffmpeg jest dostępny. Instaluje jeśli brakuje."""
+        if FFmpegManager.is_installed():
+            return True, "ffmpeg gotowy"
+        return FFmpegManager.install(progress_callback)
 
 
 class TranscriberType(Enum):
@@ -33,6 +168,8 @@ class TranscriberInfo:
     is_installed: bool  # Czy biblioteka jest zainstalowana
     pip_package: Optional[str] = None  # Nazwa pakietu pip do instalacji
     unavailable_reason: Optional[str] = None
+    requires_ffmpeg: bool = False  # Czy wymaga ffmpeg
+    ffmpeg_installed: bool = True  # Czy ffmpeg jest zainstalowany
 
 
 @dataclass
@@ -165,9 +302,20 @@ class FasterWhisperTranscriber(TranscriberBackend):
         self._model = None
         self._model_name = "small"
         self._whisper_module = None
+        self._ffmpeg_checked = False
 
     def _get_model_path(self, model_name: str) -> Path:
         return MODELS_DIR / "faster-whisper" / model_name
+
+    def _ensure_ffmpeg(self):
+        """Sprawdza i instaluje ffmpeg jeśli potrzeba."""
+        if self._ffmpeg_checked:
+            return
+        if not FFmpegManager.is_installed():
+            success, msg = FFmpegManager.install()
+            if not success:
+                raise RuntimeError(f"Wymagany ffmpeg nie jest zainstalowany i nie udało się go pobrać: {msg}")
+        self._ffmpeg_checked = True
 
     def _ensure_model(self):
         if self._model is None:
@@ -185,6 +333,8 @@ class FasterWhisperTranscriber(TranscriberBackend):
                 raise RuntimeError("Brak biblioteki faster-whisper. Zainstaluj: pip install faster-whisper")
 
     def transcribe(self, audio_path: str, language: str = "pl") -> str:
+        # Upewnij się że ffmpeg jest dostępny
+        self._ensure_ffmpeg()
         self._ensure_model()
 
         segments, info = self._model.transcribe(audio_path, language=language, beam_size=5)
@@ -263,6 +413,17 @@ class OpenAIWhisperTranscriber(TranscriberBackend):
     def __init__(self):
         self._model = None
         self._model_name = "small"
+        self._ffmpeg_checked = False
+
+    def _ensure_ffmpeg(self):
+        """Sprawdza i instaluje ffmpeg jeśli potrzeba."""
+        if self._ffmpeg_checked:
+            return
+        if not FFmpegManager.is_installed():
+            success, msg = FFmpegManager.install()
+            if not success:
+                raise RuntimeError(f"Wymagany ffmpeg nie jest zainstalowany i nie udało się go pobrać: {msg}")
+        self._ffmpeg_checked = True
 
     def _ensure_model(self):
         if self._model is None:
@@ -273,6 +434,8 @@ class OpenAIWhisperTranscriber(TranscriberBackend):
                 raise RuntimeError("Brak biblioteki openai-whisper. Zainstaluj: pip install openai-whisper")
 
     def transcribe(self, audio_path: str, language: str = "pl") -> str:
+        # Upewnij się że ffmpeg jest dostępny
+        self._ensure_ffmpeg()
         self._ensure_model()
 
         result = self._model.transcribe(audio_path, language=language)
@@ -343,6 +506,7 @@ class TranscriberManager:
     def get_available_backends(self) -> List[TranscriberInfo]:
         """Zwraca listę wszystkich backendów z informacją o dostępności."""
         infos = []
+        ffmpeg_ok = FFmpegManager.is_installed()
 
         for t, backend in self._backends.items():
             available, reason = backend.is_available()
@@ -357,7 +521,9 @@ class TranscriberManager:
                     is_available=available,
                     is_installed=True,  # Zawsze "zainstalowany" - to cloud
                     pip_package=None,
-                    unavailable_reason=reason
+                    unavailable_reason=reason,
+                    requires_ffmpeg=False,
+                    ffmpeg_installed=True
                 )
             elif t == TranscriberType.FASTER_WHISPER:
                 is_installed = self._check_package_installed("faster_whisper")
@@ -367,10 +533,12 @@ class TranscriberManager:
                     description="Najszybsza transkrypcja offline",
                     requires_download=True,
                     model_sizes=list(FasterWhisperTranscriber.MODELS.keys()),
-                    is_available=available,
+                    is_available=available and ffmpeg_ok,
                     is_installed=is_installed,
                     pip_package="faster-whisper",
-                    unavailable_reason=reason if not is_installed else None
+                    unavailable_reason=reason if not is_installed else ("Brak ffmpeg" if not ffmpeg_ok else None),
+                    requires_ffmpeg=True,
+                    ffmpeg_installed=ffmpeg_ok
                 )
             elif t == TranscriberType.OPENAI_WHISPER:
                 is_installed = self._check_package_installed("whisper")
@@ -380,10 +548,12 @@ class TranscriberManager:
                     description="Oryginalna implementacja Whisper (offline)",
                     requires_download=True,
                     model_sizes=list(OpenAIWhisperTranscriber.MODELS.keys()),
-                    is_available=available,
+                    is_available=available and ffmpeg_ok,
                     is_installed=is_installed,
                     pip_package="openai-whisper",
-                    unavailable_reason=reason if not is_installed else None
+                    unavailable_reason=reason if not is_installed else ("Brak ffmpeg" if not ffmpeg_ok else None),
+                    requires_ffmpeg=True,
+                    ffmpeg_installed=ffmpeg_ok
                 )
 
             infos.append(info)
@@ -422,8 +592,9 @@ class TranscriberManager:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", info.pip_package, "--quiet"],
                 capture_output=True,
-                text=True,
-                timeout=300  # 5 minut timeout
+                timeout=300,  # 5 minut timeout
+                encoding="utf-8",
+                errors="ignore"
             )
 
             if result.returncode == 0:
@@ -469,3 +640,15 @@ class TranscriberManager:
         gemini = self._backends[TranscriberType.GEMINI_CLOUD]
         if isinstance(gemini, GeminiCloudTranscriber):
             gemini.set_api_key(api_key)
+
+    def install_ffmpeg(self, progress_callback: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+        """Instaluje ffmpeg."""
+        return FFmpegManager.install(progress_callback)
+
+    def is_ffmpeg_installed(self) -> bool:
+        """Sprawdza czy ffmpeg jest zainstalowany."""
+        return FFmpegManager.is_installed()
+
+    def get_ffmpeg_status(self) -> Tuple[bool, str]:
+        """Zwraca status ffmpeg."""
+        return FFmpegManager.get_install_status()
