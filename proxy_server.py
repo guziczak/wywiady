@@ -162,9 +162,12 @@ class ClaudeAIProxyServer:
                 if response.status_code == 201 or response.status_code == 200:
                     data = response.json()
                     self.conversation_uuid = data.get("uuid")
+                    print(f"✅ Created conversation: {self.conversation_uuid}")
                     return self.conversation_uuid
-            except Exception:
-                pass
+                else:
+                    print(f"❌ Create conversation failed: {response.status_code} - {response.text[:200]}")
+            except Exception as e:
+                print(f"❌ Create conversation error: {e}")
 
         return None
     
@@ -180,30 +183,33 @@ class ClaudeAIProxyServer:
             if not mime_type:
                 mime_type = "audio/wav" if file_name.endswith(".wav") else "application/octet-stream"
 
-            # CRITICAL: Use list of tuples to enforce order: orgUuid FIRST, then file.
-            # Many multipart parsers fail if metadata comes after the file stream.
-            files = [
-                ('orgUuid', (None, org_id)),
-                ('file', (file_name, file_content, mime_type))
-            ]
+            # Exact format from st1vms/unofficial-claude-api:
+            # files = {"file": (basename, fp, content_type), "orgUuid": (None, org_id)}
+            files = {
+                "file": (file_name, file_content, mime_type),
+                "orgUuid": (None, org_id),
+            }
 
             # Headers - remove Content-Type so requests can set boundary
             headers = self.session.headers.copy()
             if "Content-Type" in headers:
                 del headers["Content-Type"]
 
+            # Endpoint: /api/{org_id}/upload
             response = self.session.post(
-                f"{self.base_url}/api/organizations/{org_id}/convert_document",
+                f"{self.base_url}/api/{org_id}/upload",
                 headers=headers,
                 files=files,
                 timeout=120
             )
 
             if response.status_code == 200:
-                data = response.json()
-                return data.get("content", "")
+                resp_data = response.json()
+                print(f"✅ Upload response: {json.dumps(resp_data, indent=2)[:500]}")
+                # Try various field names
+                return resp_data.get("extracted_content") or resp_data.get("content") or resp_data.get("text") or str(resp_data)
             else:
-                print(f"❌ Conversion failed: {response.status_code} - {response.text[:200]}")
+                print(f"❌ Conversion failed: {response.status_code} - {response.text[:500]}")
                 return None
         except Exception as e:
             print(f"❌ Conversion error: {e}")
@@ -287,6 +293,7 @@ class ClaudeAIProxyServer:
             )
 
             if response.status_code != 200:
+                print(f"❌ Completion failed: {response.status_code} - {response.text[:300]}")
                 return Response(json.dumps({"error": f"Status {response.status_code}"}), status=response.status_code)
 
             def generate():
@@ -363,14 +370,17 @@ _proxy_instance: Optional[ClaudeAIProxyServer] = None
 
 def start_proxy_server(oauth_token: str, port: int = 8765, conversation_uuid: str = None) -> tuple[bool, int]:
     global _proxy_instance
-    
-    # Reuse if running (and maybe update token?)
-    # For now, simplistic approach:
+
+    # Check if token changed - if so, need to recreate proxy
     if _proxy_instance:
-         # If needed, we could update the UUID here
-         if conversation_uuid and not _proxy_instance.conversation_uuid:
-             _proxy_instance.conversation_uuid = conversation_uuid
-         return (True, _proxy_instance.port)
+        if _proxy_instance.oauth_token != oauth_token:
+            print(f"🔄 Token changed, recreating proxy...")
+            _proxy_instance = None  # Force recreation
+        else:
+            # Same token, just update UUID if needed
+            if conversation_uuid and not _proxy_instance.conversation_uuid:
+                _proxy_instance.conversation_uuid = conversation_uuid
+            return (True, _proxy_instance.port)
 
     # Find port
     original_port = port
