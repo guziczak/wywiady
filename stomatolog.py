@@ -15,6 +15,7 @@ import json
 
 # Ścieżka do pliku konfiguracyjnego
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+ICD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icd10.json")
 
 # Zewnętrzne zależności
 try:
@@ -102,12 +103,23 @@ class StomatologApp:
         self.sample_rate = 16000
         self.api_key_var = tk.StringVar()
         self.session_key_var = tk.StringVar()
+        self.icd10_codes = {}
 
         self._create_widgets()
         self._load_config()
+        self._load_icd10()
 
         # Zapisz config przy zamknięciu
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _load_icd10(self):
+        """Ładuje kody ICD-10 z pliku JSON."""
+        try:
+            if os.path.exists(ICD_FILE):
+                with open(ICD_FILE, "r", encoding="utf-8") as f:
+                    self.icd10_codes = json.load(f)
+        except Exception as e:
+            print(f"Błąd ładowania ICD-10: {e}")
 
     def _load_config(self):
         """Ładuje zapisaną konfigurację."""
@@ -192,6 +204,14 @@ class StomatologApp:
         ttk.Label(claude_row, text="Claude Session Key:").pack(side=tk.LEFT)
         self.session_key_entry = ttk.Entry(claude_row, textvariable=self.session_key_var, width=40, show="*")
         self.session_key_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
+
+        # Przycisk czyszczenia klucza
+        ttk.Button(
+            claude_row,
+            text="🗑️",
+            width=3,
+            command=self._clear_session_key
+        ).pack(side=tk.LEFT, padx=(2, 0))
         
         # Przycisk Auto-Login
         if AUTO_EXTRACTOR_AVAILABLE:
@@ -360,6 +380,13 @@ class StomatologApp:
         copy_btn.pack(side=tk.RIGHT)
 
         setattr(self, f"{attr_name}_text", text_widget)
+
+    def _clear_session_key(self):
+        """Czyści zapisany klucz sesji."""
+        self.session_key_var.set("")
+        self._save_config()
+        self._update_claude_status()
+        messagebox.showinfo("Info", "Klucz sesji został usunięty.")
 
     def _toggle_key_visibility(self):
         """Przełącza widoczność kluczy API."""
@@ -561,41 +588,30 @@ class StomatologApp:
     def _process_transcript(self, gemini_key, session_key, claude_token, transcript, model_type):
         """Przetwarza transkrypcję na opis medyczny."""
 
+        # Przygotuj listę kodów do promptu
+        icd_context = json.dumps(self.icd10_codes, indent=2, ensure_ascii=False)
+
         prompt = f"""Jesteś asystentem do formatowania dokumentacji stomatologicznej.
 Twoim zadaniem jest przekształcenie surowych notatek z wywiadu stomatologa na sformatowany tekst dokumentacji.
 
-NIE udzielasz porad medycznych - jedynie formatujesz i porządkujesz informacje podane przez stomatologa.
-Jeśli stomatolog opisuje objawy ale nie podaje diagnozy, na podstawie objawów ZASUGERUJ najbardziej prawdopodobne rozpoznanie stomatologiczne.
+Dostępne kody ICD-10 (Baza wiedzy):
+{icd_context}
 
-WAŻNE ROZRÓŻNIENIE:
-- OBJAW to co pacjent zgłasza: "ból zęba", "krwawienie dziąseł", "nadwrażliwość"
-- ROZPOZNANIE to diagnoza medyczna: "próchnica zęba 36", "pulpitis irreversibilis", "periodontitis chronica"
+INSTRUKCJA:
+1. Przeanalizuj tekst i wybierz NAJLEPIEJ pasujący kod z powyższej listy. Jeśli żaden nie pasuje idealnie, wybierz "Inne" (np. K08.8).
+2. Sformatuj wynik w JSON.
 
-Wskazówki diagnostyczne:
-- Ból na zimno który USTĘPUJE po usunięciu bodźca → Caries (próchnica)
-- Ból na zimno który UTRZYMUJE SIĘ po usunięciu bodźca → Pulpitis irreversibilis (nieodwracalne zapalenie miazgi)
-- Ból przy opukiwaniu pionowym → może wskazywać na periodontitis apicalis
-- Krwawienie dziąseł, obrzęk → Gingivitis lub Periodontitis
-
-Na podstawie poniższej transkrypcji wywiadu, wyodrębnij i sformatuj:
-
-1. ROZPOZNANIE - diagnoza stomatologiczna w nomenklaturze łacińskiej z numerem zęba jeśli podany
-   Przykłady: "Caries profunda dentis 16", "Pulpitis irreversibilis dentis 46", "Periodontitis apicalis"
-
-2. ŚWIADCZENIE - wykonane lub planowane zabiegi
-   Przykłady: "wypełnienie zęba", "leczenie endodontyczne", "ekstrakcja"
-
-3. PROCEDURA - szczegółowy opis wykonanych czynności
-   Przykład: "Znieczulenie nasiękowe, opracowanie ubytku, wypełnienie kompozytem"
+Wymagane pola JSON:
+- "rozpoznanie": tekst diagnozy (np. "Caries profunda dentis 16")
+- "icd10": kod z listy (np. "K02.1")
+- "swiadczenie": wykonane zabiegi
+- "procedura": szczegółowy opis
 
 Transkrypcja wywiadu:
 {transcript}
 
-Odpowiedz w formacie JSON:
-{{"rozpoznanie": "...", "swiadczenie": "...", "procedura": "..."}}
-
-Jeśli jakieś pole nie wynika z wywiadu, wpisz "-".
-Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
+Odpowiedz TYLKO poprawnym kodem JSON:
+{{"rozpoznanie": "...", "icd10": "...", "swiadczenie": "...", "procedura": "..."}}"""
 
         try:
             if model_type == "claude":
@@ -618,6 +634,20 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
 
             # Parsuj JSON
             result = json.loads(cleaned_text)
+
+            # Formatuj rozpoznanie z kodem ICD-10
+            icd_code = result.get("icd10", "")
+            diagnosis = result.get("rozpoznanie", "-")
+            
+            if icd_code and icd_code != "-":
+                # Pobierz opis z bazy jeśli dostępny, lub użyj tego z JSON
+                icd_desc = self.icd10_codes.get(icd_code, "")
+                final_diagnosis = f"[{icd_code}] {diagnosis}"
+            else:
+                final_diagnosis = diagnosis
+
+            # Nadpisz w obiekcie wynikowym dla UI
+            result["rozpoznanie"] = final_diagnosis
 
             # Aktualizuj UI
             self.root.after(0, lambda: self._set_results(result))
