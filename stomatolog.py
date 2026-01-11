@@ -492,103 +492,48 @@ class StomatologApp:
             self.record_status.config(text="Status: Brak nagrania")
 
     def _transcribe_audio(self, audio_path):
-        """Wysyła audio do Claude (proxy) lub Gemini i otrzymuje transkrypcję."""
-        gemini_key = self.api_key_var.get().strip()
-        session_key = self.session_key_var.get().strip()
+        """Wysyła audio do Gemini i otrzymuje transkrypcję."""
+        api_key = self.api_key_var.get().strip()
 
-        transcript = None
-        used_model = "None"
+        if not api_key:
+            self._update_status("Status: Brak API key!")
+            return
 
-        # 1. Próba użycia Claude (jeśli mamy session key i proxy)
-        if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
-            try:
-                # Upewnij się, że proxy działa
-                if not hasattr(self, '_proxy_started') or not self._proxy_started:
-                    import io, sys
-                    old_stdout = sys.stdout
-                    sys.stdout = io.StringIO()
-                    try:
-                        success, port = start_proxy_server(session_key, port=8765)
-                    finally:
-                        sys.stdout = old_stdout
-                    if success:
-                        self._proxy_started = True
-                        self._proxy_port = port
+        if genai is None:
+            self._update_status("Status: Brak biblioteki google-genai!")
+            return
 
-                port = getattr(self, "_proxy_port", 8765)
-
-                # Wyślij plik do proxy /convert endpoint
-                import requests
-                with open(audio_path, 'rb') as f:
-                    files = {'file': (os.path.basename(audio_path), f, 'audio/wav')}
-                    self._update_status("Status: Przetwarzanie (Claude)...")
-                    response = requests.post(f"http://127.0.0.1:{port}/convert", files=files, timeout=120)
-
-                if response.status_code == 200:
-                    data = response.json()
-                    transcript = data.get("text")
-                    if transcript:
-                        used_model = "Claude"
-            except Exception as e:
-                print(f"Claude Audio fail: {e}")
-                # Fallback do Gemini
-
-        # 2. Fallback do Gemini (jeśli Claude zawiódł lub brak klucza)
-        if not transcript:
-            if not gemini_key:
-                self._update_status("Status: Brak API key Gemini i Claude!")
-                try:
-                    os.unlink(audio_path)
-                except:
-                    pass
-                return
-
-            if genai is None:
-                self._update_status("Status: Brak biblioteki google-genai!")
-                try:
-                    os.unlink(audio_path)
-                except:
-                    pass
-                return
-
-            try:
-                self._update_status("Status: Przetwarzanie (Gemini Flash)...")
-                client = genai.Client(api_key=gemini_key)
-
-                # Wczytaj plik audio
-                with open(audio_path, "rb") as f:
-                    audio_bytes = f.read()
-
-                # Wyślij do Gemini
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=[
-                        "Przetranscybuj poniższe nagranie audio na tekst. "
-                        "Zwróć tylko transkrypcję, bez żadnych dodatkowych komentarzy.",
-                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
-                    ]
-                )
-
-                transcript = response.text.strip()
-                used_model = "Gemini"
-
-            except Exception as e:
-                self._update_status(f"Status: Błąd - {str(e)[:50]}")
-                try:
-                    os.unlink(audio_path)
-                except:
-                    pass
-                return
-
-        # Sukces
-        self.root.after(0, lambda: self._set_transcript(transcript))
-        self._update_status(f"Status: Gotowy ({used_model})")
-
-        # Usuń plik tymczasowy
         try:
-            os.unlink(audio_path)
-        except:
-            pass
+            client = genai.Client(api_key=api_key)
+
+            # Wczytaj plik audio
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+
+            # Wyślij do Gemini
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[
+                    "Przetranscybuj poniższe nagranie audio na tekst. "
+                    "Zwróć tylko transkrypcję, bez żadnych dodatkowych komentarzy.",
+                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+                ]
+            )
+
+            transcript = response.text.strip()
+
+            # Aktualizuj UI
+            self.root.after(0, lambda: self._set_transcript(transcript))
+            self._update_status("Status: Gotowy")
+
+        except Exception as e:
+            self._update_status(f"Status: Błąd - {str(e)[:50]}")
+        finally:
+            # Usuń plik tymczasowy
+            try:
+                os.unlink(audio_path)
+            except:
+                pass
 
     def _set_transcript(self, text):
         """Dopisuje tekst transkrypcji na końcu."""
