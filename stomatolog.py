@@ -308,8 +308,34 @@ class StomatologApp:
         setattr(self, f"{attr_name}_text", text_widget)
 
     def _toggle_key_visibility(self):
-        """Przełącza widoczność klucza API."""
-        self.api_key_entry.config(show="" if self.show_key_var.get() else "*")
+        """Przełącza widoczność kluczy API."""
+        show_char = "" if self.show_key_var.get() else "*"
+        self.api_key_entry.config(show=show_char)
+        self.session_key_entry.config(show=show_char)
+
+    def _start_auto_login(self):
+        """Uruchamia auto-login w tle."""
+        if not AUTO_EXTRACTOR_AVAILABLE:
+            messagebox.showerror("Błąd", "Brak modułu Selenium/WebDriver!")
+            return
+            
+        self.claude_status.config(text="⏳ Otwieram przeglądarkę... Zaloguj się!", foreground="blue")
+        threading.Thread(target=self._process_auto_login, daemon=True).start()
+
+    def _process_auto_login(self):
+        """Logika auto-logowania."""
+        try:
+            key = extract_session_key_auto()
+            if key:
+                self.root.after(0, lambda: self.session_key_var.set(key))
+                self.root.after(0, lambda: self._save_config())
+                self.root.after(0, lambda: self._update_claude_status())
+                self.root.after(0, lambda: messagebox.showinfo("Sukces", "Pobrano Session Key!"))
+            else:
+                self.root.after(0, lambda: self.claude_status.config(text="❌ Nie udało się pobrać klucza", foreground="red"))
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Błąd", f"Błąd logowania: {e}"))
+            self.root.after(0, lambda: self.claude_status.config(text="❌ Błąd logowania", foreground="red"))
 
     def _copy_to_clipboard(self, text_widget, btn=None):
         """Kopiuje zawartość pola tekstowego do schowka."""
@@ -445,32 +471,37 @@ class StomatologApp:
     def _generate_description(self):
         """Generuje opis medyczny na podstawie transkrypcji."""
         gemini_key = self.api_key_var.get().strip()
+        session_key = self.session_key_var.get().strip()
         claude_token = load_claude_token()
+        
         transcript = self.transcript_text.get("1.0", tk.END).strip()
 
         if not transcript:
             messagebox.showerror("Błąd", "Brak transkrypcji do przetworzenia!")
             return
 
-        # Wybierz model - priorytet Claude z proxy
-        if claude_token and PROXY_AVAILABLE:
+        # Wybierz model - priorytet Session Key -> Token Claude -> Gemini
+        if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
             model_type = "claude"
-            self.model_indicator.config(text="→ claude.ai (proxy)", foreground="purple")
+            self.model_indicator.config(text="→ claude.ai (Session Key)", foreground="green")
+        elif claude_token and PROXY_AVAILABLE:
+            model_type = "claude"
+            self.model_indicator.config(text="→ claude.ai (OAuth Token)", foreground="purple")
         elif gemini_key and genai:
             model_type = "gemini"
             self.model_indicator.config(text="→ Gemini Flash", foreground="blue")
         else:
-            messagebox.showerror("Błąd", "Brak tokena Claude ani Gemini API key!")
+            messagebox.showerror("Błąd", "Brak Session Key/Tokena Claude ani Gemini API key!")
             return
 
         # Przetwarzaj w tle
         threading.Thread(
             target=self._process_transcript,
-            args=(gemini_key, claude_token, transcript, model_type),
+            args=(gemini_key, session_key, claude_token, transcript, model_type),
             daemon=True
         ).start()
 
-    def _process_transcript(self, gemini_key, claude_token, transcript, model_type):
+    def _process_transcript(self, gemini_key, session_key, claude_token, transcript, model_type):
         """Przetwarza transkrypcję na opis medyczny."""
 
         prompt = f"""Jesteś asystentem do formatowania dokumentacji stomatologicznej.
@@ -511,7 +542,9 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
 
         try:
             if model_type == "claude":
-                result_text = self._call_claude(claude_token, prompt)
+                # Użyj session_key jeśli jest, w przeciwnym razie tokena z pliku
+                auth_key = session_key if session_key and session_key.startswith("sk-ant-sid01-") else claude_token
+                result_text = self._call_claude(auth_key, prompt)
             else:
                 result_text = self._call_gemini(gemini_key, prompt)
 
@@ -539,12 +572,15 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
             self.root.after(0, lambda em=error_msg: self._set_debug(f"ERROR: {em}"))
             self.root.after(0, lambda em=error_msg: messagebox.showerror("Błąd", f"Błąd: {em}"))
 
-    def _call_claude(self, oauth_token, prompt):
+    def _call_claude(self, auth_token, prompt):
         """Wywołuje Claude przez proxy do claude.ai."""
         import os
         import time
         import io
         import sys
+
+        if not auth_token:
+             raise ValueError("Brak tokena/klucza Claude!")
 
         # Uruchom proxy jeśli jeszcze nie działa
         if not hasattr(self, '_proxy_started') or not self._proxy_started:
@@ -552,7 +588,8 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                success, port = start_proxy_server(oauth_token, port=8765)
+                # Przekazujemy token - proxy samo rozpozna czy to sessionKey czy OAuth
+                success, port = start_proxy_server(auth_token, port=8765)
             finally:
                 sys.stdout = old_stdout
 
@@ -565,15 +602,26 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
                 raise Exception("Nie udalo sie uruchomic proxy")
 
         # Użyj Anthropic SDK przez proxy
-        client = Anthropic(api_key=oauth_token)
+        # Używamy auth_token jako api_key dla SDK (proxy go zignoruje, ale SDK wymaga)
+        client = Anthropic(api_key=auth_token)
 
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        # Proxy zawsze zwraca stream, więc musimy go obsłużyć
+        stream = client.messages.create(
+            model="claude-sonnet-4-20250514", # Model zostanie podmieniony przez claude.ai na webowy
             max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            stream=True
         )
 
-        return message.content[0].text.strip()
+        full_text = ""
+        for event in stream:
+            if event.type == "content_block_delta":
+                if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                     text_chunk = event.delta.text
+                     if text_chunk:
+                         full_text += text_chunk
+        
+        return full_text.strip()
 
     def _call_gemini(self, api_key, prompt):
         """Wywołuje Gemini API."""
