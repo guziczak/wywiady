@@ -782,7 +782,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                     ),
                     actions=[
                         ft.TextButton("Anuluj", on_click=close_dlg),
-                        ft.ElevatedButton("Zainstaluj", on_click=do_install),
+                        ft.Button("Zainstaluj", on_click=do_install),
                     ],
                 )
                 page.overlay.append(dlg)
@@ -996,10 +996,35 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         # Wyraźny feedback
         install_button.visible = False
         action_progress.visible = True
-        backend_status_text.value = f"Instaluję {info.pip_package}... (może potrwać 1-3 min)"
+        backend_status_text.value = f"Instaluję {info.pip_package}..."
         backend_status_text.color = ft.Colors.BLUE_700
-        show_snackbar(f"Rozpoczynam instalację {info.pip_package}...", ft.Colors.BLUE_700)
+        show_snackbar(f"Instalacja {info.pip_package} - może potrwać 1-3 minuty...", ft.Colors.BLUE_700)
         page.update()
+
+        # Stan animacji
+        install_state = {"running": True, "dots": 0}
+
+        def animate_status():
+            """Animuje tekst statusu podczas instalacji."""
+            messages = [
+                f"Instaluję {info.pip_package}",
+                f"Pobieram pakiety",
+                f"Rozpakowuję pliki",
+                f"Instaluję zależności",
+                f"Prawie gotowe",
+            ]
+            msg_idx = 0
+            while install_state["running"]:
+                dots = "." * (install_state["dots"] % 4)
+                msg = messages[msg_idx % len(messages)]
+                def update():
+                    backend_status_text.value = f"{msg}{dots}"
+                    page.update()
+                page.run_thread(update)
+                install_state["dots"] += 1
+                if install_state["dots"] % 8 == 0:
+                    msg_idx += 1
+                time.sleep(0.5)
 
         def do_install():
             def progress_cb(msg):
@@ -1012,8 +1037,11 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                 TranscriberType(backend_radio.value),
                 progress_cb
             )
+            install_state["running"] = False
             page.run_thread(lambda: finish_install(success, message))
 
+        # Uruchom animację i instalację
+        threading.Thread(target=animate_status, daemon=True).start()
         threading.Thread(target=do_install, daemon=True).start()
 
     def finish_install(success, message):
