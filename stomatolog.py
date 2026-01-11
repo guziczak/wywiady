@@ -42,23 +42,26 @@ try:
 except ImportError:
     cloudscraper = None
 
-# Import proxy z claude-code-py
-import sys
-sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
+# Import lokalnego proxy
 try:
-    from proxy import start_proxy_server, get_proxy_base_url
-    from anthropic import Anthropic
-    # Próba importu auto-extractora
-    try:
-        from utils.auto_session_extractor import extract_session_key_auto
-        AUTO_EXTRACTOR_AVAILABLE = True
-    except ImportError:
-        AUTO_EXTRACTOR_AVAILABLE = False
+    from proxy_server import start_proxy_server, get_proxy_base_url
     PROXY_AVAILABLE = True
 except ImportError:
     PROXY_AVAILABLE = False
-    AUTO_EXTRACTOR_AVAILABLE = False
+
+try:
+    from anthropic import Anthropic
+except ImportError:
     Anthropic = None
+
+# Import auto-extractora z zewnętrznego narzędzia (opcjonalne)
+try:
+    import sys
+    sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
+    from utils.auto_session_extractor import extract_session_key_auto
+    AUTO_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    AUTO_EXTRACTOR_AVAILABLE = False
 
 def load_claude_token():
     """Ładuje token z Claude Code (~/.claude/.credentials.json)."""
@@ -104,6 +107,7 @@ class StomatologApp:
         self.api_key_var = tk.StringVar()
         self.session_key_var = tk.StringVar()
         self.icd10_codes = {}
+        self.chat_uuid = None
 
         self._create_widgets()
         self._load_config()
@@ -129,6 +133,7 @@ class StomatologApp:
                     config = json.load(f)
                     self.api_key_var.set(config.get("api_key", ""))
                     self.session_key_var.set(config.get("session_key", ""))
+                    self.chat_uuid = config.get("chat_uuid", None)
             
             self._update_claude_status()
         except:
@@ -139,7 +144,8 @@ class StomatologApp:
         try:
             config = {
                 "api_key": self.api_key_var.get(),
-                "session_key": self.session_key_var.get()
+                "session_key": self.session_key_var.get(),
+                "chat_uuid": getattr(self, "chat_uuid", None)
             }
             with open(CONFIG_FILE, "w") as f:
                 json.dump(config, f)
@@ -278,6 +284,13 @@ class StomatologApp:
             command=self._generate_description
         )
         self.gen_btn.pack(side=tk.LEFT)
+
+        ttk.Button(
+            gen_frame,
+            text="🗑️ Czat",
+            width=8,
+            command=self._reset_chat
+        ).pack(side=tk.LEFT, padx=(5, 0))
 
         self.progress = ttk.Progressbar(gen_frame, mode='indeterminate', length=200)
         # Progress pakujemy dynamicznie w _set_loading_state
@@ -492,48 +505,89 @@ class StomatologApp:
             self.record_status.config(text="Status: Brak nagrania")
 
     def _transcribe_audio(self, audio_path):
-        """Wysyła audio do Gemini i otrzymuje transkrypcję."""
-        api_key = self.api_key_var.get().strip()
+        """Wysyła audio do Claude (proxy) lub Gemini i otrzymuje transkrypcję."""
+        gemini_key = self.api_key_var.get().strip()
+        session_key = self.session_key_var.get().strip()
+        
+        transcript = None
+        used_model = "None"
 
-        if not api_key:
-            self._update_status("Status: Brak API key!")
-            return
-
-        if genai is None:
-            self._update_status("Status: Brak biblioteki google-genai!")
-            return
-
-        try:
-            client = genai.Client(api_key=api_key)
-
-            # Wczytaj plik audio
-            with open(audio_path, "rb") as f:
-                audio_bytes = f.read()
-
-            # Wyślij do Gemini
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[
-                    "Przetranscybuj poniższe nagranie audio na tekst. "
-                    "Zwróć tylko transkrypcję, bez żadnych dodatkowych komentarzy.",
-                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
-                ]
-            )
-
-            transcript = response.text.strip()
-
-            # Aktualizuj UI
-            self.root.after(0, lambda: self._set_transcript(transcript))
-            self._update_status("Status: Gotowy")
-
-        except Exception as e:
-            self._update_status(f"Status: Błąd - {str(e)[:50]}")
-        finally:
-            # Usuń plik tymczasowy
+        # 1. Próba użycia Claude (jeśli mamy session key)
+        if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
             try:
-                os.unlink(audio_path)
-            except:
-                pass
+                # Upewnij się, że proxy działa
+                if not hasattr(self, '_proxy_started') or not self._proxy_started:
+                    success, port = start_proxy_server(session_key, port=8765, conversation_uuid=self.chat_uuid)
+                    if success:
+                        self._proxy_started = True
+                        self._proxy_port = port
+                
+                port = getattr(self, "_proxy_port", 8765)
+                
+                # Wyślij plik do proxy
+                import requests
+                with open(audio_path, 'rb') as f:
+                    files = {'file': (os.path.basename(audio_path), f, 'audio/wav')}
+                    self._update_status("Status: Przetwarzanie (Claude Audio)...")
+                    response = requests.post(f"http://127.0.0.1:{port}/convert", files=files, timeout=120)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    transcript = data.get("text")
+                    if transcript:
+                        used_model = "Claude"
+            except Exception as e:
+                print(f"Claude Audio fail: {e}")
+                # Fallback do Gemini
+
+        # 2. Fallback do Gemini (jeśli Claude zawiódł lub brak klucza)
+        if not transcript:
+            if not gemini_key:
+                self._update_status("Status: Brak API key Gemini i Claude!")
+                return
+            if genai is None:
+                self._update_status("Status: Brak biblioteki google-genai!")
+                return
+
+            try:
+                self._update_status("Status: Przetwarzanie (Gemini Flash)...")
+                client = genai.Client(api_key=gemini_key)
+
+                # Wczytaj plik audio
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+
+                # Wyślij do Gemini
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=[
+                        "Przetranscybuj poniższe nagranie audio na tekst. "
+                        "Zwróć tylko transkrypcję, bez żadnych dodatkowych komentarzy.",
+                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+                    ]
+                )
+
+                transcript = response.text.strip()
+                used_model = "Gemini"
+
+            except Exception as e:
+                self._update_status(f"Status: Błąd - {str(e)[:50]}")
+                # Usuń plik tymczasowy
+                try:
+                    os.unlink(audio_path)
+                except:
+                    pass
+                return
+
+        # Sukces
+        self.root.after(0, lambda: self._set_transcript(transcript))
+        self._update_status(f"Status: Gotowy ({used_model})")
+        
+        # Usuń plik tymczasowy
+        try:
+            os.unlink(audio_path)
+        except:
+            pass
 
     def _set_transcript(self, text):
         """Dopisuje tekst transkrypcji na końcu."""
@@ -662,6 +716,40 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             # Zawsze przywróć stan UI
             self.root.after(0, lambda: self._set_loading_state(False))
 
+    def _reset_chat(self):
+        """Resetuje historię czatu w Claude."""
+        if not PROXY_AVAILABLE:
+            return
+            
+        try:
+            # Wywołaj endpoint DELETE na proxy
+            import requests
+            port = getattr(self, "_proxy_port", 8765)
+            url = f"http://127.0.0.1:{port}/uuid"
+            requests.delete(url, timeout=2)
+            
+            self.chat_uuid = None
+            self._save_config()
+            messagebox.showinfo("Info", "Historia czatu została wyczyszczona.")
+        except Exception as e:
+            messagebox.showwarning("Błąd", f"Nie udało się zresetować czatu: {e}")
+
+    def _fetch_current_uuid(self):
+        """Pobiera aktualne UUID z proxy."""
+        try:
+            import requests
+            port = getattr(self, "_proxy_port", 8765)
+            url = f"http://127.0.0.1:{port}/uuid"
+            resp = requests.get(url, timeout=1)
+            if resp.status_code == 200:
+                data = resp.json()
+                new_uuid = data.get("uuid")
+                if new_uuid and new_uuid != self.chat_uuid:
+                    self.chat_uuid = new_uuid
+                    self._save_config()
+        except:
+            pass
+
     def _call_claude(self, auth_token, prompt):
         """Wywołuje Claude przez proxy do claude.ai."""
         import os
@@ -679,7 +767,8 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             sys.stdout = io.StringIO()
             try:
                 # Przekazujemy token - proxy samo rozpozna czy to sessionKey czy OAuth
-                success, port = start_proxy_server(auth_token, port=8765)
+                # Przekazujemy też chat_uuid z konfiguracji (resume session)
+                success, port = start_proxy_server(auth_token, port=8765, conversation_uuid=self.chat_uuid)
             finally:
                 sys.stdout = old_stdout
 
@@ -711,6 +800,9 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                      if text_chunk:
                          full_text += text_chunk
         
+        # Po zakończeniu generowania, pobierz aktualne UUID (bo proxy mogło utworzyć nowe)
+        self._fetch_current_uuid()
+
         return full_text.strip()
 
     def _call_gemini(self, api_key, prompt):
