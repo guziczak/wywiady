@@ -548,6 +548,9 @@ class StomatologApp:
             messagebox.showerror("Błąd", "Brak Session Key/Tokena Claude ani Gemini API key!")
             return
 
+        # Ustaw stan ładowania
+        self._set_loading_state(True)
+
         # Przetwarzaj w tle
         threading.Thread(
             target=self._process_transcript,
@@ -625,6 +628,9 @@ Odpowiedz TYLKO JSON-em, bez dodatkowego tekstu."""
             error_msg = str(e)
             self.root.after(0, lambda em=error_msg: self._set_debug(f"ERROR: {em}"))
             self.root.after(0, lambda em=error_msg: messagebox.showerror("Błąd", f"Błąd: {em}"))
+        finally:
+            # Zawsze przywróć stan UI
+            self.root.after(0, lambda: self._set_loading_state(False))
 
     def _call_claude(self, auth_token, prompt):
         """Wywołuje Claude przez proxy do claude.ai."""
