@@ -261,34 +261,63 @@ class StomatologApp:
         self.model_indicator = ttk.Label(gen_frame, text="", foreground="gray")
         self.model_indicator.pack(side=tk.LEFT, padx=(10, 0))
 
-        # === DEBUG - RAW OUTPUT ===
-        debug_frame = ttk.LabelFrame(main_frame, text="Debug - Raw output z Gemini", padding="5")
-        debug_frame.pack(fill=tk.X, pady=(0, 10))
+        # === SEKCJA WYNIKÓW (GŁÓWNA) ===
+        # Używamy PanedWindow dla elastyczności lub po prostu frame z expand
+        results_frame = ttk.LabelFrame(main_frame, text="Wygenerowany opis", padding="5")
+        results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        debug_btn_row = ttk.Frame(debug_frame)
+        # Kontener na pola wyników
+        self.results_container = ttk.Frame(results_frame)
+        self.results_container.pack(fill=tk.BOTH, expand=True)
+
+        # Rozpoznanie
+        self._create_result_field(self.results_container, "Rozpoznanie:", "recognition", height=4)
+
+        # Świadczenie
+        self._create_result_field(self.results_container, "Świadczenie:", "service", height=4)
+
+        # Procedura - to pole często jest najdłuższe
+        self._create_result_field(self.results_container, "Procedura:", "procedure", height=8)
+
+        # === DEBUG (ZWIJANY) ===
+        debug_ctrl_frame = ttk.Frame(main_frame)
+        debug_ctrl_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.debug_visible = False
+        self.debug_toggle_btn = ttk.Button(
+            debug_ctrl_frame, 
+            text="🐞 Pokaż Debug", 
+            command=self._toggle_debug_section
+        )
+        self.debug_toggle_btn.pack(side=tk.LEFT)
+
+        # Ramka debuga (domyślnie nie spakowana)
+        self.debug_frame = ttk.LabelFrame(main_frame, text="Raw output z Gemini/Claude", padding="5")
+        
+        debug_btn_row = ttk.Frame(self.debug_frame)
         debug_btn_row.pack(fill=tk.X)
 
         debug_copy_btn = ttk.Button(debug_btn_row, text="📋 Kopiuj")
         debug_copy_btn.config(command=lambda: self._copy_to_clipboard(self.debug_text, debug_copy_btn))
         debug_copy_btn.pack(side=tk.RIGHT)
 
-        self.debug_text = tk.Text(debug_frame, height=4, wrap=tk.WORD, bg="#f0f0f0")
-        self.debug_text.pack(fill=tk.X, pady=(5, 0))
+        self.debug_text = tk.Text(self.debug_frame, height=10, wrap=tk.WORD, bg="#f0f0f0")
+        self.debug_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
-        # === SEKCJA WYNIKÓW ===
-        results_frame = ttk.LabelFrame(main_frame, text="Wygenerowany opis", padding="5")
-        results_frame.pack(fill=tk.BOTH, expand=True)
+    def _toggle_debug_section(self):
+        """Pokazuje/ukrywa sekcję debugowania."""
+        if self.debug_visible:
+            self.debug_frame.pack_forget()
+            self.debug_toggle_btn.config(text="🐞 Pokaż Debug")
+            self.debug_visible = False
+        else:
+            self.debug_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
+            self.debug_toggle_btn.config(text="🐞 Ukryj Debug")
+            self.debug_visible = True
+            # Scroll na dół żeby pokazać debug
+            self.root.after(100, lambda: self.debug_text.see(tk.END))
 
-        # Rozpoznanie
-        self._create_result_field(results_frame, "Rozpoznanie:", "recognition")
-
-        # Świadczenie
-        self._create_result_field(results_frame, "Świadczenie:", "service")
-
-        # Procedura
-        self._create_result_field(results_frame, "Procedura:", "procedure")
-
-    def _create_result_field(self, parent, label_text, attr_name):
+    def _create_result_field(self, parent, label_text, attr_name, height=3):
         """Tworzy pole wynikowe z etykietą i przyciskiem kopiowania."""
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
@@ -298,7 +327,7 @@ class StomatologApp:
 
         ttk.Label(header, text=label_text, font=("", 9, "bold")).pack(side=tk.LEFT)
 
-        text_widget = tk.Text(frame, height=3, wrap=tk.WORD)
+        text_widget = tk.Text(frame, height=height, wrap=tk.WORD)
         text_widget.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
 
         copy_btn = ttk.Button(header, text="📋 Kopiuj")
