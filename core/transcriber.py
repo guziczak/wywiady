@@ -154,6 +154,7 @@ class TranscriberType(Enum):
     GEMINI_CLOUD = "gemini_cloud"
     FASTER_WHISPER = "faster_whisper"
     OPENAI_WHISPER = "openai_whisper"
+    OPENVINO_WHISPER = "openvino_whisper"
 
 
 @dataclass
@@ -502,6 +503,180 @@ class OpenAIWhisperTranscriber(TranscriberBackend):
         return True
 
 
+# ========== OPENVINO-WHISPER ==========
+
+class OpenVINOWhisperTranscriber(TranscriberBackend):
+    """Transkrypcja przez OpenVINO z obsługą Intel NPU/GPU."""
+
+    MODELS = {
+        "tiny": {"size_mb": 150, "desc": "Najszybszy, najmniej dokładny"},
+        "base": {"size_mb": 290, "desc": "Szybki, podstawowa jakość"},
+        "small": {"size_mb": 970, "desc": "Dobry balans jakość/szybkość"},
+        "medium": {"size_mb": 3000, "desc": "Wysoka jakość, wolniejszy"},
+        "large-v3": {"size_mb": 6000, "desc": "Najlepsza jakość"},
+    }
+
+    # Mapowanie nazw modeli na HuggingFace
+    HF_MODELS = {
+        "tiny": "OpenVINO/whisper-tiny-fp16-ov",
+        "base": "OpenVINO/whisper-base-fp16-ov",
+        "small": "OpenVINO/whisper-small-fp16-ov",
+        "medium": "OpenVINO/whisper-medium-fp16-ov",
+        "large-v3": "OpenVINO/whisper-large-v3-fp16-ov",
+    }
+
+    def __init__(self):
+        self._model = None
+        self._model_name = "small"
+        self._device = None
+        self._available_devices = []
+        self._ffmpeg_checked = False
+
+    def _get_model_path(self, model_name: str) -> Path:
+        """Zwraca ścieżkę do modelu OpenVINO."""
+        return MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-ov"
+
+    def _detect_devices(self) -> List[str]:
+        """Wykrywa dostępne urządzenia OpenVINO."""
+        if self._available_devices:
+            return self._available_devices
+
+        try:
+            from openvino import Core
+            core = Core()
+            self._available_devices = core.available_devices
+            return self._available_devices
+        except ImportError:
+            return []
+        except Exception:
+            return ["CPU"]
+
+    def _get_best_device(self) -> str:
+        """Zwraca najlepsze dostępne urządzenie (NPU > GPU > CPU)."""
+        devices = self._detect_devices()
+        if "NPU" in devices:
+            return "NPU"
+        elif "GPU" in devices:
+            return "GPU"
+        return "CPU"
+
+    def get_detected_device(self) -> str:
+        """Zwraca wykryte urządzenie do wyświetlenia w UI."""
+        return self._get_best_device()
+
+    def _ensure_ffmpeg(self):
+        """Sprawdza i instaluje ffmpeg jeśli potrzeba."""
+        if self._ffmpeg_checked:
+            return
+        if not FFmpegManager.is_installed():
+            success, msg = FFmpegManager.install()
+            if not success:
+                raise RuntimeError(f"Wymagany ffmpeg nie jest zainstalowany: {msg}")
+        self._ffmpeg_checked = True
+
+    def _ensure_model(self):
+        """Ładuje model OpenVINO."""
+        if self._model is not None:
+            return
+
+        try:
+            import openvino_genai as ov_genai
+        except ImportError:
+            raise RuntimeError("Brak biblioteki openvino-genai. Zainstaluj: pip install openvino openvino-genai")
+
+        model_path = self._get_model_path(self._model_name)
+
+        if not model_path.exists():
+            raise RuntimeError(f"Model '{self._model_name}' nie jest pobrany. Kliknij 'Pobierz model'.")
+
+        device = self._get_best_device()
+        self._device = device
+
+        self._model = ov_genai.WhisperPipeline(str(model_path), device)
+
+    def transcribe(self, audio_path: str, language: str = "pl") -> str:
+        self._ensure_ffmpeg()
+        self._ensure_model()
+
+        try:
+            import librosa
+        except ImportError:
+            raise RuntimeError("Brak biblioteki librosa. Zainstaluj: pip install librosa")
+
+        # Wczytaj audio
+        raw_speech, _ = librosa.load(audio_path, sr=16000)
+
+        # Mapowanie języka
+        lang_token = f"<|{language}|>"
+
+        # Transkrypcja
+        result = self._model.generate(
+            raw_speech,
+            max_new_tokens=448,
+            language=lang_token,
+            task="transcribe",
+        )
+
+        return str(result).strip()
+
+    def is_available(self) -> Tuple[bool, Optional[str]]:
+        try:
+            import openvino_genai
+            return True, None
+        except ImportError:
+            return False, "Zainstaluj: pip install openvino openvino-genai"
+
+    def get_models(self) -> List[ModelInfo]:
+        models = []
+        for name, info in self.MODELS.items():
+            model_path = self._get_model_path(name)
+            is_downloaded = model_path.exists() and (model_path / "openvino_encoder_model.xml").exists()
+            models.append(ModelInfo(name, info["size_mb"], info["desc"], is_downloaded))
+        return models
+
+    def download_model(self, model_name: str, progress_callback: Optional[Callable[[float], None]] = None) -> bool:
+        if model_name not in self.MODELS:
+            return False
+
+        try:
+            from huggingface_hub import snapshot_download
+
+            if progress_callback:
+                progress_callback(0.1)
+
+            model_path = self._get_model_path(model_name)
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+
+            hf_model = self.HF_MODELS.get(model_name)
+            if not hf_model:
+                return False
+
+            # Pobierz model z HuggingFace
+            snapshot_download(
+                repo_id=hf_model,
+                local_dir=str(model_path),
+                local_dir_use_symlinks=False,
+            )
+
+            if progress_callback:
+                progress_callback(1.0)
+
+            return True
+        except Exception as e:
+            print(f"Błąd pobierania modelu OpenVINO: {e}")
+            return False
+
+    def get_current_model(self) -> Optional[str]:
+        return self._model_name
+
+    def set_model(self, model_name: str) -> bool:
+        if model_name not in self.MODELS:
+            return False
+        self._model_name = model_name
+        self._model = None  # Reset - załaduj przy następnym użyciu
+        return True
+
+
 # ========== MANAGER ==========
 
 class TranscriberManager:
@@ -515,6 +690,7 @@ class TranscriberManager:
         self._backends[TranscriberType.GEMINI_CLOUD] = GeminiCloudTranscriber()
         self._backends[TranscriberType.FASTER_WHISPER] = FasterWhisperTranscriber()
         self._backends[TranscriberType.OPENAI_WHISPER] = OpenAIWhisperTranscriber()
+        self._backends[TranscriberType.OPENVINO_WHISPER] = OpenVINOWhisperTranscriber()
 
     def get_available_backends(self) -> List[TranscriberInfo]:
         """Zwraca listę wszystkich backendów z informacją o dostępności."""
@@ -564,6 +740,24 @@ class TranscriberManager:
                     is_available=available and ffmpeg_ok,
                     is_installed=is_installed,
                     pip_package="openai-whisper",
+                    unavailable_reason=reason if not is_installed else ("Brak ffmpeg" if not ffmpeg_ok else None),
+                    requires_ffmpeg=True,
+                    ffmpeg_installed=ffmpeg_ok
+                )
+            elif t == TranscriberType.OPENVINO_WHISPER:
+                is_installed = self._check_package_installed("openvino_genai")
+                # Wykryj urządzenie
+                ov_backend = self._backends[TranscriberType.OPENVINO_WHISPER]
+                device = ov_backend.get_detected_device() if is_installed else "?"
+                info = TranscriberInfo(
+                    type=t,
+                    name=f"OpenVINO ({device})",
+                    description=f"Intel NPU/GPU - wykryto: {device}",
+                    requires_download=True,
+                    model_sizes=list(OpenVINOWhisperTranscriber.MODELS.keys()),
+                    is_available=available and ffmpeg_ok,
+                    is_installed=is_installed,
+                    pip_package="openvino openvino-genai librosa",
                     unavailable_reason=reason if not is_installed else ("Brak ffmpeg" if not ffmpeg_ok else None),
                     requires_ffmpeg=True,
                     ffmpeg_installed=ffmpeg_ok

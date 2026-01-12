@@ -900,6 +900,14 @@ Odpowiedz TYLKO poprawnym kodem JSON:
     # Statusy i przyciski
     backend_status_text = ft.Text("", size=13, weight=ft.FontWeight.W_500)
     ffmpeg_status_text = ft.Text("", size=12)
+    # Wskaźnik urządzenia (NPU/GPU/CPU) dla OpenVINO
+    device_indicator = ft.Container(
+        content=ft.Text("", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+        bgcolor=ft.Colors.GREEN_700,
+        padding=ft.padding.symmetric(horizontal=10, vertical=4),
+        border_radius=12,
+        visible=False,
+    )
     install_button = ft.Button("Zainstaluj silnik", icon=ft.Icons.DOWNLOAD, visible=False)
     install_ffmpeg_button = ft.Button("Zainstaluj ffmpeg", icon=ft.Icons.DOWNLOAD, visible=False)
     download_model_button = ft.Button("Pobierz model", icon=ft.Icons.DOWNLOAD, visible=False)
@@ -971,6 +979,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         model_dropdown.visible = False
         action_progress.visible = False
         ffmpeg_status_text.value = ""
+        device_indicator.visible = False
 
         if not info.is_installed:
             # Backend nie zainstalowany - pokaż przycisk instalacji
