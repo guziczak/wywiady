@@ -305,7 +305,9 @@ class FasterWhisperTranscriber(TranscriberBackend):
         self._ffmpeg_checked = False
 
     def _get_model_path(self, model_name: str) -> Path:
-        return MODELS_DIR / "faster-whisper" / model_name
+        """Zwraca ścieżkę do modelu (folder HuggingFace cache)."""
+        # faster-whisper używa nazw HuggingFace: models--Systran--faster-whisper-{name}
+        return MODELS_DIR / "faster-whisper" / f"models--Systran--faster-whisper-{model_name}"
 
     def _ensure_ffmpeg(self):
         """Sprawdza i instaluje ffmpeg jeśli potrzeba."""
@@ -323,12 +325,16 @@ class FasterWhisperTranscriber(TranscriberBackend):
                 from faster_whisper import WhisperModel
                 self._whisper_module = WhisperModel
 
-                model_path = self._get_model_path(self._model_name)
-                if model_path.exists():
-                    self._model = WhisperModel(str(model_path), device="cpu", compute_type="int8")
-                else:
-                    # Pobierz automatycznie z HuggingFace
-                    self._model = WhisperModel(self._model_name, device="cpu", compute_type="int8")
+                # Użyj lokalnego cache jeśli istnieje
+                download_root = MODELS_DIR / "faster-whisper"
+                download_root.mkdir(parents=True, exist_ok=True)
+
+                self._model = WhisperModel(
+                    self._model_name,
+                    device="cpu",
+                    compute_type="int8",
+                    download_root=str(download_root)
+                )
             except ImportError:
                 raise RuntimeError("Brak biblioteki faster-whisper. Zainstaluj: pip install faster-whisper")
 
@@ -367,16 +373,20 @@ class FasterWhisperTranscriber(TranscriberBackend):
         try:
             from faster_whisper import WhisperModel
 
-            # faster-whisper pobiera automatycznie z HuggingFace
-            # Niestety nie ma prostego progress callback
             if progress_callback:
                 progress_callback(0.1)
 
-            model_path = self._get_model_path(model_name)
-            model_path.parent.mkdir(parents=True, exist_ok=True)
+            # Użyj lokalnego cache
+            download_root = MODELS_DIR / "faster-whisper"
+            download_root.mkdir(parents=True, exist_ok=True)
 
-            # Pobierz model (cache'uje się automatycznie)
-            _ = WhisperModel(model_name, device="cpu", compute_type="int8", download_root=str(model_path.parent))
+            # Pobierz model (cache'uje się automatycznie w download_root)
+            _ = WhisperModel(
+                model_name,
+                device="cpu",
+                compute_type="int8",
+                download_root=str(download_root)
+            )
 
             if progress_callback:
                 progress_callback(1.0)
@@ -450,10 +460,13 @@ class OpenAIWhisperTranscriber(TranscriberBackend):
 
     def get_models(self) -> List[ModelInfo]:
         models = []
+        cache_dir = Path.home() / ".cache" / "whisper"
         for name, info in self.MODELS.items():
             # openai-whisper przechowuje modele w ~/.cache/whisper
-            cache_path = Path.home() / ".cache" / "whisper" / f"{name}.pt"
-            is_downloaded = cache_path.exists()
+            # Model "large" może być zapisany jako large.pt lub large-v3.pt
+            cache_path = cache_dir / f"{name}.pt"
+            alt_cache_path = cache_dir / f"{name}-v3.pt"  # dla large-v3
+            is_downloaded = cache_path.exists() or alt_cache_path.exists()
             models.append(ModelInfo(name, info["size_mb"], info["desc"], is_downloaded))
         return models
 

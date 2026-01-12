@@ -234,6 +234,50 @@ def main(page: ft.Page):
         update_claude_status()
         show_snackbar("Session Key usunięty", ft.Colors.ORANGE_700)
 
+    def extract_session_key(e):
+        """Wyciąga session key z przeglądarki używając Selenium."""
+        if not AUTO_EXTRACTOR_AVAILABLE:
+            show_snackbar("Brak modułu auto_session_extractor!", ft.Colors.RED_700)
+            return
+
+        show_snackbar("Otwieram Chrome... Zaloguj się do Claude jeśli trzeba.", ft.Colors.BLUE_700)
+        extract_button.disabled = True
+        extract_button.text = "Wyciąganie..."
+        page.update()
+
+        def do_extract():
+            try:
+                session_key = extract_session_key_auto()
+                if session_key:
+                    page.run_thread(lambda sk=session_key: finish_extract(sk, None))
+                else:
+                    page.run_thread(lambda: finish_extract(None, "Nie udało się wyciągnąć klucza"))
+            except Exception as ex:
+                error_msg = str(ex)[:100]
+                page.run_thread(lambda err=error_msg: finish_extract(None, err))
+
+        threading.Thread(target=do_extract, daemon=True).start()
+
+    def finish_extract(session_key, error):
+        extract_button.disabled = False
+        extract_button.text = "Wyciągnij z przeglądarki"
+        if error:
+            show_snackbar(f"Błąd: {error}", ft.Colors.RED_700)
+        elif session_key:
+            session_key_field.value = session_key
+            config["session_key"] = session_key
+            save_config(config)
+            update_claude_status()
+            show_snackbar("Session Key wyciągnięty!", ft.Colors.GREEN_700)
+        page.update()
+
+    extract_button = ft.Button(
+        "Wyciągnij z przeglądarki",
+        icon=ft.Icons.AUTO_FIX_HIGH,
+        visible=AUTO_EXTRACTOR_AVAILABLE,
+        on_click=extract_session_key,
+    )
+
     # --- Nagrywanie ---
     record_button = ft.Button(
         content=ft.Row(
@@ -809,16 +853,24 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
     def on_model_dropdown_change(e):
         """Zmiana modelu."""
-        debug_log(f"[DEBUG] on_model_dropdown_change: {e.control.value if e else 'None'}")
         if not transcriber_manager:
             return
         try:
             backend = transcriber_manager.get_current_backend()
             model_name = model_dropdown.value
-            if backend.set_model(model_name):
-                config["transcriber_model"] = model_name
-                save_config(config)
-                update_model_status()
+
+            # Sprawdź czy model jest pobrany
+            models = backend.get_models()
+            model_info = next((m for m in models if m.name == model_name), None)
+
+            if model_info and model_info.is_downloaded:
+                # Model pobrany - ustaw jako aktywny
+                if backend.set_model(model_name):
+                    config["transcriber_model"] = model_name
+                    save_config(config)
+
+            # Zawsze aktualizuj status (pokaże przycisk pobierania jeśli trzeba)
+            update_model_status()
         except Exception:
             pass
 
@@ -833,11 +885,14 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         on_change=lambda e: on_backend_change(e),
     )
 
-    model_dropdown = ft.Dropdown(
-        label="Model",
-        width=200,
+    # Model dropdown - będzie dynamicznie wypełniany
+    model_radio = ft.RadioGroup(
+        content=ft.Column([], spacing=2),
         visible=False,
+        on_change=lambda e: on_model_dropdown_change(e),
     )
+    # Alias dla kompatybilności z resztą kodu
+    model_dropdown = model_radio
 
     # Alias dla kompatybilności
     backend_dropdown = backend_radio
@@ -962,19 +1017,21 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         models = backend.get_models()
 
-        options = []
+        # Buduj RadioGroup dla modeli
+        radio_options = []
         for m in models:
-            size_str = f" - {m.size_mb}MB" if m.size_mb > 0 else ""
-            status = " [gotowy]" if m.is_downloaded else ""
-            options.append(ft.dropdown.Option(
-                key=m.name,
-                text=f"{m.name}{size_str}{status}"
-            ))
+            size_str = f" ({m.size_mb}MB)" if m.size_mb > 0 else ""
+            if m.is_downloaded:
+                label = f"{m.name}{size_str} - gotowy"
+            else:
+                label = f"{m.name}{size_str} - do pobrania"
+            radio_options.append(ft.Radio(value=m.name, label=label))
 
-        model_dropdown.options = options
+        model_radio.content.controls = radio_options
+
         current_model = backend.get_current_model()
         if current_model:
-            model_dropdown.value = current_model
+            model_radio.value = current_model
 
         update_model_status()
 
@@ -1180,7 +1237,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         page.update()
 
-    # Przypisz handlery (dropdown on_change już przypisane w konstruktorze)
+    # Przypisz handlery
     install_button.on_click = on_install_click
     install_ffmpeg_button.on_click = on_install_ffmpeg_click
     download_model_button.on_click = on_download_model_click
@@ -1199,7 +1256,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                 content=ft.Column([
                     ft.Text("Transkrypcja (Speech-to-Text)", weight=ft.FontWeight.W_600, size=14),
                     backend_radio,
-                    model_dropdown,
+                    model_radio,
                     ft.Row([
                         backend_status_text,
                         ffmpeg_status_text,
@@ -1215,6 +1272,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                         session_key_field,
                         ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="Usuń klucz", on_click=clear_session_key),
                     ]),
+                    extract_button,
                     ft.Row([
                         ft.Button("Zapisz ustawienia", icon=ft.Icons.SAVE, on_click=save_settings),
                     ], alignment=ft.MainAxisAlignment.END),
