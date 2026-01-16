@@ -1,0 +1,16 @@
+INSTALACJA ROZSZERZENIA (jednorazowo, 30 sekund)
+================================================
+
+1. Otworz Edge
+2. Wpisz w pasku adresu: edge://extensions/
+3. Wlacz "Tryb dewelopera" (przelacznik w lewym dolnym rogu)
+4. Kliknij "Zaladuj rozpakowane"
+5. Wybierz ten folder (extension)
+6. Gotowe!
+
+UZYCIE
+======
+1. Kliknij ikone rozszerzenia (puzzle) w prawym gornym rogu Edge
+2. Kliknij "Wywiad+ Connector"
+3. Kliknij "Wyslij klucz do aplikacji"
+4. Gotowe! Klucz zostanie automatycznie zapisany w aplikacji.

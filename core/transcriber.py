@@ -210,6 +210,14 @@ class TranscriberBackend(ABC):
         """Zwraca nazwę aktualnie używanego modelu."""
         pass
 
+    def preload(self) -> bool:
+        """Preloaduje model w tle. Zwraca True jeśli sukces."""
+        return True  # Domyślnie nic nie robi
+
+    def is_model_loaded(self) -> bool:
+        """Sprawdza czy model jest załadowany."""
+        return True  # Domyślnie zawsze True
+
     @abstractmethod
     def set_model(self, model_name: str) -> bool:
         """Ustawia model do użycia."""
@@ -372,21 +380,37 @@ class FasterWhisperTranscriber(TranscriberBackend):
             return False
 
         try:
-            from faster_whisper import WhisperModel
+            from huggingface_hub import snapshot_download
+            from tqdm import tqdm as base_tqdm
 
-            if progress_callback:
-                progress_callback(0.1)
-
-            # Użyj lokalnego cache
             download_root = MODELS_DIR / "faster-whisper"
             download_root.mkdir(parents=True, exist_ok=True)
 
-            # Pobierz model (cache'uje się automatycznie w download_root)
-            _ = WhisperModel(
-                model_name,
-                device="cpu",
-                compute_type="int8",
-                download_root=str(download_root)
+            # Track progress via files count
+            progress_state = {'current': 0, 'total': 0}
+
+            class ProgressTqdm(base_tqdm):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    if self.total:
+                        progress_state['total'] = self.total
+
+                def update(self, n=1):
+                    super().update(n)
+                    progress_state['current'] = self.n
+                    if progress_callback and progress_state['total'] > 0:
+                        pct = progress_state['current'] / progress_state['total']
+                        progress_callback(pct)
+
+            if progress_callback:
+                progress_callback(0.0)
+
+            # Download model directly from HuggingFace with progress
+            repo_id = f"Systran/faster-whisper-{model_name}"
+            snapshot_download(
+                repo_id=repo_id,
+                local_dir=str(download_root / f"models--Systran--faster-whisper-{model_name}" / "snapshots" / "main"),
+                tqdm_class=ProgressTqdm if progress_callback else None,
             )
 
             if progress_callback:
@@ -512,8 +536,8 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         "tiny": {"size_mb": 150, "desc": "Najszybszy, najmniej dokładny"},
         "base": {"size_mb": 290, "desc": "Szybki, podstawowa jakość"},
         "small": {"size_mb": 970, "desc": "Dobry balans jakość/szybkość"},
-        "medium": {"size_mb": 3000, "desc": "Wysoka jakość, wolniejszy"},
-        "large-v3": {"size_mb": 6000, "desc": "Najlepsza jakość"},
+        "medium": {"size_mb": 1500, "desc": "Wysoka jakość, INT8"},
+        "large-v3": {"size_mb": 3100, "desc": "Najlepsza jakość, INT8"},
     }
 
     # Mapowanie nazw modeli na HuggingFace
@@ -521,8 +545,8 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         "tiny": "OpenVINO/whisper-tiny-fp16-ov",
         "base": "OpenVINO/whisper-base-fp16-ov",
         "small": "OpenVINO/whisper-small-fp16-ov",
-        "medium": "OpenVINO/whisper-medium-fp16-ov",
-        "large-v3": "OpenVINO/whisper-large-v3-fp16-ov",
+        "medium": "OpenVINO/whisper-medium-int8-ov",
+        "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
     }
 
     def __init__(self):
@@ -531,10 +555,13 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         self._device = None
         self._available_devices = []
         self._ffmpeg_checked = False
+        self._lock = threading.Lock()
 
     def _get_model_path(self, model_name: str) -> Path:
         """Zwraca ścieżkę do modelu OpenVINO."""
-        return MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-ov"
+        # Użyj innego folderu dla int8 aby uniknąć konfliktów z fp16
+        suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
+        return MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-{suffix}-ov"
 
     def _detect_devices(self) -> List[str]:
         """Wykrywa dostępne urządzenia OpenVINO."""
@@ -553,12 +580,26 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
 
     def _get_best_device(self) -> str:
         """Zwraca najlepsze dostępne urządzenie (NPU > GPU > CPU)."""
+        # Sprawdź czy jest wymuszone urządzenie w ustawieniach
+        if hasattr(self, '_forced_device') and self._forced_device:
+            return self._forced_device
         devices = self._detect_devices()
         if "NPU" in devices:
             return "NPU"
         elif "GPU" in devices:
             return "GPU"
         return "CPU"
+
+    def set_device(self, device: str):
+        """Wymusza użycie konkretnego urządzenia."""
+        with self._lock:
+            # Jeśli urządzenie jest to samo, nie resetuj modelu
+            if hasattr(self, '_forced_device') and self._forced_device == device:
+                return
+            
+            self._forced_device = device
+            self._model = None  # Reset modelu
+            self._device = None # Reset urządzenia
 
     def get_detected_device(self) -> str:
         """Zwraca wykryte urządzenie do wyświetlenia w UI."""
@@ -576,27 +617,51 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
 
     def _ensure_model(self):
         """Ładuje model OpenVINO."""
-        if self._model is not None:
-            return
+        with self._lock:
+            if self._model is not None:
+                print("[OpenVINO] Model already loaded", flush=True)
+                return
 
-        try:
-            import openvino_genai as ov_genai
-        except ImportError:
-            raise RuntimeError("Brak biblioteki openvino-genai. Zainstaluj: pip install openvino openvino-genai")
+            print("[OpenVINO] Loading model...", flush=True)
 
-        model_path = self._get_model_path(self._model_name)
+            try:
+                import openvino_genai as ov_genai
+            except ImportError:
+                raise RuntimeError("Brak biblioteki openvino-genai. Zainstaluj: pip install openvino openvino-genai")
 
-        if not model_path.exists():
-            raise RuntimeError(f"Model '{self._model_name}' nie jest pobrany. Kliknij 'Pobierz model'.")
+            model_path = self._get_model_path(self._model_name)
+            print(f"[OpenVINO] Model path: {model_path}", flush=True)
 
-        device = self._get_best_device()
-        self._device = device
+            if not model_path.exists():
+                raise RuntimeError(f"Model '{self._model_name}' nie jest pobrany. Kliknij 'Pobierz model'.")
 
-        self._model = ov_genai.WhisperPipeline(str(model_path), device)
+            device = self._get_best_device()
+            self._device = device
+            print(f"[OpenVINO] Using device: {device}", flush=True)
+            print(f"[OpenVINO] Creating WhisperPipeline... (this may take 1-2 minutes for large models)", flush=True)
+
+            try:
+                self._model = ov_genai.WhisperPipeline(str(model_path), device)
+                print("[OpenVINO] Model loaded successfully!", flush=True)
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[OpenVINO] Error loading model: {error_msg}", flush=True)
+                if "weights" in error_msg.lower() or "xml" in error_msg.lower():
+                    print(f"[OpenVINO] Detected corrupt model. Removing {model_path}...", flush=True)
+                    try:
+                        shutil.rmtree(model_path)
+                    except Exception as del_e:
+                        print(f"[OpenVINO] Could not delete corrupt model: {del_e}", flush=True)
+                    self._model = None
+                    raise RuntimeError(f"Model uszkodzony i został usunięty. Kliknij 'Pobierz' ponownie. (Błąd: {error_msg})")
+                raise
 
     def transcribe(self, audio_path: str, language: str = "pl") -> str:
+        print(f"[OpenVINO] transcribe() called: {audio_path}", flush=True)
         self._ensure_ffmpeg()
+        print("[OpenVINO] ffmpeg OK", flush=True)
         self._ensure_model()
+        print("[OpenVINO] model OK", flush=True)
 
         try:
             import librosa
@@ -604,18 +669,22 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
             raise RuntimeError("Brak biblioteki librosa. Zainstaluj: pip install librosa")
 
         # Wczytaj audio
+        print("[OpenVINO] Loading audio with librosa...", flush=True)
         raw_speech, _ = librosa.load(audio_path, sr=16000)
+        print(f"[OpenVINO] Audio loaded: {len(raw_speech)} samples", flush=True)
 
         # Mapowanie języka
         lang_token = f"<|{language}|>"
 
         # Transkrypcja
+        print("[OpenVINO] Starting transcription...", flush=True)
         result = self._model.generate(
             raw_speech,
             max_new_tokens=448,
             language=lang_token,
             task="transcribe",
         )
+        print(f"[OpenVINO] Transcription done: {str(result)[:50]}...", flush=True)
 
         return str(result).strip()
 
@@ -626,11 +695,32 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         except ImportError:
             return False, "Zainstaluj: pip install openvino openvino-genai"
 
+    def preload(self) -> bool:
+        """Preloaduje model OpenVINO."""
+        try:
+            self._ensure_ffmpeg()
+            self._ensure_model()
+            return True
+        except Exception as e:
+            print(f"[OpenVINO] Preload failed: {e}", flush=True)
+            return False
+
+    def is_model_loaded(self) -> bool:
+        """Sprawdza czy model jest załadowany."""
+        return self._model is not None
+
+    def get_current_device(self) -> str:
+        """Zwraca aktualnie używane urządzenie."""
+        return self._device or self._get_best_device()
+
     def get_models(self) -> List[ModelInfo]:
         models = []
         for name, info in self.MODELS.items():
             model_path = self._get_model_path(name)
-            is_downloaded = model_path.exists() and (model_path / "openvino_encoder_model.xml").exists()
+            # Sprawdź XML i BIN
+            xml_exists = (model_path / "openvino_encoder_model.xml").exists()
+            bin_exists = (model_path / "openvino_encoder_model.bin").exists()
+            is_downloaded = model_path.exists() and xml_exists and bin_exists
             models.append(ModelInfo(name, info["size_mb"], info["desc"], is_downloaded))
         return models
 
@@ -640,9 +730,7 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
 
         try:
             from huggingface_hub import snapshot_download
-
-            if progress_callback:
-                progress_callback(0.1)
+            from tqdm import tqdm as base_tqdm
 
             model_path = self._get_model_path(model_name)
             model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -651,11 +739,30 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
             if not hf_model:
                 return False
 
+            # Track progress via files count
+            progress_state = {'current': 0, 'total': 0}
+
+            class ProgressTqdm(base_tqdm):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    if self.total:
+                        progress_state['total'] = self.total
+
+                def update(self, n=1):
+                    super().update(n)
+                    progress_state['current'] = self.n
+                    if progress_callback and progress_state['total'] > 0:
+                        pct = progress_state['current'] / progress_state['total']
+                        progress_callback(pct)
+
+            if progress_callback:
+                progress_callback(0.0)
+
             # Pobierz model z HuggingFace
             snapshot_download(
                 repo_id=hf_model,
                 local_dir=str(model_path),
-                local_dir_use_symlinks=False,
+                tqdm_class=ProgressTqdm if progress_callback else None,
             )
 
             if progress_callback:
@@ -670,11 +777,12 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         return self._model_name
 
     def set_model(self, model_name: str) -> bool:
-        if model_name not in self.MODELS:
-            return False
-        self._model_name = model_name
-        self._model = None  # Reset - załaduj przy następnym użyciu
-        return True
+        with self._lock:
+            if model_name not in self.MODELS:
+                return False
+            self._model_name = model_name
+            self._model = None  # Reset - załaduj przy następnym użyciu
+            return True
 
 
 # ========== MANAGER ==========
@@ -746,13 +854,19 @@ class TranscriberManager:
                 )
             elif t == TranscriberType.OPENVINO_WHISPER:
                 is_installed = self._check_package_installed("openvino_genai")
-                # Wykryj urządzenie
-                ov_backend = self._backends[TranscriberType.OPENVINO_WHISPER]
-                device = ov_backend.get_detected_device() if is_installed else "?"
+                # Wykryj urządzenie tylko jeśli zainstalowane
+                if is_installed:
+                    ov_backend = self._backends[TranscriberType.OPENVINO_WHISPER]
+                    device = ov_backend.get_detected_device()
+                    name = f"OpenVINO ({device})"
+                    description = f"Intel NPU/GPU - wykryto: {device}"
+                else:
+                    name = "OpenVINO Whisper"
+                    description = "Intel NPU/GPU - wymaga instalacji"
                 info = TranscriberInfo(
                     type=t,
-                    name=f"OpenVINO ({device})",
-                    description=f"Intel NPU/GPU - wykryto: {device}",
+                    name=name,
+                    description=description,
                     requires_download=True,
                     model_sizes=list(OpenVINOWhisperTranscriber.MODELS.keys()),
                     is_available=available and ffmpeg_ok,
@@ -779,6 +893,7 @@ class TranscriberManager:
         """Instaluje pakiet dla backendu przez pip. Zwraca (sukces, komunikat)."""
         import subprocess
         import sys
+        import re
 
         backends = {b.type: b for b in self.get_available_backends()}
         if backend_type not in backends:
@@ -793,26 +908,67 @@ class TranscriberManager:
 
         try:
             if progress_callback:
-                progress_callback(f"Instaluję {info.pip_package}...")
+                progress_callback(f"Pobieranie {info.pip_package}...")
 
-            # Uruchom pip install
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", info.pip_package, "--quiet"],
-                capture_output=True,
-                timeout=300,  # 5 minut timeout
+            # Uruchom pip install z progress - nie quiet żeby mieć output
+            packages = info.pip_package.split()
+
+            process = subprocess.Popen(
+                [sys.executable, "-m", "pip", "install"] + packages + ["--progress-bar", "on"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 encoding="utf-8",
-                errors="ignore"
+                errors="ignore",
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
 
-            if result.returncode == 0:
+            # Czytaj output linia po linii
+            packages_downloaded = 0
+            packages_installed = 0
+
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Parsuj różne etapy
+                if progress_callback:
+                    if "Downloading" in line or "downloading" in line.lower():
+                        # Wyciągnij nazwę pakietu i progress
+                        match = re.search(r'Downloading\s+(\S+)', line)
+                        pkg_name = match.group(1) if match else "pakiet"
+                        # Sprawdź czy jest procent
+                        pct_match = re.search(r'(\d+)%', line)
+                        if pct_match:
+                            progress_callback(f"Pobieranie: {pct_match.group(1)}%")
+                        else:
+                            packages_downloaded += 1
+                            progress_callback(f"Pobieranie pakietów... ({packages_downloaded})")
+                    elif "Installing" in line or "installing" in line.lower():
+                        packages_installed += 1
+                        progress_callback(f"Instalowanie pakietów... ({packages_installed})")
+                    elif "Successfully installed" in line:
+                        progress_callback("Weryfikacja instalacji...")
+                    elif "Collecting" in line:
+                        match = re.search(r'Collecting\s+(\S+)', line)
+                        pkg = match.group(1) if match else ""
+                        progress_callback(f"Pobieranie zależności: {pkg[:30]}")
+
+            returncode = process.wait(timeout=300)
+
+            if returncode == 0:
                 if progress_callback:
                     progress_callback("Zainstalowano!")
                 return True, f"Zainstalowano {info.pip_package}"
             else:
-                error = result.stderr[:200] if result.stderr else "Nieznany błąd"
-                return False, f"Błąd instalacji: {error}"
+                return False, f"Błąd instalacji (kod {returncode})"
 
         except subprocess.TimeoutExpired:
+            process.kill()
             return False, "Timeout - instalacja trwała zbyt długo"
         except Exception as e:
             return False, f"Błąd: {str(e)}"

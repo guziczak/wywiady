@@ -1,0 +1,34 @@
+[STARTUP] Starting app...
+[STARTUP] Initializing global state...
+NiceGUI ready to go on http://localhost:8089, http://169.254.206.107:8089, http://169.254.95.133:8089, http://172.27.176.1:8089, and http://192.168.68.56:8089
+[STARTUP] Restored backend: openvino_whisper
+[STARTUP] Forced device: NPU
+[STARTUP] Restored model: large-v3
+[UI] Device changed to: GPU
+[PRELOAD] Starting model preload for openvino_whisper...
+[PRELOAD] Device: GPU[UI] Device changed success: GPU
+
+[UI] Device changed to: GPU
+[PRELOAD] Starting model preload for openvino_whisper...
+[OpenVINO] Loading model...
+[OpenVINO] Model path: C:\Users\guzic\Documents\GitHub\wywiady\models\openvino-whisper\whisper-large-v3-int8-ov
+[PRELOAD] Device: GPU[UI] Device changed success: GPU
+
+[OpenVINO] Using device: GPU
+[OpenVINO] Creating WhisperPipeline... (this may take 1-2 minutes for large models)
+[OpenVINO] Model loaded successfully!
+[PRELOAD] Model preload OK[OpenVINO] Model already loaded
+
+[PRELOAD] Model preload OK
+[UI] Device changed to: NPU
+[PRELOAD] Starting model preload for openvino_whisper...
+[PRELOAD] Device: NPU[UI] Device changed success: NPU
+
+[OpenVINO] Loading model...[UI] Device changed to: NPU
+
+[OpenVINO] Model path: C:\Users\guzic\Documents\GitHub\wywiady\models\openvino-whisper\whisper-large-v3-int8-ov[PRELOAD] Starting model preload for openvino_whisper...
+
+[OpenVINO] Using device: NPU[UI] Device changed success: NPU
+[PRELOAD] Device: NPU
+[OpenVINO] Creating WhisperPipeline... (this may take 1-2 minutes for large models)
+

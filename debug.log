@@ -1,16 +1,4 @@
 [DEBUG] populate_backend_options called
-[DEBUG] on_backend_change CALLED! value=openai_whisper
-[DEBUG] Selected: openai_whisper
-[DEBUG] Backend: OpenAI Whisper, installed: True
 [DEBUG] on_backend_change CALLED! value=faster_whisper
 [DEBUG] Selected: faster_whisper
 [DEBUG] Backend: Faster Whisper, installed: True
-[DEBUG] on_backend_change CALLED! value=openai_whisper
-[DEBUG] Selected: openai_whisper
-[DEBUG] Backend: OpenAI Whisper, installed: True
-[DEBUG] on_backend_change CALLED! value=faster_whisper
-[DEBUG] Selected: faster_whisper
-[DEBUG] Backend: Faster Whisper, installed: True
-[DEBUG] on_backend_change CALLED! value=gemini_cloud
-[DEBUG] Selected: gemini_cloud
-[DEBUG] Backend: Gemini Cloud, installed: True

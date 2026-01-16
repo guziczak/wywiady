@@ -1,0 +1,2298 @@
+"""
+Wywiad+ v2 - NiceGUI Edition
+Nowoczesne GUI do generowania opisow stomatologicznych z wywiadu glosowego.
+"""
+
+import asyncio
+import concurrent.futures
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import wave
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Optional, Callable
+import multiprocessing
+
+
+# === STATE MANAGEMENT ===
+
+class ModelState(Enum):
+    """Stan ładowania modelu."""
+    IDLE = "idle"              # Nic nie załadowane
+    LOADING = "loading"        # Ładowanie w toku (cancellable)
+    READY = "ready"            # Model załadowany i gotowy
+    ERROR = "error"            # Błąd ładowania
+
+
+class TranscriptionState(Enum):
+    """Stan transkrypcji."""
+    IDLE = "idle"              # Gotowy do nagrywania
+    RECORDING = "recording"    # Nagrywanie w toku
+    PROCESSING = "processing"  # Transkrypcja w toku (cancellable)
+
+
+@dataclass
+class LoadedModelInfo:
+    """Informacja o FAKTYCZNIE załadowanym modelu - Single Source of Truth."""
+    backend: str              # np. "openvino_whisper"
+    model_name: str           # np. "small", "large-v3"
+    device: str               # np. "NPU", "GPU", "CPU"
+    loaded_at: datetime = field(default_factory=datetime.now)
+
+    def __str__(self):
+        return f"{self.model_name} @ {self.device}"
+
+
+class CancellableTask:
+    """Wrapper dla operacji które można anulować."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self._cancel_event = threading.Event()
+        self._process: Optional[subprocess.Popen] = None
+        self._thread: Optional[threading.Thread] = None
+        self.start_time = time.time()
+
+    def set_process(self, process: subprocess.Popen):
+        self._process = process
+
+    def set_thread(self, thread: threading.Thread):
+        self._thread = thread
+
+    def cancel(self):
+        """Anuluje zadanie - zabija subprocess jeśli istnieje."""
+        print(f"[TASK] Cancelling: {self.name}", flush=True)
+        self._cancel_event.set()
+        if self._process:
+            try:
+                self._process.kill()
+                self._process.wait(timeout=5)
+                print(f"[TASK] Process killed", flush=True)
+            except Exception as e:
+                print(f"[TASK] Kill error: {e}", flush=True)
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def elapsed_seconds(self) -> int:
+        return int(time.time() - self.start_time)
+
+from nicegui import ui, app
+
+# Sciezki konfiguracji
+CONFIG_FILE = Path(__file__).parent / "config.json"
+ICD_FILE = Path(__file__).parent / "icd10.json"
+
+# === IMPORTY OPCJONALNE ===
+
+# Audio
+try:
+    import sounddevice as sd
+    import numpy as np
+    AUDIO_AVAILABLE = True
+except ImportError:
+    sd = None
+    np = None
+    AUDIO_AVAILABLE = False
+
+# Google Gemini
+try:
+    from google import genai
+    from google.genai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    types = None
+    GENAI_AVAILABLE = False
+
+# Transcriber
+try:
+    from core.transcriber import TranscriberManager, TranscriberType, ModelInfo
+    TRANSCRIBER_AVAILABLE = True
+except ImportError:
+    TranscriberManager = None
+    TranscriberType = None
+    ModelInfo = None
+    TRANSCRIBER_AVAILABLE = False
+
+# Global TranscriberManager instance (Singleton)
+GLOBAL_TRANSCRIBER_MANAGER = None
+
+def get_transcriber_manager():
+    global GLOBAL_TRANSCRIBER_MANAGER
+    if not TRANSCRIBER_AVAILABLE:
+        return None
+    
+    if GLOBAL_TRANSCRIBER_MANAGER is None:
+        try:
+            GLOBAL_TRANSCRIBER_MANAGER = TranscriberManager()
+        except Exception as e:
+            print(f"[ERROR] Could not initialize TranscriberManager: {e}", flush=True)
+            return None
+            
+    return GLOBAL_TRANSCRIBER_MANAGER
+
+# Claude Proxy
+import sys
+sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
+try:
+    from proxy import start_proxy_server, get_proxy_base_url
+    from anthropic import Anthropic
+    PROXY_AVAILABLE = True
+except ImportError:
+    PROXY_AVAILABLE = False
+    Anthropic = None
+
+
+# === HELPERS ===
+
+def load_config() -> dict:
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        pass
+    return {"api_key": "", "session_key": "", "transcriber_backend": "gemini_cloud", "transcriber_model": "small", "selected_device": "auto"}
+
+
+def save_config(config: dict):
+    try:
+        CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    except Exception:
+        pass
+
+
+def load_icd10() -> dict:
+    try:
+        if ICD_FILE.exists():
+            return json.loads(ICD_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def load_claude_token() -> Optional[str]:
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    if not creds_path.exists():
+        return None
+    try:
+        creds = json.loads(creds_path.read_text())
+        oauth_data = creds.get("claudeAiOauth", {})
+        expires_at_ms = oauth_data.get("expiresAt", 0)
+        if expires_at_ms:
+            if datetime.now() >= datetime.fromtimestamp(expires_at_ms / 1000.0):
+                return None
+        return oauth_data.get("accessToken")
+    except Exception:
+        return None
+
+
+def _get_default_browser() -> Optional[str]:
+    """Wykrywa domyślną przeglądarkę z rejestru Windows."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                           r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
+            prog_id = winreg.QueryValueEx(key, "ProgId")[0].lower()
+            if "chrome" in prog_id:
+                return "chrome"
+            elif "firefox" in prog_id:
+                return "firefox"
+            elif "edge" in prog_id or "msedge" in prog_id:
+                return "edge"
+            elif "opera" in prog_id:
+                return "opera"
+            elif "brave" in prog_id:
+                return "brave"
+    except Exception as e:
+        print(f"[SELENIUM] Nie mozna wykryc domyslnej przegladarki: {e}", flush=True)
+    return None
+
+
+def _get_browser_profile_path(browser: str) -> Optional[str]:
+    """Zwraca ścieżkę do profilu użytkownika dla danej przeglądarki."""
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    app_data = os.environ.get("APPDATA", "")
+
+    paths = {
+        "chrome": os.path.join(local_app_data, "Google", "Chrome", "User Data"),
+        "edge": os.path.join(local_app_data, "Microsoft", "Edge", "User Data"),
+        "brave": os.path.join(local_app_data, "BraveSoftware", "Brave-Browser", "User Data"),
+        "opera": os.path.join(app_data, "Opera Software", "Opera Stable"),
+        "firefox": os.path.join(app_data, "Mozilla", "Firefox", "Profiles"),
+    }
+
+    profile_path = paths.get(browser)
+    if profile_path and os.path.exists(profile_path):
+        return profile_path
+    return None
+
+
+def _copy_browser_cookies(browser: str) -> Optional[str]:
+    """Kopiuje tylko pliki cookies do tymczasowego profilu (szybkie!)."""
+    import shutil
+
+    original_profile = _get_browser_profile_path(browser)
+    if not original_profile:
+        return None
+
+    # Utwórz tymczasowy katalog
+    temp_profile = os.path.join(tempfile.gettempdir(), f"selenium_{browser}_profile")
+
+    # Usuń stary temp profil jeśli istnieje
+    if os.path.exists(temp_profile):
+        try:
+            shutil.rmtree(temp_profile)
+        except Exception:
+            pass
+
+    try:
+        os.makedirs(temp_profile, exist_ok=True)
+        os.makedirs(os.path.join(temp_profile, "Default"), exist_ok=True)
+
+        # Kopiuj tylko niezbędne pliki (cookies, login data) - NIE cały profil!
+        files_to_copy = [
+            "Cookies",
+            "Cookies-journal",
+            "Login Data",
+            "Login Data-journal",
+            "Web Data",
+            "Preferences",
+            "Secure Preferences",
+        ]
+
+        default_src = os.path.join(original_profile, "Default")
+        default_dst = os.path.join(temp_profile, "Default")
+
+        if os.path.exists(default_src):
+            for filename in files_to_copy:
+                src_file = os.path.join(default_src, filename)
+                if os.path.exists(src_file):
+                    try:
+                        shutil.copy2(src_file, os.path.join(default_dst, filename))
+                    except Exception as e:
+                        print(f"[SELENIUM] Nie mozna skopiowac {filename}: {e}", flush=True)
+
+        # Kopiuj Local State (potrzebny do deszyfrowania cookies)
+        local_state = os.path.join(original_profile, "Local State")
+        if os.path.exists(local_state):
+            try:
+                shutil.copy2(local_state, os.path.join(temp_profile, "Local State"))
+            except Exception:
+                pass
+
+        print(f"[SELENIUM] Skopiowano cookies do: {temp_profile}", flush=True)
+        return temp_profile
+
+    except Exception as e:
+        print(f"[SELENIUM] Blad kopiowania profilu: {e}", flush=True)
+        return None
+
+
+def _create_browser_driver():
+    """Tworzy driver dla domyślnej przeglądarki użytkownika z jego profilem."""
+    from selenium import webdriver
+
+    # Wykryj domyślną przeglądarkę
+    default_browser = _get_default_browser()
+    print(f"[SELENIUM] Domyslna przegladarka: {default_browser or 'nieznana'}", flush=True)
+
+    # Kolejność prób: domyślna przeglądarka pierwsza, potem reszta
+    browsers_to_try = []
+    if default_browser:
+        browsers_to_try.append(default_browser)
+    # Dodaj pozostałe
+    for b in ["edge", "chrome", "firefox", "brave"]:
+        if b not in browsers_to_try:
+            browsers_to_try.append(b)
+
+    for browser in browsers_to_try:
+        driver = _try_browser(browser)
+        if driver:
+            return driver, browser.capitalize()
+
+    return None, None
+
+
+def _try_browser(browser: str):
+    """Próbuje uruchomić konkretną przeglądarkę z skopiowanymi cookies użytkownika."""
+    from selenium import webdriver
+
+    # Kopiuj cookies do tymczasowego profilu (pozwala używać gdy przeglądarka jest otwarta!)
+    profile_path = _copy_browser_cookies(browser)
+
+    if browser in ["chrome", "brave"]:
+        try:
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+            from webdriver_manager.chrome import ChromeDriverManager
+            if browser == "brave":
+                from webdriver_manager.core.utils import ChromeType
+
+            print(f"[SELENIUM] Probuje {browser.capitalize()}...", flush=True)
+            options = Options()
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--start-maximized")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+
+            if profile_path:
+                print(f"[SELENIUM] Uzywam profilu: {profile_path}", flush=True)
+                options.add_argument(f"--user-data-dir={profile_path}")
+                options.add_argument("--profile-directory=Default")
+
+            if browser == "brave":
+                # Brave używa Chrome driver
+                brave_path = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+                if os.path.exists(brave_path):
+                    options.binary_location = brave_path
+
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+            print(f"[SELENIUM] {browser.capitalize()} uruchomiony!", flush=True)
+            return driver
+        except Exception as e:
+            print(f"[SELENIUM] {browser.capitalize()} niedostepny: {e}", flush=True)
+
+    elif browser == "edge":
+        try:
+            from selenium.webdriver.edge.service import Service
+            from selenium.webdriver.edge.options import Options
+            from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+            print("[SELENIUM] Probuje Edge...", flush=True)
+            options = Options()
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--start-maximized")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+
+            if profile_path:
+                print(f"[SELENIUM] Uzywam profilu: {profile_path}", flush=True)
+                options.add_argument(f"--user-data-dir={profile_path}")
+                options.add_argument("--profile-directory=Default")
+
+            service = Service(EdgeChromiumDriverManager().install())
+            driver = webdriver.Edge(service=service, options=options)
+            print("[SELENIUM] Edge uruchomiony!", flush=True)
+            return driver
+        except Exception as e:
+            print(f"[SELENIUM] Edge niedostepny: {e}", flush=True)
+
+    elif browser == "firefox":
+        try:
+            from selenium.webdriver.firefox.service import Service
+            from selenium.webdriver.firefox.options import Options
+            from webdriver_manager.firefox import GeckoDriverManager
+
+            print("[SELENIUM] Probuje Firefox...", flush=True)
+            options = Options()
+
+            # Firefox używa innego systemu profili
+            if profile_path and os.path.isdir(profile_path):
+                # Znajdź domyślny profil Firefox
+                for item in os.listdir(profile_path):
+                    if item.endswith(".default-release") or item.endswith(".default"):
+                        full_path = os.path.join(profile_path, item)
+                        print(f"[SELENIUM] Uzywam profilu Firefox: {full_path}", flush=True)
+                        options.add_argument(f"-profile")
+                        options.add_argument(full_path)
+                        break
+
+            service = Service(GeckoDriverManager().install())
+            driver = webdriver.Firefox(service=service, options=options)
+            print("[SELENIUM] Firefox uruchomiony!", flush=True)
+            return driver
+        except Exception as e:
+            print(f"[SELENIUM] Firefox niedostepny: {e}", flush=True)
+
+    return None
+
+
+def _get_edge_encryption_key() -> Optional[bytes]:
+    """Pobiera klucz szyfrowania z Edge Local State."""
+    import base64
+    try:
+        import win32crypt
+        from Crypto.Cipher import AES
+    except ImportError:
+        print("[COOKIES] Brak wymaganych bibliotek (pycryptodome, pywin32)", flush=True)
+        return None
+
+    local_state_path = os.path.join(
+        os.environ.get("LOCALAPPDATA", ""),
+        "Microsoft", "Edge", "User Data", "Local State"
+    )
+
+    if not os.path.exists(local_state_path):
+        return None
+
+    try:
+        with open(local_state_path, "r", encoding="utf-8") as f:
+            local_state = json.load(f)
+
+        encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+        # Usuń prefix 'DPAPI'
+        encrypted_key = encrypted_key[5:]
+        # Odszyfruj używając DPAPI
+        decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
+        return decrypted_key
+    except Exception as e:
+        print(f"[COOKIES] Blad pobierania klucza: {e}", flush=True)
+        return None
+
+
+def _decrypt_cookie_value(encrypted_value: bytes, key: bytes) -> Optional[str]:
+    """Odszyfrowuje wartość cookie używając AES-GCM."""
+    try:
+        from Crypto.Cipher import AES
+    except ImportError:
+        return None
+
+    try:
+        # Format: v10/v20 + 12-byte nonce + ciphertext + 16-byte tag
+        if encrypted_value[:3] in (b'v10', b'v11', b'v20'):
+            nonce = encrypted_value[3:15]
+            ciphertext = encrypted_value[15:]
+            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+            decrypted = cipher.decrypt_and_verify(ciphertext[:-16], ciphertext[-16:])
+            return decrypted.decode('utf-8')
+    except Exception:
+        pass
+    return None
+
+
+def _read_edge_cookies_direct() -> Optional[str]:
+    """Odczytuje sessionKey z Edge cookies - najpierw browser-cookie3, potem bezpośrednio."""
+    import sqlite3
+    import shutil
+
+    # Metoda 1: browser-cookie3 (działa gdy Edge otwarty, wymaga admina)
+    try:
+        import browser_cookie3
+        print("[COOKIES] Probuje browser-cookie3...", flush=True)
+        cj = browser_cookie3.edge(domain_name='claude.ai')
+        for cookie in cj:
+            if cookie.name == 'sessionKey':
+                print("[COOKIES] Znaleziono sessionKey!", flush=True)
+                return cookie.value
+        print("[COOKIES] Nie znaleziono sessionKey w cookies", flush=True)
+    except Exception as e:
+        print(f"[COOKIES] browser-cookie3 nie zadziałał: {e}", flush=True)
+
+    # Metoda 2: Bezpośredni odczyt (działa gdy Edge ZAMKNIĘTY)
+    print("[COOKIES] Probuje bezposredni odczyt (wymaga zamknietego Edge)...", flush=True)
+
+    cookies_path = os.path.join(
+        os.environ.get("LOCALAPPDATA", ""),
+        "Microsoft", "Edge", "User Data", "Default", "Network", "Cookies"
+    )
+
+    if not os.path.exists(cookies_path):
+        print(f"[COOKIES] Nie znaleziono pliku cookies", flush=True)
+        return None
+
+    # Pobierz klucz szyfrowania
+    key = _get_edge_encryption_key()
+    if not key:
+        print("[COOKIES] Nie udalo sie pobrac klucza szyfrowania", flush=True)
+        return None
+
+    temp_cookies = os.path.join(tempfile.gettempdir(), f"edge_cookies_{os.getpid()}")
+    try:
+        shutil.copy2(cookies_path, temp_cookies)
+        print("[COOKIES] Skopiowano baze cookies", flush=True)
+    except PermissionError:
+        print("[COOKIES] Edge jest otwarty - zamknij Edge i sprobuj ponownie", flush=True)
+        return None
+    except Exception as e:
+        print(f"[COOKIES] Blad kopiowania: {e}", flush=True)
+        return None
+
+    try:
+        conn = sqlite3.connect(temp_cookies, timeout=5)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name='sessionKey'"
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            encrypted_value = row[0]
+            session_key = _decrypt_cookie_value(encrypted_value, key)
+            if session_key:
+                print("[COOKIES] Znaleziono sessionKey!", flush=True)
+                return session_key
+
+        print("[COOKIES] Nie znaleziono sessionKey w cookies", flush=True)
+        return None
+    except Exception as e:
+        print(f"[COOKIES] Blad odczytu bazy: {e}", flush=True)
+        return None
+    finally:
+        try:
+            os.remove(temp_cookies)
+        except:
+            pass
+
+
+def extract_claude_session_key_selenium() -> Optional[str]:
+    """Pobiera sessionKey przez Selenium z profilem użytkownika (wymaga zamkniętego Edge)."""
+    import subprocess
+
+    # Sprawdź czy Edge jest uruchomiony
+    result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq msedge.exe'], capture_output=True, text=True)
+    if 'msedge.exe' in result.stdout:
+        print("[AUTO] Edge jest otwarty - zamknij go i sprobuj ponownie", flush=True)
+        return None
+
+    print("[AUTO] Uruchamiam Edge z Twoim profilem...", flush=True)
+
+    from selenium import webdriver
+    from selenium.webdriver.edge.service import Service
+    from selenium.webdriver.edge.options import Options
+    from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+    # Użyj profilu użytkownika (tam są cookies!)
+    user_data_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+
+    options = Options()
+    options.add_argument(f"--user-data-dir={user_data_dir}")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+
+    try:
+        service = Service(EdgeChromiumDriverManager().install())
+        driver = webdriver.Edge(service=service, options=options)
+
+        print("[AUTO] Otwieram claude.ai...", flush=True)
+        driver.get("https://claude.ai/")
+        time.sleep(2)
+
+        # Pobierz sessionKey
+        cookies = driver.get_cookies()
+        session_key = None
+        for cookie in cookies:
+            if cookie['name'] == 'sessionKey':
+                session_key = cookie['value']
+                break
+
+        driver.quit()
+
+        if session_key:
+            print(f"[AUTO] Pobrano sessionKey!", flush=True)
+            return session_key
+        else:
+            print("[AUTO] Nie znaleziono sessionKey - zaloguj sie na claude.ai", flush=True)
+            return None
+
+    except Exception as e:
+        print(f"[AUTO] Blad: {e}", flush=True)
+        return None
+
+
+# === DEVICE INFO ===
+
+@dataclass
+class DeviceInfo:
+    id: str
+    name: str
+    full_name: str
+    icon: str
+    speed_multiplier: float
+    available: bool
+    recommended: bool = False
+
+
+def detect_devices() -> list[DeviceInfo]:
+    """Wykrywa dostepne urzadzenia (NPU/GPU/CPU)."""
+    devices = []
+
+    # Sprawdz OpenVINO devices
+    ov_devices = []
+    try:
+        from openvino import Core
+        core = Core()
+        ov_devices = core.available_devices
+    except ImportError:
+        pass
+    except Exception:
+        ov_devices = ["CPU"]
+
+    # NPU
+    has_npu = "NPU" in ov_devices
+    devices.append(DeviceInfo(
+        id="NPU",
+        name="NPU",
+        full_name="Intel AI Boost" if has_npu else "Intel NPU (niedostepny)",
+        icon="memory",
+        speed_multiplier=2.5 if has_npu else 0,
+        available=has_npu,
+        recommended=has_npu
+    ))
+
+    # GPU
+    has_gpu = "GPU" in ov_devices
+    gpu_name = "Intel UHD Graphics"
+    try:
+        # Proba wykrycia nazwy GPU
+        if has_gpu:
+            from openvino import Core
+            core = Core()
+            gpu_name = core.get_property("GPU", "FULL_DEVICE_NAME")
+    except Exception:
+        pass
+
+    devices.append(DeviceInfo(
+        id="GPU",
+        name="GPU",
+        full_name=gpu_name if has_gpu else "GPU (niedostepny)",
+        icon="videogame_asset",
+        speed_multiplier=1.5 if has_gpu else 0,
+        available=has_gpu,
+        recommended=has_gpu and not has_npu
+    ))
+
+    # CPU - zawsze dostepny
+    cpu_name = "Intel Core"
+    try:
+        import platform
+        cpu_name = platform.processor() or "CPU"
+        # Skroc nazwe
+        if len(cpu_name) > 30:
+            cpu_name = cpu_name[:30] + "..."
+    except Exception:
+        pass
+
+    devices.append(DeviceInfo(
+        id="CPU",
+        name="CPU",
+        full_name=cpu_name,
+        icon="computer",
+        speed_multiplier=1.0,
+        available=True,
+        recommended=not has_npu and not has_gpu
+    ))
+
+    return devices
+
+
+# === MAIN APP ===
+
+class WywiadApp:
+    def __init__(self):
+        self.config = load_config()
+        self.icd10_codes = load_icd10()
+
+        # Transcriber
+        self.transcriber_manager = get_transcriber_manager()
+        if self.transcriber_manager:
+            self.transcriber_manager.set_gemini_api_key(self.config.get("api_key", ""))
+
+        # Audio state
+        self.is_recording = False
+        self.audio_data = []
+        self.sample_rate = 16000
+        self.stream = None
+
+        # Proxy state
+        self.proxy_started = False
+        self.proxy_port = None
+
+        # UI refs
+        self.transcript_area = None
+        self.recognition_field = None
+        self.service_field = None
+        self.procedure_field = None
+        self.record_button = None
+        self.record_status = None
+        self.generate_button = None
+        self.model_cards_container = None
+        self.device_cards_container = None
+
+        # Device detection
+        self.devices = detect_devices()
+        self.selected_device = self.config.get("selected_device", "auto")
+
+        # Model download state
+        self.downloading_model = None
+        self.download_progress = 0.0
+
+        # === NEW STATE MANAGEMENT ===
+        # Model state - Single Source of Truth
+        self.model_state = ModelState.IDLE
+        self.loaded_model: Optional[LoadedModelInfo] = None
+        self.model_error_message = ""
+
+        # Transcription state
+        self.transcription_state = TranscriptionState.IDLE
+
+        # Current cancellable tasks
+        self.current_task: Optional[CancellableTask] = None
+
+        # UI refs for status indicator
+        self.status_indicator = None
+        self.status_label = None
+        self.cancel_button = None
+
+        # Initialize model status based on backend
+        self._init_model_status()
+
+    def _init_model_status(self):
+        """Inicjalizuje status modelu - dla Gemini ustawiamy READY, dla innych IDLE."""
+        backend_type = self.config.get("transcriber_backend", "gemini_cloud")
+
+        if backend_type == "gemini_cloud":
+            # Gemini Cloud nie wymaga lokalnego modelu
+            self.model_state = ModelState.READY
+            self.loaded_model = LoadedModelInfo(
+                backend="gemini_cloud",
+                model_name="gemini-2.0-flash",
+                device="cloud"
+            )
+        else:
+            # Lokalne backendy - sprawdź czy coś jest załadowane
+            self.model_state = ModelState.IDLE
+            self.loaded_model = None
+
+    def _is_model_ready(self) -> bool:
+        """Sprawdza czy model jest gotowy do użycia."""
+        return self.model_state == ModelState.READY
+
+    def _get_selected_model_name(self) -> str:
+        """Zwraca nazwę wybranego modelu z konfiguracji."""
+        return self.config.get("transcriber_model", "small")
+
+    def _cancel_current_task(self):
+        """Anuluje bieżące zadanie jeśli istnieje."""
+        if self.current_task:
+            self.current_task.cancel()
+            self.current_task = None
+
+    async def _load_model_async(self):
+        """Ładuje model w SUBPROCESS - można zabić w każdej chwili."""
+        backend_type = self.config.get("transcriber_backend", "gemini_cloud")
+
+        # Gemini nie wymaga lokalnego modelu
+        if backend_type == "gemini_cloud":
+            self.model_state = ModelState.READY
+            self.loaded_model = LoadedModelInfo(
+                backend="gemini_cloud",
+                model_name="gemini-2.0-flash",
+                device="cloud"
+            )
+            self._update_status_ui()
+            return
+
+        if not self.transcriber_manager:
+            self.model_state = ModelState.ERROR
+            self.model_error_message = "Brak transcriber manager"
+            self._update_status_ui()
+            return
+
+        # Anuluj poprzednie zadanie (zabij subprocess)
+        self._cancel_current_task()
+
+        # Utwórz nowe zadanie
+        model_name = self._get_selected_model_name()
+        device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
+        task = CancellableTask(f"load_{model_name}_{device}")
+        self.current_task = task
+
+        # Ustaw stan ładowania
+        self.model_state = ModelState.LOADING
+        self.model_error_message = ""
+        self._update_status_ui()
+
+        print(f"[LOAD] Starting SUBPROCESS model load: {model_name} on {device}...", flush=True)
+
+        try:
+            # Ścieżka do loadera i modelu
+            loader_script = Path(__file__).parent / "core" / "model_loader.py"
+            from core.transcriber import MODELS_DIR
+            suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
+            model_path = MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-{suffix}-ov"
+
+            # Uruchom SUBPROCESS - można go zabić!
+            process = subprocess.Popen(
+                [sys.executable, str(loader_script), str(model_path), device],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            )
+            task.set_process(process)
+            print(f"[LOAD] Subprocess started: PID {process.pid}", flush=True)
+
+            # Czekaj na wynik w osobnym WĄTKU (nie blokuje event loop)
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(None, lambda: self._wait_for_subprocess(process, task))
+
+            # Sprawdź czy to NADAL aktualny task (nie został zastąpiony przez nowy)
+            if self.current_task != task:
+                print(f"[LOAD] Task replaced by newer one, ignoring result", flush=True)
+                return
+
+            if task.is_cancelled():
+                print(f"[LOAD] Cancelled by user", flush=True)
+                self.model_state = ModelState.IDLE
+                self.loaded_model = None
+            elif success:
+                # Subprocess załadował model (w cache) - NIE ładujemy w main procesie
+                # żeby nie blokować UI. Model załaduje się przy pierwszej transkrypcji.
+                print(f"[LOAD] Subprocess done - model cached, skipping main process preload", flush=True)
+
+                # Ustaw urządzenie w backendzie (to jest szybkie)
+                backend = self.transcriber_manager.get_current_backend()
+                if backend_type == "openvino_whisper":
+                    backend.set_device(device)
+
+                self.model_state = ModelState.READY
+                self.loaded_model = LoadedModelInfo(
+                    backend=backend_type,
+                    model_name=model_name,
+                    device=device
+                )
+                elapsed = task.elapsed_seconds()
+                print(f"[LOAD] Model ready (cached) in {elapsed}s: {self.loaded_model}", flush=True)
+            else:
+                self.model_state = ModelState.ERROR
+                self.model_error_message = "Subprocess failed"
+                print(f"[LOAD] Subprocess failed", flush=True)
+
+        except asyncio.CancelledError:
+            print(f"[LOAD] Async cancelled", flush=True)
+            task.cancel()  # Zabij subprocess
+            self.model_state = ModelState.IDLE
+            self.loaded_model = None
+        except Exception as e:
+            print(f"[LOAD] Error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.model_state = ModelState.ERROR
+            self.model_error_message = str(e)[:50]
+        finally:
+            if self.current_task == task:
+                self.current_task = None
+            self._update_status_ui()
+            self.refresh_device_cards()
+
+    def _wait_for_subprocess(self, process: subprocess.Popen, task: CancellableTask) -> bool:
+        """Czeka na subprocess, sprawdzając czy nie anulowano."""
+        try:
+            while process.poll() is None:
+                # Sprawdź czy anulowano
+                if task.is_cancelled():
+                    return False
+                # Czytaj output
+                line = process.stdout.readline()
+                if line:
+                    print(f"[SUBPROCESS] {line.strip()}", flush=True)
+                time.sleep(0.1)
+
+            # Przeczytaj pozostały output
+            for line in process.stdout:
+                print(f"[SUBPROCESS] {line.strip()}", flush=True)
+                if line.startswith("RESULT:"):
+                    import json
+                    result = json.loads(line[7:])
+                    return result.get("success", False)
+
+            return process.returncode == 0
+        except Exception as e:
+            print(f"[SUBPROCESS] Wait error: {e}", flush=True)
+            return False
+
+    def _set_device_sync(self, device_id: str):
+        """Ustawia urządzenie w backendzie (synchronicznie)."""
+        if self.transcriber_manager:
+            ov_backend = self.transcriber_manager.get_backend(TranscriberType.OPENVINO_WHISPER)
+            ov_backend.set_device(device_id)
+
+    def _update_status_ui(self):
+        """Aktualizuje UI statusu w headerze - pokazuje PRAWDZIWY stan."""
+        if not self.status_indicator or not self.status_label:
+            return
+
+        # Pokaż/ukryj przycisk anuluj
+        show_cancel = self.model_state == ModelState.LOADING or self.transcription_state == TranscriptionState.PROCESSING
+        if self.cancel_button:
+            self.cancel_button.set_visibility(show_cancel)
+
+        # Status modelu
+        if self.model_state == ModelState.IDLE:
+            self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-gray-400')
+            self.status_label.text = "Model nie załadowany"
+
+        elif self.model_state == ModelState.LOADING:
+            self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-yellow-500 animate-pulse')
+            elapsed = self.current_task.elapsed_seconds() if self.current_task else 0
+            model_name = self._get_selected_model_name()
+            device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
+            self.status_label.text = f"Ładowanie {model_name} @ {device}... {elapsed}s"
+
+        elif self.model_state == ModelState.READY:
+            # Pokaż co FAKTYCZNIE jest załadowane
+            if self.loaded_model:
+                if self.loaded_model.backend == "gemini_cloud":
+                    self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-blue-500')
+                    self.status_label.text = "Gemini Cloud"
+                else:
+                    self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-green-500')
+                    self.status_label.text = f"{self.loaded_model}"
+            else:
+                self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-green-500')
+                self.status_label.text = "Gotowy"
+
+        elif self.model_state == ModelState.ERROR:
+            self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-red-500')
+            self.status_label.text = self.model_error_message or "Błąd"
+
+        # Aktualizuj przycisk nagrywania
+        self._update_record_button()
+
+    def _update_record_button(self):
+        """Aktualizuje stan przycisku nagrywania."""
+        if not self.record_button:
+            return
+
+        can_record = self._is_model_ready() and self.transcription_state == TranscriptionState.IDLE
+
+        if can_record:
+            self.record_button.enable()
+            self.record_button.props(remove='disable')
+            if hasattr(self, 'record_tooltip'):
+                self.record_tooltip.text = "Kliknij aby nagrać"
+        else:
+            self.record_button.disable()
+            self.record_button.props('disable')
+            if hasattr(self, 'record_tooltip'):
+                if self.model_state == ModelState.LOADING:
+                    self.record_tooltip.text = "Poczekaj na załadowanie modelu..."
+                elif self.transcription_state == TranscriptionState.PROCESSING:
+                    self.record_tooltip.text = "Transkrypcja w toku..."
+                else:
+                    self.record_tooltip.text = "Model nie gotowy"
+
+    def _on_cancel_click(self):
+        """Handler kliknięcia przycisku Anuluj."""
+        if self.current_task:
+            self._cancel_current_task()
+            self.model_state = ModelState.IDLE
+            self.loaded_model = None
+            self._update_status_ui()
+            self.refresh_device_cards()
+            ui.notify("Anulowano", type='warning')
+
+    def _retry_load_model(self):
+        """Ponawia ładowanie modelu (tylko przy błędzie)."""
+        if self.model_state == ModelState.ERROR:
+            asyncio.create_task(self._load_model_async())
+
+    def _refresh_status_timer(self):
+        """Timer do odświeżania statusu podczas ładowania."""
+        if self.model_state == ModelState.LOADING or self.transcription_state == TranscriptionState.PROCESSING:
+            self._update_status_ui()
+
+    def get_best_device(self) -> str:
+        if self.selected_device != "auto":
+            return self.selected_device
+        for d in self.devices:
+            if d.recommended and d.available:
+                return d.id
+        return "CPU"
+
+    # === UI COMPONENTS ===
+
+    def select_device(self, device_id: str):
+        """Wybiera urządzenie i ładuje model."""
+        # Sprawdź czy już załadowane na tym urządzeniu
+        if (device_id == self.selected_device and
+            self.model_state == ModelState.READY and
+            self.loaded_model and
+            self.loaded_model.device == device_id):
+            return
+
+        print(f"[UI] Device selection: {device_id}", flush=True)
+
+        # Zapisz wybór
+        self.selected_device = device_id
+        self.config["selected_device"] = device_id
+        save_config(self.config)
+
+        # Odśwież karty i rozpocznij ładowanie
+        self.refresh_device_cards()
+        asyncio.create_task(self._load_model_async())
+
+    def refresh_device_cards(self):
+        """Odświeża karty urządzeń."""
+        if self.device_cards_container:
+            self.device_cards_container.clear()
+            with self.device_cards_container:
+                for device in self.devices:
+                    self.create_device_card(device)
+
+    def create_device_card(self, device: DeviceInfo) -> ui.card:
+        """Tworzy kartę urządzenia."""
+        is_selected = (self.selected_device == device.id) or (self.selected_device == "auto" and device.recommended)
+        is_loading = is_selected and self.model_state == ModelState.LOADING
+        is_ready = is_selected and self.model_state == ModelState.READY and self.loaded_model and self.loaded_model.device == device.id
+
+        # Style
+        base_classes = 'w-48 h-48 transition-all duration-200 cursor-pointer'
+        if is_loading:
+            style_classes = f'{base_classes} ring-2 ring-yellow-500 bg-yellow-50'
+        elif is_ready:
+            style_classes = f'{base_classes} ring-2 ring-green-500 bg-green-50'
+        elif is_selected:
+            style_classes = f'{base_classes} ring-2 ring-blue-500 bg-blue-50'
+        else:
+            style_classes = f'{base_classes} hover:shadow-lg'
+
+        with ui.card().classes(style_classes) as card:
+            if device.available:
+                card.on('click', lambda d=device: self.select_device(d.id))
+
+            with ui.column().classes('items-center gap-2 p-3 w-full h-full justify-between'):
+                # Icon + Name
+                with ui.column().classes('items-center gap-1 w-full'):
+                    if is_loading:
+                        color = 'text-yellow-600'
+                    elif is_ready:
+                        color = 'text-green-600'
+                    elif is_selected:
+                        color = 'text-blue-600'
+                    elif not device.available:
+                        color = 'text-gray-400'
+                    else:
+                        color = 'text-gray-600'
+
+                    ui.icon(device.icon, size='xl').classes(color)
+                    ui.label(device.name).classes('text-lg font-bold')
+                    ui.label(device.full_name).classes('text-xs text-gray-500 text-center leading-tight')
+
+                # Status section
+                with ui.column().classes('items-center justify-center w-full'):
+                    if is_loading:
+                        ui.spinner(size='sm', color='yellow')
+                        elapsed = self.current_task.elapsed_seconds() if self.current_task else 0
+                        ui.label(f"Ładowanie... {elapsed}s").classes('text-xs text-yellow-600')
+                    elif is_ready:
+                        ui.badge("GOTOWY", color='green')
+                    elif is_selected:
+                        ui.badge("WYBRANE", color='blue')
+                    elif device.recommended and device.available:
+                        ui.badge("ZALECANE", color='gray')
+                    elif device.available:
+                        speed_text = f"~{device.speed_multiplier}x"
+                        ui.label(speed_text).classes('text-sm text-gray-500')
+                    else:
+                        ui.label("Niedostępny").classes('text-sm text-red-400')
+
+        return card
+
+    def create_model_card(self, model: ModelInfo, backend_type) -> ui.card:
+        """Tworzy karte modelu."""
+        is_active = False
+        if self.transcriber_manager:
+            try:
+                current = self.transcriber_manager.get_current_backend().get_current_model()
+                is_active = (current == model.name)
+            except Exception:
+                pass
+
+        is_downloading = (self.downloading_model == model.name)
+
+        # Quality/speed mappings
+        quality_map = {"tiny": 0.4, "base": 0.6, "small": 0.8, "medium": 0.9, "large-v3": 1.0, "large": 1.0}
+        speed_map = {"tiny": 1.0, "base": 0.9, "small": 0.8, "medium": 0.6, "large-v3": 0.4, "large": 0.4}
+
+        quality = quality_map.get(model.name, 0.5)
+        speed = speed_map.get(model.name, 0.5)
+
+        with ui.card().classes('w-full') as card:
+            with ui.row().classes('w-full justify-between items-center'):
+                with ui.row().classes('items-center gap-2'):
+                    # Icon based on status
+                    if is_active:
+                        ui.icon('check_circle', color='green').classes('text-xl')
+                    elif is_downloading:
+                        ui.spinner(size='sm')
+                    elif model.is_downloaded:
+                        ui.icon('folder', color='blue').classes('text-xl')
+                    else:
+                        ui.icon('cloud_download', color='gray').classes('text-xl')
+
+                    ui.label(model.name).classes('text-lg font-bold')
+
+                # Status badge
+                if is_active:
+                    ui.badge("AKTYWNY", color='green')
+                elif is_downloading:
+                    ui.badge("POBIERANIE...", color='orange')
+                elif model.is_downloaded:
+                    ui.badge("POBRANY", color='blue')
+                else:
+                    ui.badge("DOSTEPNY", color='gray')
+
+            # Progress bars for quality/speed
+            with ui.row().classes('w-full gap-8 mt-4'):
+                with ui.column().classes('flex-1'):
+                    ui.label('Jakosc').classes('text-xs text-gray-500')
+                    ui.linear_progress(value=quality, show_value=False).classes('h-2')
+
+                with ui.column().classes('flex-1'):
+                    ui.label('Szybkosc').classes('text-xs text-gray-500')
+                    ui.linear_progress(value=speed, show_value=False, color='green').classes('h-2')
+
+            # Size and description
+            size_str = f"{model.size_mb} MB" if model.size_mb < 1000 else f"{model.size_mb/1000:.1f} GB"
+            ui.label(f"{size_str} - {model.description}").classes('text-sm text-gray-500 mt-2')
+
+            # Download progress (if downloading)
+            if is_downloading:
+                with ui.column().classes('w-full mt-2') as progress_col:
+                    progress_bar = ui.linear_progress(value=0, show_value=False).classes('h-3')
+                    progress_label = ui.label("0%").classes('text-sm text-center')
+
+                    # Timer to update progress
+                    def update_progress():
+                        if self.downloading_model == model.name:
+                            progress_bar.value = self.download_progress
+                            progress_label.text = f"{int(self.download_progress * 100)}%"
+                        else:
+                            timer.deactivate()
+
+                    timer = ui.timer(0.5, update_progress)
+
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                if model.is_downloaded and not is_active:
+                    ui.button('Usun', icon='delete', color='red').props('flat').on(
+                        'click', lambda m=model: self.delete_model(m.name)
+                    )
+                    ui.button('Aktywuj', icon='play_arrow', color='primary').on(
+                        'click', lambda m=model: self.activate_model(m.name)
+                    )
+                elif not model.is_downloaded and not is_downloading:
+                    ui.button('Pobierz', icon='download', color='primary').on(
+                        'click', lambda m=model: asyncio.create_task(self.download_model(m.name))
+                    )
+                elif is_active:
+                    ui.label('W uzyciu').classes('text-green-600 font-medium')
+
+        return card
+
+    def refresh_model_cards(self):
+        """Odswieza karty modeli."""
+        if not self.model_cards_container or not self.transcriber_manager:
+            return
+
+        self.model_cards_container.clear()
+
+        try:
+            backend = self.transcriber_manager.get_current_backend()
+            models = backend.get_models()
+
+            # Get current backend type
+            backend_type = self.transcriber_manager.get_current_type()
+
+            with self.model_cards_container:
+                for model in models:
+                    self.create_model_card(model, backend_type)
+        except Exception as e:
+            with self.model_cards_container:
+                ui.label(f"Blad ladowania modeli: {e}").classes('text-red-500')
+
+    def download_model_sync(self, model_name: str):
+        """Pobiera model (synchronicznie, w uzyciu z asyncio)."""
+        if not self.transcriber_manager:
+            return False
+
+        try:
+            backend = self.transcriber_manager.get_current_backend()
+
+            def progress_cb(p):
+                self.download_progress = p
+
+            success = backend.download_model(model_name, progress_cb)
+            return success
+        except Exception as e:
+            print(f"Download error: {e}")
+            return False
+
+    async def download_model(self, model_name: str):
+        """Pobiera model."""
+        if not self.transcriber_manager:
+            return
+
+        self.downloading_model = model_name
+        self.download_progress = 0.0
+        self.refresh_model_cards()
+
+        # Run in thread
+        loop = asyncio.get_event_loop()
+        success = await loop.run_in_executor(None, lambda: self.download_model_sync(model_name))
+
+        self.downloading_model = None
+
+        if success:
+            self.download_progress = 1.0
+        else:
+            self.download_progress = 0.0
+
+        self.refresh_model_cards()
+
+    def activate_model(self, model_name: str):
+        """Aktywuje model i przeładowuje."""
+        if not self.transcriber_manager:
+            return
+
+        try:
+            backend = self.transcriber_manager.get_current_backend()
+            if backend.set_model(model_name):
+                self.config["transcriber_model"] = model_name
+                save_config(self.config)
+                ui.notify(f"Model {model_name} aktywowany!", type='positive')
+
+                # Przeładuj model na aktualnym urządzeniu
+                self.refresh_model_cards()
+                asyncio.create_task(self._load_model_async())
+            else:
+                ui.notify("Nie udalo sie aktywowac modelu", type='negative')
+                self.refresh_model_cards()
+        except Exception as e:
+            ui.notify(f"Blad: {e}", type='negative')
+            self.refresh_model_cards()
+
+    def delete_model(self, model_name: str):
+        """Usuwa pobrany model."""
+        # TODO: Implement model deletion
+        ui.notify(f"Usuwanie modelu {model_name} - TODO", type='warning')
+
+    def select_backend(self, backend_value: str):
+        """Wybiera backend transkrypcji."""
+        if not self.transcriber_manager:
+            return
+
+        try:
+            backend_type = TranscriberType(backend_value)
+
+            # Check if installed
+            backends = self.transcriber_manager.get_available_backends()
+            info = next((b for b in backends if b.type == backend_type), None)
+
+            if info and not info.is_installed:
+                # Pokaz dialog instalacji
+                self.show_install_dialog(info)
+                return
+
+            if self.transcriber_manager.set_current_backend(backend_type):
+                self.config["transcriber_backend"] = backend_value
+                save_config(self.config)
+                ui.notify(f"Wybrano: {info.name if info else backend_value}", type='positive')
+                self.refresh_model_cards()
+                self.refresh_backend_buttons()
+
+                # Załaduj model dla nowego backendu
+                asyncio.create_task(self._load_model_async())
+            else:
+                ui.notify("Nie udalo sie zmienic backendu", type='negative')
+        except Exception as e:
+            ui.notify(f"Blad: {e}", type='negative')
+
+    def show_install_dialog(self, info):
+        """Pokazuje dialog instalacji backendu."""
+        with ui.dialog() as dialog, ui.card().classes('w-[450px]'):
+            ui.label(f'Instalacja: {info.name}').classes('text-xl font-bold')
+            ui.separator()
+
+            ui.label(f'Pakiet: {info.pip_package}').classes('text-gray-600 font-mono text-sm')
+
+            # Szacowany rozmiar
+            size_estimates = {
+                'faster-whisper': '~150 MB',
+                'openai-whisper': '~1 GB (zawiera PyTorch)',
+                'openvino openvino-genai librosa': '~500 MB',
+            }
+            size = size_estimates.get(info.pip_package, 'nieznany')
+            ui.label(f'Szacowany rozmiar: {size}').classes('text-gray-500 text-sm')
+
+            ui.label('Instalacja moze potrwac 1-5 minut w zaleznosci od polaczenia.').classes('text-sm text-orange-600 mt-2')
+
+            ui.separator().classes('my-3')
+
+            # Progress section
+            progress_container = ui.column().classes('w-full gap-2')
+            progress_container.visible = False
+
+            with progress_container:
+                progress_label = ui.label('Przygotowywanie...').classes('text-sm text-blue-600')
+                progress_bar = ui.linear_progress(value=0, show_value=False).props('indeterminate').classes('h-2')
+
+                # Etapy instalacji
+                with ui.column().classes('w-full gap-1 mt-2'):
+                    stages = [
+                        ('stage_download', 'Pobieranie pakietow...'),
+                        ('stage_install', 'Instalowanie...'),
+                        ('stage_verify', 'Weryfikacja...'),
+                    ]
+                    stage_labels = {}
+                    for stage_id, stage_text in stages:
+                        with ui.row().classes('items-center gap-2'):
+                            stage_icon = ui.icon('radio_button_unchecked', size='xs').classes('text-gray-400')
+                            stage_label = ui.label(stage_text).classes('text-xs text-gray-400')
+                            stage_labels[stage_id] = (stage_icon, stage_label)
+
+            # Success card - hidden by default
+            success_card = ui.card().classes('w-full bg-green-100 border-2 border-green-500 mt-4')
+            success_card.visible = False
+            with success_card:
+                with ui.column().classes('items-center gap-2 p-4'):
+                    ui.icon('check_circle', size='xl', color='green')
+                    ui.label('ZAINSTALOWANO!').classes('text-xl font-bold text-green-700')
+                    ui.label(f'Pakiet {info.pip_package} zostal zainstalowany.').classes('text-green-600')
+                    ui.label('Uruchom ponownie aplikacje aby uzyc tego silnika.').classes('text-sm text-gray-600')
+
+            # Error card - hidden by default
+            error_card = ui.card().classes('w-full bg-red-100 border-2 border-red-500 mt-4')
+            error_card.visible = False
+            with error_card:
+                with ui.column().classes('items-center gap-2 p-4'):
+                    ui.icon('error', size='xl', color='red')
+                    ui.label('BLAD INSTALACJI').classes('text-xl font-bold text-red-700')
+                    error_message_label = ui.label('').classes('text-red-600 text-sm')
+
+            # Buttons
+            button_row = ui.row().classes('w-full justify-end gap-2 mt-4')
+            with button_row:
+                cancel_btn = ui.button('Anuluj', on_click=dialog.close).props('flat')
+                install_btn = ui.button('Zainstaluj', icon='download', color='primary')
+
+            async def do_install():
+                # Show progress, hide buttons
+                progress_container.visible = True
+                install_btn.visible = False
+                cancel_btn.text = "Czekaj..."
+                cancel_btn.props('disable')
+
+                def update_stage(stage_idx, status='active'):
+                    stage_keys = ['stage_download', 'stage_install', 'stage_verify']
+                    for i, key in enumerate(stage_keys):
+                        icon, label = stage_labels[key]
+                        if i < stage_idx:
+                            icon.props('name=check_circle')
+                            icon.classes(replace='text-green-600')
+                            label.classes(replace='text-xs text-green-600')
+                        elif i == stage_idx:
+                            icon.props('name=pending')
+                            icon.classes(replace='text-blue-600')
+                            label.classes(replace='text-xs text-blue-600 font-medium')
+                        else:
+                            icon.props('name=radio_button_unchecked')
+                            icon.classes(replace='text-gray-400')
+                            label.classes(replace='text-xs text-gray-400')
+
+                def progress_cb(msg):
+                    progress_label.text = msg
+                    msg_lower = msg.lower()
+                    if 'pobier' in msg_lower or 'download' in msg_lower or 'collect' in msg_lower:
+                        update_stage(0)
+                    elif 'instal' in msg_lower or 'rozpak' in msg_lower:
+                        update_stage(1)
+                    elif 'weryfik' in msg_lower or 'gotowe' in msg_lower or 'zainstal' in msg_lower:
+                        update_stage(2)
+
+                update_stage(0)
+
+                loop = asyncio.get_event_loop()
+                success, message = await loop.run_in_executor(
+                    None,
+                    lambda: self.transcriber_manager.install_backend(info.type, progress_cb)
+                )
+
+                # Hide progress elements
+                progress_bar.visible = False
+                progress_label.visible = False
+
+                # Enable close button
+                cancel_btn.props(remove='disable')
+
+                if success:
+                    update_stage(3)  # All done
+                    success_card.visible = True
+                    cancel_btn.text = "Zamknij"
+                    cancel_btn.props('color=green')
+                    ui.notify(f"Zainstalowano {info.name}!", type='positive', timeout=5000)
+                else:
+                    error_message_label.text = message[:100]
+                    error_card.visible = True
+                    cancel_btn.text = "Zamknij"
+                    ui.notify(f"Blad: {message}", type='negative', timeout=5000)
+
+            install_btn.on('click', lambda: asyncio.create_task(do_install()))
+
+        dialog.open()
+
+    def refresh_backend_buttons(self):
+        """Odswieza przyciski backendow - wywolywane po zmianie."""
+        if not hasattr(self, 'backend_buttons_container') or not self.backend_buttons_container:
+            return
+
+        # Pobierz info o backendach
+        backends_info = {}
+        if self.transcriber_manager:
+            for b in self.transcriber_manager.get_available_backends():
+                backends_info[b.type.value] = b
+
+        backend_options = [
+            ('gemini_cloud', 'Gemini Cloud', 'cloud', 'Online API'),
+            ('faster_whisper', 'Faster Whisper', 'speed', 'Najszybszy offline'),
+            ('openai_whisper', 'OpenAI Whisper', 'psychology', 'Oryginalny'),
+            ('openvino_whisper', 'OpenVINO', 'memory', 'Intel NPU/GPU'),
+        ]
+
+        current_backend = self.config.get("transcriber_backend", "gemini_cloud")
+
+        self.backend_buttons_container.clear()
+        with self.backend_buttons_container:
+            for key, name, icon, desc in backend_options:
+                is_current = (key == current_backend)
+                info = backends_info.get(key)
+                is_installed = info.is_installed if info else True
+
+                with ui.card().classes(
+                    f'w-44 cursor-pointer transition-all {"ring-2 ring-blue-500 bg-blue-50" if is_current else "hover:shadow-md"} {"opacity-60" if not is_installed else ""}'
+                ).on('click', lambda k=key: self.select_backend(k)):
+                    with ui.column().classes('items-center gap-1 p-3'):
+                        ui.icon(icon, size='md').classes('text-blue-600' if is_current else 'text-gray-500')
+                        ui.label(name).classes('font-bold text-sm')
+                        ui.label(desc).classes('text-xs text-gray-500')
+
+                        if not is_installed:
+                            ui.badge('Wymaga instalacji', color='orange').classes('mt-1')
+                        elif is_current:
+                            ui.badge('Aktywny', color='green').classes('mt-1')
+
+    # === RECORDING ===
+
+    def toggle_recording(self):
+        """Przelacza nagrywanie."""
+        if not AUDIO_AVAILABLE:
+            ui.notify("Brak biblioteki audio (sounddevice)", type='negative')
+            return
+
+        if not self.is_recording:
+            self.start_recording()
+        else:
+            self.stop_recording()
+
+    def start_recording(self):
+        """Rozpoczyna nagrywanie."""
+        # Sprawdź czy model jest gotowy
+        if not self._is_model_ready():
+            if self.model_state == ModelState.LOADING:
+                ui.notify("Model się ładuje... Poczekaj.", type='warning')
+            else:
+                ui.notify("Model nie jest gotowy. Sprawdź status w headerze.", type='warning')
+            return
+
+        self.is_recording = True
+        self.transcription_state = TranscriptionState.RECORDING
+        self.audio_data = []
+
+        if self.record_button:
+            self.record_button.props('color=red icon=stop')
+            self.record_button.text = "Zatrzymaj"
+        if self.record_status:
+            self.record_status.text = "Nagrywanie..."
+            self.record_status.classes(replace='text-red-600')
+
+        def audio_callback(indata, frames, time_info, status):
+            if self.is_recording:
+                self.audio_data.append(indata.copy())
+
+        self.stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype=np.int16,
+            callback=audio_callback
+        )
+        self.stream.start()
+
+    def stop_recording(self):
+        """Zatrzymuje nagrywanie i rozpoczyna transkrypcję."""
+        self.is_recording = False
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+
+        if self.record_button:
+            self.record_button.props('color=primary icon=mic')
+            self.record_button.text = "Nagrywaj"
+
+        if self.audio_data:
+            # Ustaw stan na PROCESSING
+            self.transcription_state = TranscriptionState.PROCESSING
+            self._update_status_ui()
+
+            # Pokaż status z info o załadowanym modelu
+            if self.record_status:
+                if self.loaded_model:
+                    self.record_status.text = f"Transkrypcja ({self.loaded_model})..."
+                else:
+                    self.record_status.text = "Transkrypcja..."
+                self.record_status.classes(replace='text-orange-600')
+
+            # Save to temp file
+            audio_array = np.concatenate(self.audio_data, axis=0)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                temp_path = f.name
+                with wave.open(f.name, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(self.sample_rate)
+                    wf.writeframes(audio_array.tobytes())
+
+            # Transcribe in background thread (nie blokuje event loop)
+            threading.Thread(target=self.transcribe_audio, args=(temp_path,), daemon=True).start()
+        else:
+            self.transcription_state = TranscriptionState.IDLE
+            if self.record_status:
+                self.record_status.text = "Brak nagrania"
+                self.record_status.classes(replace='text-gray-500')
+
+    def transcribe_audio(self, audio_path: str):
+        """Transkrybuje audio."""
+        print(f"[DEBUG] transcribe_audio started: {audio_path}", flush=True)
+        transcript = None
+        error = None
+
+        try:
+            print(f"[DEBUG] transcriber_manager: {self.transcriber_manager}", flush=True)
+            print(f"[DEBUG] current backend: {self.transcriber_manager.get_current_type() if self.transcriber_manager else 'None'}", flush=True)
+
+            if self.transcriber_manager:
+                print("[DEBUG] Calling transcriber_manager.transcribe...", flush=True)
+                transcript = self.transcriber_manager.transcribe(audio_path, language="pl")
+                print(f"[DEBUG] Transcription result: {transcript[:100] if transcript else 'None'}...", flush=True)
+            else:
+                # Fallback to Gemini
+                api_key = self.config.get("api_key", "")
+                if not api_key or not GENAI_AVAILABLE:
+                    raise ValueError("Brak API key lub biblioteki Gemini")
+
+                print("[DEBUG] Using Gemini fallback...")
+                client = genai.Client(api_key=api_key)
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=[
+                        "Przetranscybuj poniższe nagranie audio na tekst. Zwróć tylko transkrypcję.",
+                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+                    ]
+                )
+                transcript = response.text.strip()
+
+        except Exception as e:
+            error = str(e)[:100]
+            print(f"[DEBUG] Transcription error: {error}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            try:
+                os.unlink(audio_path)
+            except Exception:
+                pass
+
+        # Store result for UI update
+        print(f"[DEBUG] Setting _transcription_result: transcript={bool(transcript)}, error={error}", flush=True)
+        self._transcription_result = {'transcript': transcript, 'error': error}
+
+    def check_transcription_result(self):
+        """Sprawdza wynik transkrypcji i aktualizuje UI."""
+        if not hasattr(self, '_transcription_result') or self._transcription_result is None:
+            return
+
+        result = self._transcription_result
+        self._transcription_result = None
+
+        # Reset transcription state
+        self.transcription_state = TranscriptionState.IDLE
+        self._update_status_ui()
+
+        if result['error']:
+            if self.record_status:
+                self.record_status.text = f"Błąd: {result['error'][:50]}"
+                self.record_status.classes(replace='text-red-600')
+            ui.notify(f"Błąd transkrypcji: {result['error']}", type='negative')
+        elif result['transcript']:
+            if self.transcript_area:
+                current = self.transcript_area.value or ""
+                if current.strip():
+                    self.transcript_area.value = current + "\n" + result['transcript']
+                else:
+                    self.transcript_area.value = result['transcript']
+
+            if self.record_status:
+                self.record_status.text = "Gotowy"
+                self.record_status.classes(replace='text-green-600')
+
+            ui.notify("Transkrypcja zakończona!", type='positive')
+
+    # === GENERATION ===
+
+    async def generate_description(self):
+        """Generuje opis stomatologiczny."""
+        transcript = self.transcript_area.value if self.transcript_area else ""
+        if not transcript.strip():
+            # Can't use ui.notify in async - set status instead
+            if self.record_status:
+                self.record_status.text = "Brak transkrypcji!"
+                self.record_status.classes(replace='text-red-600')
+            return
+
+        gemini_key = self.config.get("api_key", "")
+        session_key = self.config.get("session_key", "")
+        claude_token = load_claude_token()
+
+        # Select model
+        if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
+            model_type = "claude"
+            model_name = "Claude (Session Key)"
+        elif claude_token and PROXY_AVAILABLE:
+            model_type = "claude"
+            model_name = "Claude (OAuth)"
+        elif gemini_key and GENAI_AVAILABLE:
+            model_type = "gemini"
+            model_name = "Gemini Flash"
+        else:
+            if self.record_status:
+                self.record_status.text = "Brak klucza API!"
+                self.record_status.classes(replace='text-red-600')
+            return
+
+        # UI loading state
+        if self.generate_button:
+            self.generate_button.props('loading')
+
+        print(f"[DEBUG] Generating with {model_name}...", flush=True)
+
+        # Build prompt
+        icd_context = json.dumps(self.icd10_codes, indent=2, ensure_ascii=False)
+        prompt = f"""Jestes asystentem do formatowania dokumentacji stomatologicznej.
+Twoim zadaniem jest przeksztalcenie surowych notatek z wywiadu stomatologa na sformatowany tekst dokumentacji.
+
+Dostepne kody ICD-10 (Baza wiedzy):
+{icd_context}
+
+INSTRUKCJA:
+1. Przeanalizuj tekst i wybierz NAJLEPIEJ pasujacy kod z powyzszej listy.
+2. Sformatuj wynik w JSON.
+
+Wymagane pola JSON:
+- "rozpoznanie": tekst diagnozy
+- "icd10": kod z listy
+- "swiadczenie": wykonane zabiegi
+- "procedura": szczegolowy opis
+
+Transkrypcja wywiadu:
+{transcript}
+
+Odpowiedz TYLKO poprawnym kodem JSON:
+{{"rozpoznanie": "...", "icd10": "...", "swiadczenie": "...", "procedura": "..."}}"""
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            if model_type == "claude":
+                auth_key = session_key if session_key.startswith("sk-ant-sid01-") else claude_token
+                result_text = await loop.run_in_executor(None, lambda: self.call_claude(auth_key, prompt))
+            else:
+                result_text = await loop.run_in_executor(None, lambda: self.call_gemini(gemini_key, prompt))
+
+            # Parse JSON
+            cleaned = result_text
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+            result = json.loads(cleaned)
+
+            # Update fields
+            icd_code = result.get("icd10", "")
+            diagnosis = result.get("rozpoznanie", "-")
+            final_diagnosis = f"[{icd_code}] {diagnosis}" if icd_code else diagnosis
+
+            if self.recognition_field:
+                self.recognition_field.value = final_diagnosis
+            if self.service_field:
+                self.service_field.value = result.get("swiadczenie", "-")
+            if self.procedure_field:
+                self.procedure_field.value = result.get("procedura", "-")
+
+            if self.record_status:
+                self.record_status.text = "Opis wygenerowany!"
+                self.record_status.classes(replace='text-green-600')
+            print("[DEBUG] Description generated successfully!", flush=True)
+
+        except json.JSONDecodeError as e:
+            if self.record_status:
+                self.record_status.text = f"Blad JSON: {e}"
+                self.record_status.classes(replace='text-red-600')
+            print(f"[DEBUG] JSON error: {e}", flush=True)
+        except Exception as e:
+            if self.record_status:
+                self.record_status.text = f"Blad: {str(e)[:50]}"
+                self.record_status.classes(replace='text-red-600')
+            print(f"[DEBUG] Generation error: {e}", flush=True)
+
+        finally:
+            if self.generate_button:
+                self.generate_button.props(remove='loading')
+
+    def call_claude(self, auth_token: str, prompt: str) -> str:
+        """Wywoluje Claude API przez proxy."""
+        import io
+
+        if not auth_token:
+            raise ValueError("Brak tokena Claude!")
+
+        if not self.proxy_started:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                success, port = start_proxy_server(auth_token, port=8765)
+            finally:
+                sys.stdout = old_stdout
+
+            if success:
+                self.proxy_started = True
+                self.proxy_port = port
+                os.environ["ANTHROPIC_BASE_URL"] = get_proxy_base_url(port)
+                time.sleep(2)
+            else:
+                raise Exception("Nie udalo sie uruchomic proxy")
+
+        client = Anthropic(api_key=auth_token)
+        stream = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True
+        )
+
+        full_text = ""
+        for event in stream:
+            if event.type == "content_block_delta":
+                if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                    full_text += event.delta.text or ""
+
+        return full_text.strip()
+
+    def call_gemini(self, api_key: str, prompt: str) -> str:
+        """Wywoluje Gemini API."""
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+        return response.text.strip()
+
+    def _update_claude_status(self):
+        """Aktualizuje status Claude w UI."""
+        if not hasattr(self, 'claude_status_label'):
+            return
+        claude_token = load_claude_token()
+        if self.config.get("session_key"):
+            self.claude_status_label.text = 'Claude: Session Key aktywny'
+            self.claude_status_label.classes('text-green-600 text-sm', remove='text-orange-600 text-gray-500')
+        elif claude_token:
+            self.claude_status_label.text = 'Claude: OAuth token dostepny'
+            self.claude_status_label.classes('text-orange-600 text-sm', remove='text-green-600 text-gray-500')
+        else:
+            self.claude_status_label.text = 'Claude: Niedostepny (tylko Gemini)'
+            self.claude_status_label.classes('text-gray-500 text-sm', remove='text-green-600 text-orange-600')
+
+    def _save_session_from_dialog(self, session_key: str, dialog):
+        """Zapisuje session key z dialogu."""
+        if session_key and session_key.strip():
+            self.config["session_key"] = session_key.strip()
+            save_config(self.config)
+            if hasattr(self, 'session_input'):
+                self.session_input.value = session_key.strip()
+            self._update_claude_status()
+            ui.notify("Session key zapisany!", type='positive')
+            dialog.close()
+        else:
+            ui.notify("Wpisz session key", type='warning')
+
+    def _auto_get_key(self):
+        """Uruchamia instalator rozszerzenia (wymaga uprawnień Admin)."""
+        import subprocess
+
+        installer_path = os.path.join(os.path.dirname(__file__), "extension", "installer.py")
+
+        if not os.path.exists(installer_path):
+            ui.notify("Brak pliku installer.py w folderze extension/", type='negative')
+            return
+
+        ui.notify("Uruchamiam instalator... Zaakceptuj uprawnienia Admin.", type='info')
+
+        # Uruchom jako Administrator
+        import ctypes
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", "python", f'"{installer_path}"', None, 1
+        )
+
+    def _open_gemini_studio(self):
+        """Otwiera Google AI Studio w przeglądarce."""
+        ui.notify("Otwieram Google AI Studio... Skopiuj API key i wklej tutaj.", type='info')
+        import webbrowser
+        webbrowser.open("https://aistudio.google.com/app/apikey")
+
+    def save_settings(self):
+        """Zapisuje ustawienia."""
+        save_config(self.config)
+
+        if self.transcriber_manager:
+            self.transcriber_manager.set_gemini_api_key(self.config.get("api_key", ""))
+
+        self._update_claude_status()
+        ui.notify("Ustawienia zapisane!", type='positive')
+
+    def copy_to_clipboard(self, text: str, label: str):
+        """Kopiuje do schowka."""
+        if text:
+            ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
+            ui.notify(f"Skopiowano: {label}", type='positive')
+        else:
+            ui.notify("Brak tekstu do skopiowania", type='warning')
+
+    # === MAIN UI ===
+
+    def build_ui(self):
+        """Buduje glowny interfejs."""
+        print("[UI] build_ui() started", flush=True)
+
+        # Dark mode state
+        self.dark_mode = ui.dark_mode()
+
+        # Timer to check transcription result from background thread
+        self._transcription_result = None
+        ui.timer(0.5, self.check_transcription_result)
+
+        # Timer to refresh status during loading
+        ui.timer(1.0, self._refresh_status_timer)
+
+        # Header with status indicator
+        with ui.header().classes('bg-blue-700 text-white'):
+            with ui.row().classes('w-full items-center justify-between px-4'):
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('medical_services', size='lg')
+                    ui.label('Wywiad+').classes('text-2xl font-bold')
+
+                # Status indicator - zawsze widoczny w headerze
+                with ui.row().classes('items-center gap-2 bg-white/10 rounded-full px-3 py-1'):
+                    self.status_indicator = ui.element('div').classes('w-3 h-3 rounded-full bg-gray-400')
+                    self.status_label = ui.label('Inicjalizacja...').classes('text-sm')
+                    # Przycisk Anuluj - widoczny podczas ładowania
+                    self.cancel_button = ui.button('Anuluj', icon='close', on_click=self._on_cancel_click).props('flat dense size=sm').classes('text-white bg-red-500/50 hover:bg-red-500')
+                    self.cancel_button.set_visibility(False)
+
+                with ui.row().classes('items-center gap-4'):
+                    ui.label('v2.0').classes('text-sm opacity-75')
+                    ui.button(icon='dark_mode', on_click=self.dark_mode.toggle).props('flat round dense').classes('text-white')
+
+        # Main content
+        with ui.column().classes('w-full max-w-5xl mx-auto p-4 gap-4'):
+
+            # === DEVICE SELECTION ===
+            with ui.expansion('Urzadzenie do transkrypcji', icon='memory').classes('w-full'):
+                with ui.column().classes('w-full gap-4 p-2'):
+                    ui.label('Wybierz urzadzenie do przetwarzania audio:').classes('text-gray-600')
+
+                    self.device_cards_container = ui.row().classes('gap-4 flex-wrap')
+                    with self.device_cards_container:
+                        for device in self.devices:
+                            self.create_device_card(device)
+
+                    with ui.row().classes('items-center gap-2 mt-2'):
+                        ui.icon('info', size='sm').classes('text-blue-500')
+                        ui.label('NPU zapewnia najszybsza transkrypcje przy niskim zuzyciu energii.').classes('text-sm text-gray-500')
+
+            # === BACKEND & MODELS ===
+            with ui.expansion('Silnik transkrypcji', icon='settings_voice').classes('w-full'):
+                with ui.column().classes('w-full gap-4 p-2'):
+
+                    # Backend selection
+                    ui.label('Wybierz silnik:').classes('font-medium')
+
+                    # Pobierz info o backendach
+                    backends_info = {}
+                    if self.transcriber_manager:
+                        for b in self.transcriber_manager.get_available_backends():
+                            backends_info[b.type.value] = b
+
+                    backend_options = [
+                        ('gemini_cloud', 'Gemini Cloud', 'cloud', 'Online API'),
+                        ('faster_whisper', 'Faster Whisper', 'speed', 'Najszybszy offline'),
+                        ('openai_whisper', 'OpenAI Whisper', 'psychology', 'Oryginalny'),
+                        ('openvino_whisper', 'OpenVINO', 'memory', 'Intel NPU/GPU'),
+                    ]
+
+                    current_backend = self.config.get("transcriber_backend", "gemini_cloud")
+
+                    self.backend_buttons_container = ui.row().classes('gap-3 flex-wrap')
+                    with self.backend_buttons_container:
+                        for key, name, icon, desc in backend_options:
+                            is_current = (key == current_backend)
+                            info = backends_info.get(key)
+                            is_installed = info.is_installed if info else True
+
+                            with ui.card().classes(
+                                f'w-44 cursor-pointer transition-all {"ring-2 ring-blue-500 bg-blue-50" if is_current else "hover:shadow-md"} {"opacity-60" if not is_installed else ""}'
+                            ).on('click', lambda k=key: self.select_backend(k)):
+                                with ui.column().classes('items-center gap-1 p-3'):
+                                    ui.icon(icon, size='md').classes('text-blue-600' if is_current else 'text-gray-500')
+                                    ui.label(name).classes('font-bold text-sm')
+                                    ui.label(desc).classes('text-xs text-gray-500')
+
+                                    if not is_installed:
+                                        ui.badge('Wymaga instalacji', color='orange').classes('mt-1')
+                                    elif is_current:
+                                        ui.badge('Aktywny', color='green').classes('mt-1')
+
+                    ui.separator()
+
+                    # Models
+                    ui.label('Dostepne modele:').classes('font-medium mt-4')
+
+                    self.model_cards_container = ui.column().classes('w-full gap-2')
+                    self.refresh_model_cards()
+
+            # === API KEYS ===
+            with ui.expansion('Klucze API', icon='key').classes('w-full'):
+                with ui.column().classes('w-full gap-4 p-2'):
+
+                    # Gemini API Key
+                    with ui.row().classes('w-full items-end gap-2'):
+                        self.gemini_input = ui.input(
+                            'Gemini API Key',
+                            password=True,
+                            password_toggle_button=True,
+                            value=self.config.get("api_key", "")
+                        ).classes('flex-1').on(
+                            'change', lambda e: self.config.update({"api_key": e.value})
+                        )
+                        ui.button(
+                            'Pobierz',
+                            icon='open_in_new',
+                            on_click=self._open_gemini_studio
+                        ).props('flat dense').tooltip('Otworz Google AI Studio')
+
+                    # Claude Session Key
+                    with ui.row().classes('w-full items-end gap-2'):
+                        self.session_input = ui.input(
+                            'Claude Session Key',
+                            password=True,
+                            password_toggle_button=True,
+                            value=self.config.get("session_key", ""),
+                            placeholder="sk-ant-sid01-..."
+                        ).classes('flex-1').on(
+                            'change', lambda e: self.config.update({"session_key": e.value})
+                        )
+                        ui.button(
+                            'Auto',
+                            icon='extension',
+                            on_click=self._auto_get_key
+                        ).props('flat dense').tooltip('Zainstaluj rozszerzenie i pobierz klucz (wymaga Admin)')
+
+                    # Status
+                    self.claude_status_label = ui.label('')
+                    self._update_claude_status()
+
+                    # Extraction progress (hidden by default)
+                    self.extraction_spinner = ui.spinner('dots', size='sm').classes('hidden')
+
+                    ui.button('Zapisz ustawienia', icon='save', on_click=self.save_settings).classes('mt-2')
+
+            # === RECORDING ===
+            with ui.card().classes('w-full'):
+                with ui.column().classes('w-full gap-4'):
+                    ui.label('Nagrywanie wywiadu').classes('text-xl font-bold')
+                    ui.separator()
+
+                    with ui.row().classes('w-full items-center justify-center gap-4'):
+                        # Record button with tooltip
+                        with ui.element('div'):
+                            self.record_button = ui.button(
+                                'Nagrywaj',
+                                icon='mic',
+                                on_click=self.toggle_recording,
+                                color='primary'
+                            ).classes('text-lg px-8 py-4')
+                            self.record_tooltip = ui.tooltip('Kliknij aby nagrać')
+
+                        self.record_status = ui.label('Gotowy do nagrywania').classes('text-gray-500')
+
+                    self.transcript_area = ui.textarea(
+                        label='Transkrypcja wywiadu',
+                        placeholder='Tutaj pojawi sie transkrypcja nagrania...'
+                    ).classes('w-full').props('rows=5')
+
+                    with ui.row().classes('w-full justify-end gap-2'):
+                        ui.button('Wyczysc', icon='delete', on_click=lambda: setattr(self.transcript_area, 'value', '')).props('flat')
+                        ui.button('Kopiuj', icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.transcript_area.value or '', 'Transkrypcja')).props('flat')
+
+            # === GENERATION ===
+            with ui.row().classes('w-full justify-center'):
+                self.generate_button = ui.button(
+                    'Generuj opis',
+                    icon='auto_awesome',
+                    on_click=lambda: asyncio.create_task(self.generate_description()),
+                    color='green'
+                ).classes('text-lg px-8 py-4')
+
+            # === RESULTS ===
+            with ui.card().classes('w-full'):
+                with ui.column().classes('w-full gap-4'):
+                    ui.label('Wygenerowany opis').classes('text-xl font-bold')
+
+                    ui.separator()
+
+                    # Recognition
+                    with ui.row().classes('w-full items-end gap-2'):
+                        self.recognition_field = ui.textarea(
+                            label='Rozpoznanie (z kodem ICD-10)'
+                        ).classes('flex-1').props('rows=2')
+                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.recognition_field.value or '', 'Rozpoznanie')).props('flat round')
+
+                    # Service
+                    with ui.row().classes('w-full items-end gap-2'):
+                        self.service_field = ui.textarea(
+                            label='Swiadczenie'
+                        ).classes('flex-1').props('rows=2')
+                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.service_field.value or '', 'Swiadczenie')).props('flat round')
+
+                    # Procedure
+                    with ui.row().classes('w-full items-end gap-2'):
+                        self.procedure_field = ui.textarea(
+                            label='Procedura'
+                        ).classes('flex-1').props('rows=4')
+                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.procedure_field.value or '', 'Procedura')).props('flat round')
+
+        # === AUTO-LOAD MODEL ===
+        self._update_status_ui()
+        self._update_record_button()
+        print("[UI] build_ui() DONE", flush=True)
+
+        # Auto-load modelu dla backendów offline
+        backend_type = self.config.get("transcriber_backend", "gemini_cloud")
+        if backend_type != "gemini_cloud":
+            asyncio.create_task(self._load_model_async())
+
+
+# === RUN ===
+
+def main():
+    import sys
+    # Force unbuffered output
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+
+    print("[STARTUP] Starting app...", flush=True)
+
+    # === GLOBAL INITIALIZATION ===
+    def init_global_state():
+        print("[STARTUP] Initializing global state...", flush=True)
+        config = load_config()
+        manager = get_transcriber_manager()
+        
+        if manager:
+            # Restore saved backend
+            saved_backend = config.get("transcriber_backend", "gemini_cloud")
+            try:
+                from core.transcriber import TranscriberType
+                backend_enum = TranscriberType(saved_backend)
+                manager.set_current_backend(backend_enum)
+                print(f"[STARTUP] Restored backend: {saved_backend}", flush=True)
+            except Exception as e:
+                print(f"[STARTUP] Could not restore backend: {e}", flush=True)
+
+            # Force device
+            selected_device = config.get("selected_device", "auto")
+            if selected_device != "auto":
+                try:
+                    ov_backend = manager.get_backend(TranscriberType.OPENVINO_WHISPER)
+                    ov_backend.set_device(selected_device)
+                    print(f"[STARTUP] Forced device: {selected_device}", flush=True)
+                except Exception as e:
+                    print(f"[STARTUP] Could not set device: {e}", flush=True)
+
+            # Restore model
+            saved_model = config.get("transcriber_model", "small")
+            try:
+                current_backend = manager.get_current_backend()
+                if hasattr(current_backend, 'get_current_model') and current_backend.get_current_model() != saved_model:
+                     current_backend.set_model(saved_model)
+                     print(f"[STARTUP] Restored model: {saved_model}", flush=True)
+            except Exception as e:
+                print(f"[STARTUP] Could not restore model: {e}", flush=True)
+
+            # Start preload if needed
+            # if saved_backend in ["openvino_whisper", "faster_whisper", "openai_whisper"]:
+            #     print(f"[STARTUP] Starting background preload...", flush=True)
+            #     def preload_thread():
+            #         try:
+            #             backend = manager.get_current_backend()
+            #             backend.preload()
+            #             print("[STARTUP] Preload finished.", flush=True)
+            #         except Exception as e:
+            #             print(f"[STARTUP] Preload error: {e}", flush=True)
+            #     threading.Thread(target=preload_thread, daemon=True).start()
+
+    # Run initialization in background to not block startup
+    threading.Thread(target=init_global_state, daemon=True).start()
+
+    @ui.page('/')
+    def index():
+        app_instance = WywiadApp()
+        app_instance.build_ui()
+
+    # API endpoint dla rozszerzenia przeglądarki
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+    from fastapi.middleware.cors import CORSMiddleware
+
+    # Dodaj CORS dla rozszerzenia
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["POST"],
+        allow_headers=["*"],
+    )
+
+    @app.post('/api/session-key')
+    async def receive_session_key(request: Request):
+        """Odbiera session key z rozszerzenia przeglądarki."""
+        try:
+            data = await request.json()
+            session_key = data.get('sessionKey')
+            if session_key:
+                config = load_config()
+                config['session_key'] = session_key
+                save_config(config)
+                print(f"[API] Session key otrzymany z rozszerzenia!", flush=True)
+                return JSONResponse({'success': True, 'message': 'Session key zapisany'})
+            return JSONResponse({'success': False, 'error': 'Brak sessionKey'}, status_code=400)
+        except Exception as e:
+            return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+    @app.get('/api/download-installer')
+    async def download_installer(request: Request):
+        """Generuje i zwraca instalator rozszerzenia dla danej przeglądarki."""
+        from fastapi.responses import Response
+
+        browser = request.query_params.get('browser', 'edge')
+
+        # Ścieżka do folderu rozszerzenia
+        extension_path = os.path.join(os.path.dirname(__file__), "extension")
+
+        # Konfiguracja dla różnych przeglądarek
+        browser_config = {
+            'edge': {
+                'exe': 'msedge',
+                'extensions_url': 'edge://extensions/',
+                'name': 'Microsoft Edge'
+            },
+            'chrome': {
+                'exe': 'chrome',
+                'extensions_url': 'chrome://extensions/',
+                'name': 'Google Chrome'
+            },
+            'firefox': {
+                'exe': 'firefox',
+                'extensions_url': 'about:addons',
+                'name': 'Firefox'
+            }
+        }
+
+        config = browser_config.get(browser, browser_config['edge'])
+
+        # Generuj .bat (bez polskich znakow i Unicode - cmd.exe ich nie obsluguje)
+        bat_content = f'''@echo off
+title Wywiad+ Extension Installer
+
+echo.
+echo ============================================================
+echo   WYWIAD+ EXTENSION INSTALLER for {config['name']}
+echo ============================================================
+echo.
+echo   Opening:
+echo   1. Browser extensions page
+echo   2. Extension folder
+echo.
+echo   Your task:
+echo   [1] Enable "Developer mode" (toggle switch)
+echo   [2] Click "Load unpacked"
+echo   [3] Select the folder that opens
+echo.
+echo ============================================================
+echo.
+pause
+
+start "" "{config['exe']}" "{config['extensions_url']}"
+timeout /t 2 /nobreak >nul
+explorer "{extension_path}"
+
+echo.
+echo ============================================================
+echo   DONE! Now in browser:
+echo   [1] Enable "Developer mode"
+echo   [2] Click "Load unpacked"
+echo   [3] Select the open folder
+echo ============================================================
+echo.
+echo   After installing, click extension icon (puzzle piece)
+echo   and click "Send key to app"
+echo.
+pause
+'''
+
+        return Response(
+            content=bat_content.encode('utf-8'),
+            media_type='application/x-bat',
+            headers={
+                'Content-Disposition': f'attachment; filename="Instaluj_Wywiad_Plus_{browser}.bat"'
+            }
+        )
+
+    ui.run(
+        title='Wywiad+ v2',
+        port=8089,
+        reload=False,
+        show=False,
+        native=False,
+        binding_refresh_interval=0.1,
+        reconnect_timeout=120.0,  # Dlugi timeout dla ladowania modeli
+        storage_secret='wywiad_plus_secret_key',  # Wymagane dla reconnect
+    )
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    main()

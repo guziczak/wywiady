@@ -1008,6 +1008,23 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                 if info.requires_ffmpeg:
                     ffmpeg_status_text.value = "ffmpeg OK"
                     ffmpeg_status_text.color = ft.Colors.GREEN_700
+
+                # Pokaż wskaźnik urządzenia dla OpenVINO
+                if info.type == TranscriberType.OPENVINO_WHISPER:
+                    try:
+                        backend = transcriber_manager.get_backend(TranscriberType.OPENVINO_WHISPER)
+                        device = backend.get_detected_device()
+                        device_indicator.content.value = device
+                        # Kolor w zależności od urządzenia
+                        if device == "NPU":
+                            device_indicator.bgcolor = ft.Colors.GREEN_700
+                        elif device == "GPU":
+                            device_indicator.bgcolor = ft.Colors.BLUE_700
+                        else:
+                            device_indicator.bgcolor = ft.Colors.ORANGE_700
+                        device_indicator.visible = True
+                    except Exception:
+                        pass
                 # Pokaż wybór modelu
                 model_dropdown.visible = True
                 update_model_options()
@@ -1269,6 +1286,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                     ft.Row([
                         backend_status_text,
                         ffmpeg_status_text,
+                        device_indicator,
                         action_progress,
                         install_button,
                         install_ffmpeg_button,

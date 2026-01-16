@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Test Cookie</title></head>
+<body>
+<h1>Otwórz tę stronę na claude.ai</h1>
+<p>1. Zaloguj się do claude.ai</p>
+<p>2. Otwórz DevTools (F12) → Console</p>
+<p>3. Wklej ten kod:</p>
+<pre style="background:#eee;padding:10px;">
+// Sprawdź czy sessionKey jest dostępne
+console.log("Wszystkie cookies:", document.cookie);
+const sk = document.cookie.split(';').find(c => c.includes('sessionKey'));
+if (sk) {
+    const value = sk.split('=').slice(1).join('=').trim();
+    console.log("sessionKey:", value);
+    // Skopiuj do schowka
+    navigator.clipboard.writeText(value).then(() => {
+        alert("sessionKey skopiowane do schowka!");
+    });
+} else {
+    console.log("sessionKey nie jest dostępne przez JavaScript (HttpOnly)");
+    alert("sessionKey jest HttpOnly - musisz skopiować ręcznie z Application → Cookies");
+}
+</pre>
+</body>
+</html>

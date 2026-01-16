@@ -2,8 +2,15 @@ sounddevice
 numpy
 google-genai
 flet
+nicegui
+pywebview
 requests
+selenium
+webdriver-manager
+pycryptodome
+pywin32
 
 # Opcjonalne backendy transkrypcji offline (zainstaluj jeden z nich):
 # pip install faster-whisper    # Rekomendowany - najszybszy
 # pip install openai-whisper    # Oryginalna implementacja
+# pip install openvino openvino-genai librosa  # Intel NPU/GPU

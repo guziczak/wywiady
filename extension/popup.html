@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 280px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+    }
+    h3 {
+      margin: 0 0 12px 0;
+      color: #1a1a1a;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+      background: #6366f1;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #4f46e5;
+    }
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      text-align: center;
+      display: none;
+    }
+    .success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    .error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .info {
+      color: #6b7280;
+      font-size: 12px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h3>Wywiad+ Connector</h3>
+  <button id="sendBtn">Wyslij klucz do aplikacji</button>
+  <div id="status"></div>
+  <p class="info">Upewnij sie ze aplikacja Wywiad+ jest uruchomiona na localhost:8089</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
