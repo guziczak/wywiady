@@ -31,6 +31,21 @@ def create_recording_section(app):
                 app.generate_description
             )
 
-            with ui.row().classes('w-full justify-end gap-2'):
-                ui.button('Wyczysc', icon='delete', on_click=lambda: setattr(app.transcript_area, 'value', '')).props('flat')
-                ui.button('Kopiuj', icon='content_copy', on_click=lambda: app.copy_to_clipboard(app.transcript_area.value or '', 'Transkrypcja')).props('flat')
+            with ui.row().classes('w-full justify-between items-start'):
+                # AI Suggestions Trigger
+                app.suggestion_btn = ui.button(
+                    'Podpowiedz pytania',
+                    icon='lightbulb',
+                    color='orange',
+                    on_click=app.generate_suggestions
+                ).props('flat dense').tooltip('Zasugeruj kolejne pytania na podstawie wywiadu')
+
+                # Edit Actions
+                with ui.row().classes('gap-2'):
+                    ui.button('Wyczysc', icon='delete', on_click=lambda: setattr(app.transcript_area, 'value', '')).props('flat dense')
+                    ui.button('Kopiuj', icon='content_copy', on_click=lambda: app.copy_to_clipboard(app.transcript_area.value or '', 'Transkrypcja')).props('flat dense')
+
+            # Suggestions Container (Chips)
+            with ui.row().classes('w-full gap-2 items-center min-h-[40px]'):
+                ui.label('Sugestie:').classes('text-xs text-gray-400')
+                app.suggestions_container = ui.row().classes('gap-2')

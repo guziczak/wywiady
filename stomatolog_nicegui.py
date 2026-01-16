@@ -147,11 +147,14 @@ try:
     from ui.components.settings import create_settings_section
     from ui.components.recording import create_recording_section
     from ui.components.results import create_results_section
+    from ui.live_view import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
 
 # Global TranscriberManager instance (Singleton)
 GLOBAL_TRANSCRIBER_MANAGER = None
+# Transkrypt z live interview do przekazania do głównego widoku
+GLOBAL_LIVE_TRANSCRIPT = None
 
 def get_transcriber_manager():
     global GLOBAL_TRANSCRIBER_MANAGER
@@ -1281,6 +1284,10 @@ class WywiadApp:
         # Reset transcription state
         self.transcription_state = TranscriptionState.IDLE
         self._update_status_ui()
+        
+        # Auto-suggest questions
+        if result['transcript']:
+            asyncio.create_task(self.generate_suggestions())
 
         if result['error']:
             if self.record_status:
@@ -1302,6 +1309,34 @@ class WywiadApp:
             ui.notify("Transkrypcja zakończona!", type='positive')
 
     # === GENERATION ===
+
+    async def generate_suggestions(self):
+        """Generuje sugestie pytań."""
+        transcript = self.transcript_area.value if self.transcript_area else ""
+        # if not transcript.strip():
+        #     ui.notify("Brak treści wywiadu", type='warning')
+        #     return
+
+        if not self.llm_service:
+            return
+
+        if hasattr(self, 'suggestion_btn'):
+            self.suggestion_btn.props('loading')
+
+        try:
+            suggestions = await self.llm_service.generate_suggestions(transcript, self.config)
+            
+            if hasattr(self, 'suggestions_container'):
+                self.suggestions_container.clear()
+                with self.suggestions_container:
+                    for question in suggestions:
+                        ui.chip(question, icon='help_outline', on_click=lambda q=question: self.copy_to_clipboard(q, "Pytanie")).props('clickable color=blue-100 text-color=blue-800')
+            
+        except Exception as e:
+            print(f"[UI] Suggestion error: {e}", flush=True)
+        finally:
+            if hasattr(self, 'suggestion_btn'):
+                self.suggestion_btn.props(remove='loading')
 
     async def generate_description(self):
         """Generuje opis stomatologiczny używając LLMService."""
@@ -1570,7 +1605,15 @@ class WywiadApp:
             
             # Recording Section
             create_recording_section(self)
-            
+
+            # Sprawdź czy jest transkrypt z Live Interview (w storage użytkownika)
+            live_transcript = app.storage.user.get('live_transcript', None)
+            if live_transcript and self.transcript_area:
+                self.transcript_area.value = live_transcript
+                del app.storage.user['live_transcript']  # Wyczyść po użyciu
+                ui.notify("Załadowano transkrypt z Live Interview!", type='positive')
+                print(f"[UI] Loaded live transcript into main view", flush=True)
+
             # Results Section
             create_results_section(self)
 
@@ -1593,8 +1636,25 @@ class WywiadApp:
 # === RUN ===
 
 def main():
-    import sys
-    # Force unbuffered output
+    # Setup safe exit
+    def handle_sigint(signum, frame):
+        print("\n[APP] Otrzymano sygnał przerwania. Zamykanie...", flush=True)
+        # Próbujemy zamknąć ładnie, ale jak nie wyjdzie to force exit
+        try:
+            if GLOBAL_TRANSCRIBER_MANAGER:
+                # Tu można dodać cleanup managera
+                pass
+        except:
+            pass
+        finally:
+            print("[APP] Force exit.", flush=True)
+            import os
+            os._exit(0)
+
+    import signal
+    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGTERM, handle_sigint)
+
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 
@@ -1655,8 +1715,17 @@ def main():
 
     @ui.page('/')
     def index():
+        """Strona główna."""
         app_instance = WywiadApp()
         app_instance.build_ui()
+
+    @ui.page('/live')
+    def live_page():
+        """Strona trybu Live Interview."""
+        app_instance = WywiadApp()
+        # W przyszłości można tu przekazać istniejący stan, jeśli chcemy
+        view = LiveInterviewView(app_instance)
+        view.create_ui()
 
     # API endpoint dla rozszerzenia przeglądarki
     from fastapi import Request

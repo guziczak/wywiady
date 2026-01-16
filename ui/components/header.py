@@ -2,6 +2,10 @@ from nicegui import ui
 
 def create_header(app):
     """Tworzy nagłówek aplikacji."""
+    # Ensure dark mode state exists
+    if not hasattr(app, 'dark_mode'):
+        app.dark_mode = ui.dark_mode()
+
     with ui.header().classes('bg-blue-700 text-white'):
         with ui.row().classes('w-full items-center justify-between px-4'):
             with ui.row().classes('items-center gap-2'):
@@ -17,5 +21,8 @@ def create_header(app):
                 app.cancel_button.set_visibility(False)
 
             with ui.row().classes('items-center gap-4'):
+                # Live Mode Button
+                ui.button('LIVE', icon='sensors', on_click=lambda: ui.navigate.to('/live')).props('flat dense').classes('text-red-300 font-bold border border-red-300 hover:bg-red-900/20')
+                
                 ui.label('v2.0').classes('text-sm opacity-75')
                 ui.button(icon='dark_mode', on_click=app.dark_mode.toggle).props('flat round dense').classes('text-white')

@@ -6,7 +6,7 @@ import asyncio
 import io
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 # Importy opcjonalne (zaleznosci)
 try:
@@ -224,3 +224,185 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             return result_json, used_model
         except json.JSONDecodeError as e:
             raise ValueError(f"Model zwrócił niepoprawny JSON: {e}")
+
+    def _call_with_retry(self, func, *args, max_retries=3, initial_delay=1.0):
+        """Wywołuje funkcję z mechanizmem retry (exponential backoff)."""
+        delay = initial_delay
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args)
+            except Exception as e:
+                error_msg = str(e)
+                # Retry tylko dla błędów serwera (5xx) lub Rate Limit (429 - czasem warto poczekać)
+                if "500" in error_msg or "503" in error_msg or "429" in error_msg or "Overloaded" in error_msg:
+                    print(f"[LLM] Error: {e}. Retrying in {delay}s... ({attempt+1}/{max_retries})", flush=True)
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                    last_exception = e
+                else:
+                    raise e # Inne błędy (np. auth) rzucamy od razu
+        
+        raise last_exception
+
+    async def generate_suggestions(self, transcript: str, config: Dict) -> List[str]:
+        """Generuje sugestie pytań uzupełniających."""
+        
+        # ... (prompt definition) ...
+        icd_context = "" # Not needed for suggestions
+        prompt = f"""Jesteś doświadczonym stomatologiem przeprowadzającym wywiad.
+Twoim celem jest postawienie precyzyjnej diagnozy (ICD-10) oraz zaplanowanie leczenia.
+
+Oto dotychczasowy przebieg rozmowy:
+---
+{transcript}
+---
+
+Zadanie:
+Zasugeruj DOKŁADNIE 3 krótkie, konkretne pytania, które warto teraz zadać pacjentowi, aby:
+1. Doprecyzować objawy (np. rodzaj bólu, czynniki wyzwalające).
+2. Wykluczyć inne schorzenia.
+3. Uzyskać brakujące informacje medyczne.
+
+Jeśli wywiad jest kompletny, zasugeruj: ["Wywiad kompletny - można przejść do badania", "Czy ma Pan/Pani inne dolegliwości?", "Czy przyjmuje Pan/Pani leki na stałe?"].
+Jeśli brak danych, zasugeruj 3 pytania ogólne.
+
+Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
+["Czy ból nasila się w nocy?", "Czy ząb reaguje na ciepło?", "Czy występuje obrzęk?"]
+"""
+        # Wybór modelu (analogicznie jak w generate_description, ale uproszczone dla szybkosci)
+        gemini_key = config.get("api_key", "")
+        # Preferujemy Gemini bo jest szybkie i tanie (Flash)
+        
+        loop = asyncio.get_event_loop()
+        
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                # Używamy retry
+                response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
+            else:
+                # Fallback to Claude logic if needed, or simplified
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+                
+                if (session_key or claude_token) and PROXY_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    # Używamy retry
+                    response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
+                else:
+                    return ["Brak konfiguracji AI"]
+
+            # Parse JSON
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+            
+            return json.loads(cleaned)
+            
+        except Exception as e:
+            print(f"[LLM] Suggestion error: {e}", flush=True)
+            return []
+
+    async def validate_segment(self, segment: str, context: str, suggested_questions: List[str], config: Dict) -> Dict:
+        """
+        Waliduje segment transkrypcji przez AI.
+
+        Args:
+            segment: Fragment tekstu do walidacji
+            context: Poprzedni sfinalizowany tekst (kontekst rozmowy)
+            suggested_questions: Aktualnie sugerowane pytania
+            config: Konfiguracja z kluczami API
+
+        Returns:
+            {
+                "is_complete": bool,  # Czy to kompletna myśl/zdanie
+                "corrected_text": str,  # Poprawiony tekst z interpunkcją
+                "needs_newline": bool,  # Czy dodać nową linię przed tym segmentem
+                "confidence": float  # 0.0-1.0
+            }
+        """
+
+        questions_str = "\n".join([f"- {q}" for q in suggested_questions]) if suggested_questions else "(brak)"
+
+        prompt = f"""Jesteś asystentem do walidacji transkrypcji mowy w gabinecie stomatologicznym.
+
+KONTEKST ROZMOWY (wcześniejsze wypowiedzi):
+{context if context else "(początek rozmowy)"}
+
+SUGEROWANE PYTANIA LEKARZA (referencja):
+{questions_str}
+
+NOWY SEGMENT DO WALIDACJI:
+"{segment}"
+
+ZADANIE - ROZPOZNAJ KTO MÓWI:
+
+1. LEKARZ zadaje PYTANIA:
+   - Zaczyna od "Czy", "Jak", "Kiedy", "Gdzie", "Od kiedy", "Co"
+   - Często pasuje do jednego z sugerowanych pytań
+   - Whisper może transkrybować "Czy" jako "Te", "To", "Ty" - wtedy POPRAW
+   - Kończy się znakiem zapytania
+
+2. PACJENT daje ODPOWIEDZI:
+   - To STWIERDZENIA, NIE pytania!
+   - Np. "Boli mnie górna czwórka", "Tak, reaguje na zimne", "Od tygodnia"
+   - NIE zamieniaj odpowiedzi pacjenta na pytania!
+   - Kończy się kropką
+
+WSKAZÓWKI ROZPOZNAWANIA:
+- Jeśli poprzednia wypowiedź to PYTANIE → nowa to prawdopodobnie ODPOWIEDŹ pacjenta
+- Jeśli poprzednia wypowiedź to ODPOWIEDŹ → nowa to prawdopodobnie PYTANIE lekarza
+- Krótkie "tak", "nie", "mhm" → to odpowiedzi pacjenta
+- Opisy objawów ("boli", "reaguje", "od X dni") → odpowiedzi pacjenta
+
+ZASADY OGÓLNE:
+- is_complete = false tylko gdy zdanie jest URWANE w połowie
+- needs_newline = true gdy zmiana mówiącego (lekarz↔pacjent) lub nowy temat
+- Popraw błędy transkrypcji, ale ZACHOWAJ sens i typ wypowiedzi
+
+Odpowiedz TYLKO w formacie JSON:
+{{"is_complete": true/false, "corrected_text": "...", "needs_newline": true/false, "confidence": 0.0-1.0}}"""
+
+        gemini_key = config.get("api_key", "")
+        loop = asyncio.get_event_loop()
+
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt)
+                )
+            else:
+                # Fallback
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+
+                if (session_key or claude_token) and PROXY_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: self._call_with_retry(self._call_claude, auth_key, prompt)
+                    )
+                else:
+                    return {"is_complete": True, "corrected_text": segment, "needs_newline": False, "confidence": 0.5}
+
+            # Parse JSON
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+            result = json.loads(cleaned)
+            print(f"[LLM] Validation result: {result}", flush=True)
+            return result
+
+        except Exception as e:
+            print(f"[LLM] Validation error: {e}", flush=True)
+            # Fallback - zakładamy że kompletne
+            return {"is_complete": True, "corrected_text": segment, "needs_newline": False, "confidence": 0.5}
