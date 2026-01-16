@@ -122,6 +122,34 @@ except ImportError:
     ModelInfo = None
     TRANSCRIBER_AVAILABLE = False
 
+# LLM Service
+try:
+    from core.llm_service import LLMService
+except ImportError as e:
+    print(f"[ERROR] Could not import LLMService: {e}")
+    LLMService = None
+
+try:
+    from core.browser_service import BrowserService
+except ImportError as e:
+    print(f"[ERROR] Could not import BrowserService: {e}")
+    BrowserService = None
+
+try:
+    from core.config_manager import ConfigManager
+except ImportError as e:
+    print(f"[ERROR] Could not import ConfigManager: {e}")
+    ConfigManager = None
+
+# UI Components
+try:
+    from ui.components.header import create_header
+    from ui.components.settings import create_settings_section
+    from ui.components.recording import create_recording_section
+    from ui.components.results import create_results_section
+except ImportError as e:
+    print(f"[ERROR] Could not import UI components: {e}")
+
 # Global TranscriberManager instance (Singleton)
 GLOBAL_TRANSCRIBER_MANAGER = None
 
@@ -153,20 +181,7 @@ except ImportError:
 
 # === HELPERS ===
 
-def load_config() -> dict:
-    try:
-        if CONFIG_FILE.exists():
-            return json.loads(CONFIG_FILE.read_text())
-    except Exception:
-        pass
-    return {"api_key": "", "session_key": "", "transcriber_backend": "gemini_cloud", "transcriber_model": "small", "selected_device": "auto"}
 
-
-def save_config(config: dict):
-    try:
-        CONFIG_FILE.write_text(json.dumps(config, indent=2))
-    except Exception:
-        pass
 
 
 def load_icd10() -> dict:
@@ -194,409 +209,17 @@ def load_claude_token() -> Optional[str]:
         return None
 
 
-def _get_default_browser() -> Optional[str]:
-    """Wykrywa domyślną przeglądarkę z rejestru Windows."""
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                           r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
-            prog_id = winreg.QueryValueEx(key, "ProgId")[0].lower()
-            if "chrome" in prog_id:
-                return "chrome"
-            elif "firefox" in prog_id:
-                return "firefox"
-            elif "edge" in prog_id or "msedge" in prog_id:
-                return "edge"
-            elif "opera" in prog_id:
-                return "opera"
-            elif "brave" in prog_id:
-                return "brave"
-    except Exception as e:
-        print(f"[SELENIUM] Nie mozna wykryc domyslnej przegladarki: {e}", flush=True)
-    return None
 
 
-def _get_browser_profile_path(browser: str) -> Optional[str]:
-    """Zwraca ścieżkę do profilu użytkownika dla danej przeglądarki."""
-    local_app_data = os.environ.get("LOCALAPPDATA", "")
-    app_data = os.environ.get("APPDATA", "")
 
-    paths = {
-        "chrome": os.path.join(local_app_data, "Google", "Chrome", "User Data"),
-        "edge": os.path.join(local_app_data, "Microsoft", "Edge", "User Data"),
-        "brave": os.path.join(local_app_data, "BraveSoftware", "Brave-Browser", "User Data"),
-        "opera": os.path.join(app_data, "Opera Software", "Opera Stable"),
-        "firefox": os.path.join(app_data, "Mozilla", "Firefox", "Profiles"),
-    }
 
-    profile_path = paths.get(browser)
-    if profile_path and os.path.exists(profile_path):
-        return profile_path
-    return None
 
 
-def _copy_browser_cookies(browser: str) -> Optional[str]:
-    """Kopiuje tylko pliki cookies do tymczasowego profilu (szybkie!)."""
-    import shutil
 
-    original_profile = _get_browser_profile_path(browser)
-    if not original_profile:
-        return None
 
-    # Utwórz tymczasowy katalog
-    temp_profile = os.path.join(tempfile.gettempdir(), f"selenium_{browser}_profile")
 
-    # Usuń stary temp profil jeśli istnieje
-    if os.path.exists(temp_profile):
-        try:
-            shutil.rmtree(temp_profile)
-        except Exception:
-            pass
 
-    try:
-        os.makedirs(temp_profile, exist_ok=True)
-        os.makedirs(os.path.join(temp_profile, "Default"), exist_ok=True)
 
-        # Kopiuj tylko niezbędne pliki (cookies, login data) - NIE cały profil!
-        files_to_copy = [
-            "Cookies",
-            "Cookies-journal",
-            "Login Data",
-            "Login Data-journal",
-            "Web Data",
-            "Preferences",
-            "Secure Preferences",
-        ]
-
-        default_src = os.path.join(original_profile, "Default")
-        default_dst = os.path.join(temp_profile, "Default")
-
-        if os.path.exists(default_src):
-            for filename in files_to_copy:
-                src_file = os.path.join(default_src, filename)
-                if os.path.exists(src_file):
-                    try:
-                        shutil.copy2(src_file, os.path.join(default_dst, filename))
-                    except Exception as e:
-                        print(f"[SELENIUM] Nie mozna skopiowac {filename}: {e}", flush=True)
-
-        # Kopiuj Local State (potrzebny do deszyfrowania cookies)
-        local_state = os.path.join(original_profile, "Local State")
-        if os.path.exists(local_state):
-            try:
-                shutil.copy2(local_state, os.path.join(temp_profile, "Local State"))
-            except Exception:
-                pass
-
-        print(f"[SELENIUM] Skopiowano cookies do: {temp_profile}", flush=True)
-        return temp_profile
-
-    except Exception as e:
-        print(f"[SELENIUM] Blad kopiowania profilu: {e}", flush=True)
-        return None
-
-
-def _create_browser_driver():
-    """Tworzy driver dla domyślnej przeglądarki użytkownika z jego profilem."""
-    from selenium import webdriver
-
-    # Wykryj domyślną przeglądarkę
-    default_browser = _get_default_browser()
-    print(f"[SELENIUM] Domyslna przegladarka: {default_browser or 'nieznana'}", flush=True)
-
-    # Kolejność prób: domyślna przeglądarka pierwsza, potem reszta
-    browsers_to_try = []
-    if default_browser:
-        browsers_to_try.append(default_browser)
-    # Dodaj pozostałe
-    for b in ["edge", "chrome", "firefox", "brave"]:
-        if b not in browsers_to_try:
-            browsers_to_try.append(b)
-
-    for browser in browsers_to_try:
-        driver = _try_browser(browser)
-        if driver:
-            return driver, browser.capitalize()
-
-    return None, None
-
-
-def _try_browser(browser: str):
-    """Próbuje uruchomić konkretną przeglądarkę z skopiowanymi cookies użytkownika."""
-    from selenium import webdriver
-
-    # Kopiuj cookies do tymczasowego profilu (pozwala używać gdy przeglądarka jest otwarta!)
-    profile_path = _copy_browser_cookies(browser)
-
-    if browser in ["chrome", "brave"]:
-        try:
-            from selenium.webdriver.chrome.service import Service
-            from selenium.webdriver.chrome.options import Options
-            from webdriver_manager.chrome import ChromeDriverManager
-            if browser == "brave":
-                from webdriver_manager.core.utils import ChromeType
-
-            print(f"[SELENIUM] Probuje {browser.capitalize()}...", flush=True)
-            options = Options()
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--start-maximized")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-
-            if profile_path:
-                print(f"[SELENIUM] Uzywam profilu: {profile_path}", flush=True)
-                options.add_argument(f"--user-data-dir={profile_path}")
-                options.add_argument("--profile-directory=Default")
-
-            if browser == "brave":
-                # Brave używa Chrome driver
-                brave_path = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
-                if os.path.exists(brave_path):
-                    options.binary_location = brave_path
-
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
-            print(f"[SELENIUM] {browser.capitalize()} uruchomiony!", flush=True)
-            return driver
-        except Exception as e:
-            print(f"[SELENIUM] {browser.capitalize()} niedostepny: {e}", flush=True)
-
-    elif browser == "edge":
-        try:
-            from selenium.webdriver.edge.service import Service
-            from selenium.webdriver.edge.options import Options
-            from webdriver_manager.microsoft import EdgeChromiumDriverManager
-
-            print("[SELENIUM] Probuje Edge...", flush=True)
-            options = Options()
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--start-maximized")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-
-            if profile_path:
-                print(f"[SELENIUM] Uzywam profilu: {profile_path}", flush=True)
-                options.add_argument(f"--user-data-dir={profile_path}")
-                options.add_argument("--profile-directory=Default")
-
-            service = Service(EdgeChromiumDriverManager().install())
-            driver = webdriver.Edge(service=service, options=options)
-            print("[SELENIUM] Edge uruchomiony!", flush=True)
-            return driver
-        except Exception as e:
-            print(f"[SELENIUM] Edge niedostepny: {e}", flush=True)
-
-    elif browser == "firefox":
-        try:
-            from selenium.webdriver.firefox.service import Service
-            from selenium.webdriver.firefox.options import Options
-            from webdriver_manager.firefox import GeckoDriverManager
-
-            print("[SELENIUM] Probuje Firefox...", flush=True)
-            options = Options()
-
-            # Firefox używa innego systemu profili
-            if profile_path and os.path.isdir(profile_path):
-                # Znajdź domyślny profil Firefox
-                for item in os.listdir(profile_path):
-                    if item.endswith(".default-release") or item.endswith(".default"):
-                        full_path = os.path.join(profile_path, item)
-                        print(f"[SELENIUM] Uzywam profilu Firefox: {full_path}", flush=True)
-                        options.add_argument(f"-profile")
-                        options.add_argument(full_path)
-                        break
-
-            service = Service(GeckoDriverManager().install())
-            driver = webdriver.Firefox(service=service, options=options)
-            print("[SELENIUM] Firefox uruchomiony!", flush=True)
-            return driver
-        except Exception as e:
-            print(f"[SELENIUM] Firefox niedostepny: {e}", flush=True)
-
-    return None
-
-
-def _get_edge_encryption_key() -> Optional[bytes]:
-    """Pobiera klucz szyfrowania z Edge Local State."""
-    import base64
-    try:
-        import win32crypt
-        from Crypto.Cipher import AES
-    except ImportError:
-        print("[COOKIES] Brak wymaganych bibliotek (pycryptodome, pywin32)", flush=True)
-        return None
-
-    local_state_path = os.path.join(
-        os.environ.get("LOCALAPPDATA", ""),
-        "Microsoft", "Edge", "User Data", "Local State"
-    )
-
-    if not os.path.exists(local_state_path):
-        return None
-
-    try:
-        with open(local_state_path, "r", encoding="utf-8") as f:
-            local_state = json.load(f)
-
-        encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
-        # Usuń prefix 'DPAPI'
-        encrypted_key = encrypted_key[5:]
-        # Odszyfruj używając DPAPI
-        decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
-        return decrypted_key
-    except Exception as e:
-        print(f"[COOKIES] Blad pobierania klucza: {e}", flush=True)
-        return None
-
-
-def _decrypt_cookie_value(encrypted_value: bytes, key: bytes) -> Optional[str]:
-    """Odszyfrowuje wartość cookie używając AES-GCM."""
-    try:
-        from Crypto.Cipher import AES
-    except ImportError:
-        return None
-
-    try:
-        # Format: v10/v20 + 12-byte nonce + ciphertext + 16-byte tag
-        if encrypted_value[:3] in (b'v10', b'v11', b'v20'):
-            nonce = encrypted_value[3:15]
-            ciphertext = encrypted_value[15:]
-            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-            decrypted = cipher.decrypt_and_verify(ciphertext[:-16], ciphertext[-16:])
-            return decrypted.decode('utf-8')
-    except Exception:
-        pass
-    return None
-
-
-def _read_edge_cookies_direct() -> Optional[str]:
-    """Odczytuje sessionKey z Edge cookies - najpierw browser-cookie3, potem bezpośrednio."""
-    import sqlite3
-    import shutil
-
-    # Metoda 1: browser-cookie3 (działa gdy Edge otwarty, wymaga admina)
-    try:
-        import browser_cookie3
-        print("[COOKIES] Probuje browser-cookie3...", flush=True)
-        cj = browser_cookie3.edge(domain_name='claude.ai')
-        for cookie in cj:
-            if cookie.name == 'sessionKey':
-                print("[COOKIES] Znaleziono sessionKey!", flush=True)
-                return cookie.value
-        print("[COOKIES] Nie znaleziono sessionKey w cookies", flush=True)
-    except Exception as e:
-        print(f"[COOKIES] browser-cookie3 nie zadziałał: {e}", flush=True)
-
-    # Metoda 2: Bezpośredni odczyt (działa gdy Edge ZAMKNIĘTY)
-    print("[COOKIES] Probuje bezposredni odczyt (wymaga zamknietego Edge)...", flush=True)
-
-    cookies_path = os.path.join(
-        os.environ.get("LOCALAPPDATA", ""),
-        "Microsoft", "Edge", "User Data", "Default", "Network", "Cookies"
-    )
-
-    if not os.path.exists(cookies_path):
-        print(f"[COOKIES] Nie znaleziono pliku cookies", flush=True)
-        return None
-
-    # Pobierz klucz szyfrowania
-    key = _get_edge_encryption_key()
-    if not key:
-        print("[COOKIES] Nie udalo sie pobrac klucza szyfrowania", flush=True)
-        return None
-
-    temp_cookies = os.path.join(tempfile.gettempdir(), f"edge_cookies_{os.getpid()}")
-    try:
-        shutil.copy2(cookies_path, temp_cookies)
-        print("[COOKIES] Skopiowano baze cookies", flush=True)
-    except PermissionError:
-        print("[COOKIES] Edge jest otwarty - zamknij Edge i sprobuj ponownie", flush=True)
-        return None
-    except Exception as e:
-        print(f"[COOKIES] Blad kopiowania: {e}", flush=True)
-        return None
-
-    try:
-        conn = sqlite3.connect(temp_cookies, timeout=5)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name='sessionKey'"
-        )
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            encrypted_value = row[0]
-            session_key = _decrypt_cookie_value(encrypted_value, key)
-            if session_key:
-                print("[COOKIES] Znaleziono sessionKey!", flush=True)
-                return session_key
-
-        print("[COOKIES] Nie znaleziono sessionKey w cookies", flush=True)
-        return None
-    except Exception as e:
-        print(f"[COOKIES] Blad odczytu bazy: {e}", flush=True)
-        return None
-    finally:
-        try:
-            os.remove(temp_cookies)
-        except:
-            pass
-
-
-def extract_claude_session_key_selenium() -> Optional[str]:
-    """Pobiera sessionKey przez Selenium z profilem użytkownika (wymaga zamkniętego Edge)."""
-    import subprocess
-
-    # Sprawdź czy Edge jest uruchomiony
-    result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq msedge.exe'], capture_output=True, text=True)
-    if 'msedge.exe' in result.stdout:
-        print("[AUTO] Edge jest otwarty - zamknij go i sprobuj ponownie", flush=True)
-        return None
-
-    print("[AUTO] Uruchamiam Edge z Twoim profilem...", flush=True)
-
-    from selenium import webdriver
-    from selenium.webdriver.edge.service import Service
-    from selenium.webdriver.edge.options import Options
-    from webdriver_manager.microsoft import EdgeChromiumDriverManager
-
-    # Użyj profilu użytkownika (tam są cookies!)
-    user_data_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
-
-    options = Options()
-    options.add_argument(f"--user-data-dir={user_data_dir}")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-
-    try:
-        service = Service(EdgeChromiumDriverManager().install())
-        driver = webdriver.Edge(service=service, options=options)
-
-        print("[AUTO] Otwieram claude.ai...", flush=True)
-        driver.get("https://claude.ai/")
-        time.sleep(2)
-
-        # Pobierz sessionKey
-        cookies = driver.get_cookies()
-        session_key = None
-        for cookie in cookies:
-            if cookie['name'] == 'sessionKey':
-                session_key = cookie['value']
-                break
-
-        driver.quit()
-
-        if session_key:
-            print(f"[AUTO] Pobrano sessionKey!", flush=True)
-            return session_key
-        else:
-            print("[AUTO] Nie znaleziono sessionKey - zaloguj sie na claude.ai", flush=True)
-            return None
-
-    except Exception as e:
-        print(f"[AUTO] Blad: {e}", flush=True)
-        return None
 
 
 # === DEVICE INFO ===
@@ -689,15 +312,27 @@ def detect_devices() -> list[DeviceInfo]:
 
 class WywiadApp:
     def __init__(self):
-        self.config = load_config()
+        # Config Manager
+        if ConfigManager:
+            self.config_manager = ConfigManager()
+            self.config = self.config_manager # Kompatybilnosc wsteczna (self.config[...] dziala)
+        else:
+            self.config = {} # Fallback
+            print("[ERROR] ConfigManager not loaded!", flush=True)
+
         self.icd10_codes = load_icd10()
 
         # Transcriber
         self.transcriber_manager = get_transcriber_manager()
-        if self.transcriber_manager:
-            self.transcriber_manager.set_gemini_api_key(self.config.get("api_key", ""))
+        
+        # Initialize Services
+        self.llm_service = LLMService() if LLMService else None
+        self.browser_service = BrowserService() if BrowserService else None
+        
+        if not self.llm_service: print("[WARN] LLMService not available", flush=True)
+        if not self.browser_service: print("[WARN] BrowserService not available", flush=True)
 
-        # Audio state
+        # State variables
         self.is_recording = False
         self.audio_data = []
         self.sample_rate = 16000
@@ -1669,131 +1304,31 @@ class WywiadApp:
     # === GENERATION ===
 
     async def generate_description(self):
-        """Generuje opis stomatologiczny."""
+        """Generuje opis stomatologiczny używając LLMService."""
         transcript = self.transcript_area.value if self.transcript_area else ""
         if not transcript.strip():
-            # Can't use ui.notify in async - set status instead
             if self.record_status:
                 self.record_status.text = "Brak transkrypcji!"
                 self.record_status.classes(replace='text-red-600')
             return
 
-        gemini_key = self.config.get("api_key", "")
-        session_key = self.config.get("session_key", "")
-        claude_token = load_claude_token()
-        preferred_model = self.config.get("generation_model", "Auto")
-
-        model_type = None
-        model_name = "Nieznany"
-
-        # Logika wyboru modelu
-        has_session_key = bool(session_key and session_key.startswith("sk-"))
-        has_gemini_key = bool(gemini_key and GENAI_AVAILABLE)
-        has_oauth_token = bool(claude_token and PROXY_AVAILABLE)
-        
-        # Aliasy dla kompatybilności z resztą funkcji
-        can_use_gemini = has_gemini_key
-        
-        # 1. Wymuszone przez użytkownika
-        if preferred_model == "Gemini" and has_gemini_key:
-            model_type = "gemini"
-            model_name = "Gemini Flash"
-        elif preferred_model == "Claude" and (has_session_key or has_oauth_token):
-            model_type = "claude"
-            model_name = "Claude (Session Key)" if has_session_key else "Claude (OAuth)"
-        
-        # 2. Tryb AUTO (Smart selection)
-        if not model_type:
-            # W Auto preferujemy Claude TYLKO jeśli mamy świeży Session Key
-            if has_session_key and PROXY_AVAILABLE:
-                model_type = "claude"
-                model_name = "Claude (Session Key)"
-            # Jeśli nie ma Session Key, ale jest Gemini -> Bierzemy Gemini (ignorujemy stary OAuth)
-            elif has_gemini_key:
-                model_type = "gemini"
-                model_name = "Gemini Flash"
-            # Ostateczność: stary token OAuth (jeśli nie ma Gemini)
-            elif has_oauth_token:
-                model_type = "claude"
-                model_name = "Claude (OAuth)"
-
-        if not model_type:
-            if self.record_status:
-                self.record_status.text = "Brak dostępnego klucza API!"
-                self.record_status.classes(replace='text-red-600')
+        if not self.llm_service:
+            ui.notify("Serwis AI nie jest dostępny", type='negative')
             return
 
         # UI loading state
         if self.generate_button:
             self.generate_button.props('loading')
 
-        print(f"[DEBUG] Generating with {model_name}...", flush=True)
-
-        # Build prompt
-        icd_context = json.dumps(self.icd10_codes, indent=2, ensure_ascii=False)
-        prompt = f"""Jestes asystentem do formatowania dokumentacji stomatologicznej.
-Twoim zadaniem jest przeksztalcenie surowych notatek z wywiadu stomatologa na sformatowany tekst dokumentacji.
-
-Dostepne kody ICD-10 (Baza wiedzy):
-{icd_context}
-
-INSTRUKCJA:
-1. Przeanalizuj tekst i wybierz NAJLEPIEJ pasujacy kod z powyzszej listy.
-2. JEŚLI transkrypcja nie zawiera wystarczających danych medycznych (np. tylko powitanie, szum, pusta rozmowa), wpisz "-" w polach rozpoznania i kodu. NIE ZMYŚLAJ DIAGNOZY.
-3. Sformatuj wynik w JSON.
-
-Wymagane pola JSON:
-- "rozpoznanie": tekst diagnozy (lub "-" gdy brak danych)
-- "icd10": kod z listy (lub "-" gdy brak danych)
-- "swiadczenie": wykonane zabiegi
-- "procedura": szczegolowy opis
-
-Transkrypcja wywiadu:
-{transcript}
-
-Odpowiedz TYLKO poprawnym kodem JSON:
-{{"rozpoznanie": "...", "icd10": "...", "swiadczenie": "...", "procedura": "..."}}"""
-
         try:
-            loop = asyncio.get_event_loop()
-            result_text = None
+            # Wywołanie serwisu (Core Logic)
+            result, used_model = await self.llm_service.generate_description(
+                transcript,
+                self.icd10_codes,
+                self.config
+            )
 
-            # Helpery do wywołań
-            async def run_claude():
-                auth_key = session_key if session_key and session_key.startswith("sk-ant-sid01-") else claude_token
-                return await loop.run_in_executor(None, lambda: self.call_claude(auth_key, prompt))
-
-            async def run_gemini():
-                return await loop.run_in_executor(None, lambda: self.call_gemini(gemini_key, prompt))
-
-            # Wykonanie z fallbackiem
-            if model_type == "claude":
-                try:
-                    result_text = await run_claude()
-                except Exception as e:
-                    # Jeśli Auto i mamy Gemini -> Fallback
-                    if preferred_model == "Auto" and can_use_gemini:
-                        print(f"[DEBUG] Claude error ({e}), fallback to Gemini...", flush=True)
-                        ui.notify("Problem z Claude, używam Gemini...", type='warning')
-                        model_type = "gemini" # Aktualizuj typ modelu dla poprawnego error handlingu
-                        result_text = await run_gemini()
-                    else:
-                        raise e
-            else:
-                result_text = await run_gemini()
-
-            # Parse JSON
-            print(f"[DEBUG] Raw result from AI: {result_text!r}", flush=True)
-            cleaned = result_text
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("```")[1]
-                if cleaned.startswith("json"):
-                    cleaned = cleaned[4:]
-            cleaned = cleaned.strip()
-
-            result = json.loads(cleaned)
-
-            # Update fields
+            # Update UI fields
             icd_code = result.get("icd10", "")
             diagnosis = result.get("rozpoznanie", "-")
             
@@ -1809,26 +1344,39 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             if self.procedure_field:
                 self.procedure_field.value = result.get("procedura", "-")
 
+            # Status Update
             if self.record_status:
                 self.record_status.text = "Opis wygenerowany!"
                 self.record_status.classes(replace='text-green-600')
-            print("[DEBUG] Description generated successfully!", flush=True)
+            
+            # Info o fallbacku
+            if "Fallback" in used_model:
+                ui.notify(f"Użyto modelu zapasowego: {used_model}", type='warning', timeout=5000)
+            
+            print(f"[UI] Description generated successfully using {used_model}", flush=True)
 
-        except json.JSONDecodeError as e:
+        except ValueError as e:
+            # Błędy logiczne (brak klucza, zły JSON)
+            ui.notify(str(e), type='warning')
             if self.record_status:
-                self.record_status.text = f"Blad JSON: {e}"
+                self.record_status.text = "Błąd danych"
                 self.record_status.classes(replace='text-red-600')
-            print(f"[DEBUG] JSON error: {e}", flush=True)
+
         except Exception as e:
+            # Błędy sieciowe / API
             error_msg = str(e)
-            print(f"[DEBUG] Generation error: {e}", flush=True)
+            print(f"[UI] Generation error: {e}", flush=True)
             
             # Obsługa Rate Limit (429 / RESOURCE_EXHAUSTED)
             if "429" in error_msg or "rate_limit" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                if model_type == "claude":
-                    msg = "Limit zapytań Claude wyczerpany! Spróbuj Gemini."
+                # Sprawdzamy co mamy w configu zeby dac dobra rade
+                gen_model = self.config.get("generation_model", "Auto")
+                if gen_model == "Gemini":
+                     msg = "Limit Gemini wyczerpany."
+                elif gen_model == "Claude":
+                     msg = "Limit Claude wyczerpany."
                 else:
-                    msg = "Limit zapytań Gemini wyczerpany! Spróbuj później."
+                     msg = "Wyczerpano limity obu modeli (Claude i Gemini)."
 
                 ui.notify(msg, type='negative', close_button=True, timeout=0)
                 
@@ -1836,7 +1384,6 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                     self.record_status.text = "Błąd: Limit (429)"
                     self.record_status.classes(replace='text-red-600')
             else:
-                # Inne błędy
                 ui.notify(f"Błąd generowania: {error_msg[:100]}", type='negative')
                 if self.record_status:
                     self.record_status.text = "Błąd generowania"
@@ -1846,53 +1393,9 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             if self.generate_button:
                 self.generate_button.props(remove='loading')
 
-    def call_claude(self, auth_token: str, prompt: str) -> str:
-        """Wywoluje Claude API przez proxy."""
-        import io
 
-        if not auth_token:
-            raise ValueError("Brak tokena Claude!")
 
-        if not self.proxy_started:
-            old_stdout = sys.stdout
-            sys.stdout = io.StringIO()
-            try:
-                success, port = start_proxy_server(auth_token, port=8765)
-            finally:
-                sys.stdout = old_stdout
 
-            if success:
-                self.proxy_started = True
-                self.proxy_port = port
-                os.environ["ANTHROPIC_BASE_URL"] = get_proxy_base_url(port)
-                time.sleep(2)
-            else:
-                raise Exception("Nie udalo sie uruchomic proxy")
-
-        client = Anthropic(api_key=auth_token)
-        stream = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-            stream=True
-        )
-
-        full_text = ""
-        for event in stream:
-            if event.type == "content_block_delta":
-                if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
-                    full_text += event.delta.text or ""
-
-        return full_text.strip()
-
-    def call_gemini(self, api_key: str, prompt: str) -> str:
-        """Wywoluje Gemini API."""
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
-        return response.text.strip()
 
     def _update_claude_status(self):
         """Aktualizuje status Claude w UI."""
@@ -1933,8 +1436,8 @@ Odpowiedz TYLKO poprawnym kodem JSON:
     def _save_session_from_dialog(self, session_key: str, dialog):
         """Zapisuje session key z dialogu."""
         if session_key and session_key.strip():
-            self.config["session_key"] = session_key.strip()
-            save_config(self.config)
+            self.config.set("session_key", session_key.strip())
+            
             if hasattr(self, 'session_input'):
                 self.session_input.value = session_key.strip()
             self._update_claude_status()
@@ -1961,33 +1464,22 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         dialog.open()
 
     def _run_edge_with_extension(self):
+        """Uruchamia Edge z załadowanym rozszerzeniem używając BrowserService."""
+        if not self.browser_service:
+            ui.notify("Browser Service niedostępny", type='negative')
+            return
+
         ui.notify("Restartuję Edge...", type='warning')
         
-        # 1. Zabij Edge
-        try:
-            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe"], 
-                         stdout=subprocess.DEVNULL, 
-                         stderr=subprocess.DEVNULL)
-            time.sleep(2)
-        except Exception:
-            pass
-
-        # 2. Przygotuj ścieżkę do rozszerzenia
         extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "extension"))
         
-        # 3. Uruchom Edge z flagą
-        # --new-window wymusza nowe okno
-        # --load-extension ładuje nasze rozszerzenie bez instalacji (wymaga trybu dev, ale flaga usually works)
-        # Otwieramy Claude (zeby pobrac klucz) ORAZ nasza aplikacje (zeby uzytkownik wrocil)
         try:
-            cmd = [
-                "start", "msedge",
-                f"--load-extension={extension_path}",
-                "https://claude.ai",
-                "http://localhost:8089"
-            ]
-            subprocess.Popen(cmd, shell=True)
-            ui.notify("Otwarto Edge. Zaloguj się na Claude.ai jeśli trzeba.", type='info')
+            self.browser_service.launch_edge_with_extension(
+                extension_path=extension_path,
+                target_url="https://claude.ai",
+                app_url="http://localhost:8089"
+            )
+            ui.notify("Otwarto Edge. Zaloguj się na Claude.ai.", type='info')
         except Exception as e:
             ui.notify(f"Błąd uruchamiania Edge: {e}", type='negative')
 
@@ -1999,7 +1491,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
     def save_settings(self):
         """Zapisuje ustawienia."""
-        save_config(self.config)
+        self.config.save()
 
         if self.transcriber_manager:
             self.transcriber_manager.set_gemini_api_key(self.config.get("api_key", ""))
@@ -2019,7 +1511,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         """Sprawdza czy session key zmienił się w pliku config (np. przez rozszerzenie)."""
         try:
             # Wczytaj config z dysku bez zapisywania stanu obiektu
-            disk_config = load_config()
+            disk_config = ConfigManager()
             disk_key = disk_config.get("session_key", "")
             
             # Pobierz aktualną wartość z UI (jeśli istnieje)
@@ -2051,7 +1543,7 @@ Odpowiedz TYLKO poprawnym kodem JSON:
     # === MAIN UI ===
 
     def build_ui(self):
-        """Buduje glowny interfejs."""
+        """Buduje glowny interfejs używając komponentów."""
         print("[UI] build_ui() started", flush=True)
 
         # Dark mode state
@@ -2067,220 +1559,25 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         # Timer to check for session key updates (auto-refresh from extension)
         ui.timer(2.0, self._check_session_key_update)
 
-        # Header with status indicator
-        with ui.header().classes('bg-blue-700 text-white'):
-            with ui.row().classes('w-full items-center justify-between px-4'):
-                with ui.row().classes('items-center gap-2'):
-                    ui.icon('medical_services', size='lg')
-                    ui.label('Wywiad+').classes('text-2xl font-bold')
-
-                # Status indicator - zawsze widoczny w headerze
-                with ui.row().classes('items-center gap-2 bg-white/10 rounded-full px-3 py-1'):
-                    self.status_indicator = ui.element('div').classes('w-3 h-3 rounded-full bg-gray-400')
-                    self.status_label = ui.label('Inicjalizacja...').classes('text-sm')
-                    # Przycisk Anuluj - widoczny podczas ładowania
-                    self.cancel_button = ui.button('Anuluj', icon='close', on_click=self._on_cancel_click).props('flat dense size=sm').classes('text-white bg-red-500/50 hover:bg-red-500')
-                    self.cancel_button.set_visibility(False)
-
-                with ui.row().classes('items-center gap-4'):
-                    ui.label('v2.0').classes('text-sm opacity-75')
-                    ui.button(icon='dark_mode', on_click=self.dark_mode.toggle).props('flat round dense').classes('text-white')
+        # Header
+        create_header(self)
 
         # Main content
         with ui.column().classes('w-full max-w-5xl mx-auto p-4 gap-4'):
+            
+            # Settings Section (Devices, Backend, Keys)
+            create_settings_section(self)
+            
+            # Recording Section
+            create_recording_section(self)
+            
+            # Results Section
+            create_results_section(self)
 
-            # === DEVICE SELECTION ===
-            with ui.expansion('Urzadzenie do transkrypcji', icon='memory').classes('w-full'):
-                with ui.column().classes('w-full gap-4 p-2'):
-                    ui.label('Wybierz urzadzenie do przetwarzania audio:').classes('text-gray-600')
-
-                    self.device_cards_container = ui.row().classes('gap-4 flex-wrap')
-                    with self.device_cards_container:
-                        for device in self.devices:
-                            self.create_device_card(device)
-
-                    with ui.row().classes('items-center gap-2 mt-2'):
-                        ui.icon('info', size='sm').classes('text-blue-500')
-                        ui.label('NPU zapewnia najszybsza transkrypcje przy niskim zuzyciu energii.').classes('text-sm text-gray-500')
-
-            # === BACKEND & MODELS ===
-            with ui.expansion('Silnik transkrypcji', icon='settings_voice').classes('w-full'):
-                with ui.column().classes('w-full gap-4 p-2'):
-
-                    # Backend selection
-                    ui.label('Wybierz silnik:').classes('font-medium')
-
-                    # Pobierz info o backendach
-                    backends_info = {}
-                    if self.transcriber_manager:
-                        for b in self.transcriber_manager.get_available_backends():
-                            backends_info[b.type.value] = b
-
-                    backend_options = [
-                        ('gemini_cloud', 'Gemini Cloud', 'cloud', 'Online API'),
-                        ('faster_whisper', 'Faster Whisper', 'speed', 'Najszybszy offline'),
-                        ('openai_whisper', 'OpenAI Whisper', 'psychology', 'Oryginalny'),
-                        ('openvino_whisper', 'OpenVINO', 'memory', 'Intel NPU/GPU'),
-                    ]
-
-                    current_backend = self.config.get("transcriber_backend", "gemini_cloud")
-
-                    self.backend_buttons_container = ui.row().classes('gap-3 flex-wrap')
-                    with self.backend_buttons_container:
-                        for key, name, icon, desc in backend_options:
-                            is_current = (key == current_backend)
-                            info = backends_info.get(key)
-                            is_installed = info.is_installed if info else True
-
-                            with ui.card().classes(
-                                f'w-44 cursor-pointer transition-all {"ring-2 ring-blue-500 bg-blue-50" if is_current else "hover:shadow-md"} {"opacity-60" if not is_installed else ""}'
-                            ).on('click', lambda k=key: self.select_backend(k)):
-                                with ui.column().classes('items-center gap-1 p-3'):
-                                    ui.icon(icon, size='md').classes('text-blue-600' if is_current else 'text-gray-500')
-                                    ui.label(name).classes('font-bold text-sm')
-                                    ui.label(desc).classes('text-xs text-gray-500')
-
-                                    if not is_installed:
-                                        ui.badge('Wymaga instalacji', color='orange').classes('mt-1')
-                                    elif is_current:
-                                        ui.badge('Aktywny', color='green').classes('mt-1')
-
-                    ui.separator()
-
-                    # Models
-                    ui.label('Dostepne modele:').classes('font-medium mt-4')
-
-                    self.model_cards_container = ui.column().classes('w-full gap-2')
-                    self.refresh_model_cards()
-
-            # === API KEYS ===
-            with ui.expansion('Klucze API', icon='key').classes('w-full'):
-                with ui.column().classes('w-full gap-4 p-2'):
-
-                    # Gemini API Key
-                    with ui.row().classes('w-full items-end gap-2'):
-                        self.gemini_input = ui.input(
-                            'Gemini API Key',
-                            password=True,
-                            password_toggle_button=True,
-                            value=self.config.get("api_key", "")
-                        ).classes('flex-1').on(
-                            'change', lambda: self.config.update({"api_key": self.gemini_input.value})
-                        )
-                        ui.button(
-                            'Pobierz',
-                            icon='open_in_new',
-                            on_click=self._open_gemini_studio
-                        ).props('flat dense').tooltip('Otworz Google AI Studio')
-                        ui.button(
-                            icon='delete',
-                            on_click=lambda: (setattr(self.gemini_input, 'value', ''), self.config.update({"api_key": ""}), save_config(self.config))
-                        ).props('flat dense').tooltip('Wyczyść klucz')
-
-                    # Claude Session Key
-                    with ui.row().classes('w-full items-end gap-2'):
-                        self.session_input = ui.input(
-                            'Claude Session Key',
-                            password=True,
-                            password_toggle_button=True,
-                            value=self.config.get("session_key", ""),
-                            placeholder="sk-ant-sid01-..."
-                        ).classes('flex-1').on(
-                            'change', lambda: self.config.update({"session_key": self.session_input.value})
-                        )
-                        ui.button(
-                            'Auto',
-                            icon='extension',
-                            on_click=self._auto_get_key
-                        ).props('flat dense').tooltip('Zainstaluj rozszerzenie i pobierz klucz (wymaga Admin)')
-                        ui.button(
-                            icon='delete',
-                            on_click=lambda: (setattr(self.session_input, 'value', ''), self.config.update({"session_key": ""}), save_config(self.config))
-                        ).props('flat dense').tooltip('Wyczyść klucz')
-
-                    # Status
-                    self.claude_status_label = ui.label('')
-                    self._update_claude_status()
-
-                    # Extraction progress (hidden by default)
-                    self.extraction_spinner = ui.spinner('dots', size='sm').classes('hidden')
-
-                    ui.button('Zapisz ustawienia', icon='save', on_click=self.save_settings).classes('mt-2')
-
-            # === RECORDING ===
-            with ui.card().classes('w-full'):
-                with ui.column().classes('w-full gap-4'):
-                    ui.label('Nagrywanie wywiadu').classes('text-xl font-bold')
-                    ui.separator()
-
-                    with ui.row().classes('w-full items-center justify-center gap-4'):
-                        # Record button with tooltip
-                        with ui.element('div'):
-                            self.record_button = ui.button(
-                                'Nagrywaj',
-                                icon='mic',
-                                on_click=self.toggle_recording,
-                                color='primary'
-                            ).classes('text-lg px-8 py-4')
-                            self.record_tooltip = ui.tooltip('Kliknij aby nagrać')
-
-                        self.record_status = ui.label('Gotowy do nagrywania').classes('text-gray-500')
-                        # Update initial state immediately
-                        self._update_record_button()
-
-                    self.transcript_area = ui.textarea(
-                        label='Transkrypcja wywiadu',
-                        placeholder='Tutaj pojawi sie transkrypcja nagrania...'
-                    ).classes('w-full').props('rows=5')
-
-                    with ui.row().classes('w-full justify-end gap-2'):
-                        ui.button('Wyczysc', icon='delete', on_click=lambda: setattr(self.transcript_area, 'value', '')).props('flat')
-                        ui.button('Kopiuj', icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.transcript_area.value or '', 'Transkrypcja')).props('flat')
-
-            # === GENERATION ===
-            with ui.column().classes('w-full items-center gap-2'):
-                with ui.row().classes('items-center gap-4'):
-                    ui.label('Model AI do opisu:').classes('text-gray-600')
-                    self.gen_model_radio = ui.radio(
-                        ['Auto', 'Claude', 'Gemini'], 
-                        value=self.config.get('generation_model', 'Auto')
-                    ).props('inline').on('change', lambda: (self.config.update({'generation_model': self.gen_model_radio.value}), save_config(self.config)))
-
-                self.generate_button = ui.button(
-                    'Generuj opis',
-                    icon='auto_awesome',
-                    on_click=self.generate_description,
-                    color='green'
-                ).classes('text-lg px-8 py-4')
-
-            # === RESULTS ===
-            with ui.card().classes('w-full'):
-                with ui.column().classes('w-full gap-4'):
-                    ui.label('Wygenerowany opis').classes('text-xl font-bold')
-
-                    ui.separator()
-
-                    # Recognition
-                    with ui.row().classes('w-full items-end gap-2'):
-                        self.recognition_field = ui.textarea(
-                            label='Rozpoznanie (z kodem ICD-10)'
-                        ).classes('flex-1').props('rows=2')
-                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.recognition_field.value or '', 'Rozpoznanie')).props('flat round')
-
-                    # Service
-                    with ui.row().classes('w-full items-end gap-2'):
-                        self.service_field = ui.textarea(
-                            label='Swiadczenie'
-                        ).classes('flex-1').props('rows=2')
-                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.service_field.value or '', 'Swiadczenie')).props('flat round')
-
-                    # Procedure
-                    with ui.row().classes('w-full items-end gap-2'):
-                        self.procedure_field = ui.textarea(
-                            label='Procedura'
-                        ).classes('flex-1').props('rows=4')
-                        ui.button(icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.procedure_field.value or '', 'Procedura')).props('flat round')
-
+        # Initial Refresh
+        self.refresh_device_cards()
+        self.refresh_model_cards()
+        
         # === AUTO-LOAD MODEL ===
         self._update_status_ui()
         self._update_record_button()
@@ -2289,7 +1586,8 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         # Auto-load modelu dla backendów offline
         backend_type = self.config.get("transcriber_backend", "gemini_cloud")
         if backend_type != "gemini_cloud":
-            asyncio.create_task(self._load_model_async())
+            # Delay auto-load slightly to let UI render
+            ui.timer(0.1, lambda: asyncio.create_task(self._load_model_async()), once=True)
 
 
 # === RUN ===
@@ -2304,8 +1602,9 @@ def main():
 
     # === GLOBAL INITIALIZATION ===
     def init_global_state():
+        """Inicjalizuje globalny stan (np. wczytuje modele)."""
         print("[STARTUP] Initializing global state...", flush=True)
-        config = load_config()
+        config = ConfigManager()
         manager = get_transcriber_manager()
         
         if manager:
@@ -2379,9 +1678,8 @@ def main():
             data = await request.json()
             session_key = data.get('sessionKey')
             if session_key:
-                config = load_config()
-                config['session_key'] = session_key
-                save_config(config)
+                config_mgr = ConfigManager()
+                config_mgr.set('session_key', session_key)
                 print(f"[API] Session key otrzymany z rozszerzenia!", flush=True)
                 return JSONResponse({'success': True, 'message': 'Session key zapisany'})
             return JSONResponse({'success': False, 'error': 'Brak sessionKey'}, status_code=400)
