@@ -147,7 +147,7 @@ try:
     from ui.components.settings import create_settings_section
     from ui.components.recording import create_recording_section
     from ui.components.results import create_results_section
-    from ui.live_view import LiveInterviewView
+    from ui.live import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
 
@@ -1549,13 +1549,14 @@ class WywiadApp:
             disk_config = ConfigManager()
             disk_key = disk_config.get("session_key", "")
             
-            # Pobierz aktualną wartość z UI (jeśli istnieje)
-            current_ui_key = ""
-            if hasattr(self, 'session_input'):
-                current_ui_key = self.session_input.value
+            # Pobierz aktualną wartość z pamięci (config obiektu)
+            memory_key = self.config.get("session_key", "")
             
-            # Jeśli jest zmiana: zaktualizuj UI i wewnętrzny config
-            if disk_key and disk_key != current_ui_key:
+            # Synchronizuj tylko jeśli:
+            # 1. Dysk ma nowy klucz (nie pusty)
+            # 2. Klucz na dysku jest INNY niż w pamięci
+            # To ignoruje przypadek gdy user celowo wyczyścił klucz w UI
+            if disk_key and disk_key != memory_key:
                 print("[UI] Wykryto nowy session key z pliku! Aktualizuję UI.", flush=True)
                 
                 # Aktualizuj config w pamięci

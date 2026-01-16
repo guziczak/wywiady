@@ -246,11 +246,30 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         
         raise last_exception
 
-    async def generate_suggestions(self, transcript: str, config: Dict) -> List[str]:
-        """Generuje sugestie pytań uzupełniających."""
-        
-        # ... (prompt definition) ...
-        icd_context = "" # Not needed for suggestions
+    async def generate_suggestions(
+        self,
+        transcript: str,
+        config: Dict,
+        exclude_questions: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Generuje sugestie pytań uzupełniających.
+
+        Args:
+            transcript: Transkrypcja rozmowy
+            config: Konfiguracja z kluczami API
+            exclude_questions: Lista pytań do wykluczenia (już zadane)
+        """
+
+        # Format wykluczeń
+        exclude_section = ""
+        if exclude_questions:
+            exclude_list = "\n".join([f"- {q}" for q in exclude_questions])
+            exclude_section = f"""
+PYTANIA JUŻ ZADANE (NIE POWTARZAJ ICH):
+{exclude_list}
+"""
+
         prompt = f"""Jesteś doświadczonym stomatologiem przeprowadzającym wywiad.
 Twoim celem jest postawienie precyzyjnej diagnozy (ICD-10) oraz zaplanowanie leczenia.
 
@@ -258,12 +277,14 @@ Oto dotychczasowy przebieg rozmowy:
 ---
 {transcript}
 ---
-
+{exclude_section}
 Zadanie:
 Zasugeruj DOKŁADNIE 3 krótkie, konkretne pytania, które warto teraz zadać pacjentowi, aby:
 1. Doprecyzować objawy (np. rodzaj bólu, czynniki wyzwalające).
 2. Wykluczyć inne schorzenia.
 3. Uzyskać brakujące informacje medyczne.
+
+WAŻNE: Nie powtarzaj pytań, które już padły w rozmowie lub były wcześniej sugerowane.
 
 Jeśli wywiad jest kompletny, zasugeruj: ["Wywiad kompletny - można przejść do badania", "Czy ma Pan/Pani inne dolegliwości?", "Czy przyjmuje Pan/Pani leki na stałe?"].
 Jeśli brak danych, zasugeruj 3 pytania ogólne.
