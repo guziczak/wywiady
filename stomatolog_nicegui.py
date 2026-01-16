@@ -960,7 +960,7 @@ class WywiadApp:
         self._update_record_button()
 
     def _update_record_button(self):
-        """Aktualizuje stan przycisku nagrywania."""
+        """Aktualizuje stan przycisku nagrywania i labela statusu."""
         if not self.record_button:
             return
 
@@ -971,16 +971,30 @@ class WywiadApp:
             self.record_button.props(remove='disable')
             if hasattr(self, 'record_tooltip'):
                 self.record_tooltip.text = "Kliknij aby nagrać"
+            if hasattr(self, 'record_status'):
+                self.record_status.text = "Gotowy do nagrywania"
+                self.record_status.classes(remove='text-red-500 text-yellow-600', add='text-green-600')
         else:
             self.record_button.disable()
             self.record_button.props('disable')
+            
+            status_text = "Niedostępny"
+            
+            if self.model_state == ModelState.LOADING:
+                status_text = "Ładowanie modelu..."
+            elif self.transcription_state == TranscriptionState.PROCESSING:
+                status_text = "Transkrypcja w toku..."
+            elif self.model_state == ModelState.ERROR:
+                status_text = "Błąd modelu"
+            elif self.model_state == ModelState.IDLE:
+                 status_text = "Model nie załadowany"
+
             if hasattr(self, 'record_tooltip'):
-                if self.model_state == ModelState.LOADING:
-                    self.record_tooltip.text = "Poczekaj na załadowanie modelu..."
-                elif self.transcription_state == TranscriptionState.PROCESSING:
-                    self.record_tooltip.text = "Transkrypcja w toku..."
-                else:
-                    self.record_tooltip.text = "Model nie gotowy"
+                self.record_tooltip.text = status_text
+            
+            if hasattr(self, 'record_status'):
+                self.record_status.text = status_text
+                self.record_status.classes(remove='text-green-600', add='text-gray-500')
 
     def _on_cancel_click(self):
         """Handler kliknięcia przycisku Anuluj."""
@@ -1667,20 +1681,45 @@ class WywiadApp:
         gemini_key = self.config.get("api_key", "")
         session_key = self.config.get("session_key", "")
         claude_token = load_claude_token()
+        preferred_model = self.config.get("generation_model", "Auto")
 
-        # Select model
-        if session_key and session_key.startswith("sk-ant-sid01-") and PROXY_AVAILABLE:
-            model_type = "claude"
-            model_name = "Claude (Session Key)"
-        elif claude_token and PROXY_AVAILABLE:
-            model_type = "claude"
-            model_name = "Claude (OAuth)"
-        elif gemini_key and GENAI_AVAILABLE:
+        model_type = None
+        model_name = "Nieznany"
+
+        # Logika wyboru modelu
+        has_session_key = bool(session_key and session_key.startswith("sk-"))
+        has_gemini_key = bool(gemini_key and GENAI_AVAILABLE)
+        has_oauth_token = bool(claude_token and PROXY_AVAILABLE)
+        
+        # Aliasy dla kompatybilności z resztą funkcji
+        can_use_gemini = has_gemini_key
+        
+        # 1. Wymuszone przez użytkownika
+        if preferred_model == "Gemini" and has_gemini_key:
             model_type = "gemini"
             model_name = "Gemini Flash"
-        else:
+        elif preferred_model == "Claude" and (has_session_key or has_oauth_token):
+            model_type = "claude"
+            model_name = "Claude (Session Key)" if has_session_key else "Claude (OAuth)"
+        
+        # 2. Tryb AUTO (Smart selection)
+        if not model_type:
+            # W Auto preferujemy Claude TYLKO jeśli mamy świeży Session Key
+            if has_session_key and PROXY_AVAILABLE:
+                model_type = "claude"
+                model_name = "Claude (Session Key)"
+            # Jeśli nie ma Session Key, ale jest Gemini -> Bierzemy Gemini (ignorujemy stary OAuth)
+            elif has_gemini_key:
+                model_type = "gemini"
+                model_name = "Gemini Flash"
+            # Ostateczność: stary token OAuth (jeśli nie ma Gemini)
+            elif has_oauth_token:
+                model_type = "claude"
+                model_name = "Claude (OAuth)"
+
+        if not model_type:
             if self.record_status:
-                self.record_status.text = "Brak klucza API!"
+                self.record_status.text = "Brak dostępnego klucza API!"
                 self.record_status.classes(replace='text-red-600')
             return
 
@@ -1700,11 +1739,12 @@ Dostepne kody ICD-10 (Baza wiedzy):
 
 INSTRUKCJA:
 1. Przeanalizuj tekst i wybierz NAJLEPIEJ pasujacy kod z powyzszej listy.
-2. Sformatuj wynik w JSON.
+2. JEŚLI transkrypcja nie zawiera wystarczających danych medycznych (np. tylko powitanie, szum, pusta rozmowa), wpisz "-" w polach rozpoznania i kodu. NIE ZMYŚLAJ DIAGNOZY.
+3. Sformatuj wynik w JSON.
 
 Wymagane pola JSON:
-- "rozpoznanie": tekst diagnozy
-- "icd10": kod z listy
+- "rozpoznanie": tekst diagnozy (lub "-" gdy brak danych)
+- "icd10": kod z listy (lub "-" gdy brak danych)
 - "swiadczenie": wykonane zabiegi
 - "procedura": szczegolowy opis
 
@@ -1716,14 +1756,34 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         try:
             loop = asyncio.get_event_loop()
+            result_text = None
 
+            # Helpery do wywołań
+            async def run_claude():
+                auth_key = session_key if session_key and session_key.startswith("sk-ant-sid01-") else claude_token
+                return await loop.run_in_executor(None, lambda: self.call_claude(auth_key, prompt))
+
+            async def run_gemini():
+                return await loop.run_in_executor(None, lambda: self.call_gemini(gemini_key, prompt))
+
+            # Wykonanie z fallbackiem
             if model_type == "claude":
-                auth_key = session_key if session_key.startswith("sk-ant-sid01-") else claude_token
-                result_text = await loop.run_in_executor(None, lambda: self.call_claude(auth_key, prompt))
+                try:
+                    result_text = await run_claude()
+                except Exception as e:
+                    # Jeśli Auto i mamy Gemini -> Fallback
+                    if preferred_model == "Auto" and can_use_gemini:
+                        print(f"[DEBUG] Claude error ({e}), fallback to Gemini...", flush=True)
+                        ui.notify("Problem z Claude, używam Gemini...", type='warning')
+                        model_type = "gemini" # Aktualizuj typ modelu dla poprawnego error handlingu
+                        result_text = await run_gemini()
+                    else:
+                        raise e
             else:
-                result_text = await loop.run_in_executor(None, lambda: self.call_gemini(gemini_key, prompt))
+                result_text = await run_gemini()
 
             # Parse JSON
+            print(f"[DEBUG] Raw result from AI: {result_text!r}", flush=True)
             cleaned = result_text
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("```")[1]
@@ -1736,7 +1796,11 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             # Update fields
             icd_code = result.get("icd10", "")
             diagnosis = result.get("rozpoznanie", "-")
-            final_diagnosis = f"[{icd_code}] {diagnosis}" if icd_code else diagnosis
+            
+            if icd_code and icd_code not in ["-", "brak", "Brak", "None"]:
+                 final_diagnosis = f"[{icd_code}] {diagnosis}"
+            else:
+                 final_diagnosis = diagnosis
 
             if self.recognition_field:
                 self.recognition_field.value = final_diagnosis
@@ -1756,10 +1820,27 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                 self.record_status.classes(replace='text-red-600')
             print(f"[DEBUG] JSON error: {e}", flush=True)
         except Exception as e:
-            if self.record_status:
-                self.record_status.text = f"Blad: {str(e)[:50]}"
-                self.record_status.classes(replace='text-red-600')
+            error_msg = str(e)
             print(f"[DEBUG] Generation error: {e}", flush=True)
+            
+            # Obsługa Rate Limit (429 / RESOURCE_EXHAUSTED)
+            if "429" in error_msg or "rate_limit" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                if model_type == "claude":
+                    msg = "Limit zapytań Claude wyczerpany! Spróbuj Gemini."
+                else:
+                    msg = "Limit zapytań Gemini wyczerpany! Spróbuj później."
+
+                ui.notify(msg, type='negative', close_button=True, timeout=0)
+                
+                if self.record_status:
+                    self.record_status.text = "Błąd: Limit (429)"
+                    self.record_status.classes(replace='text-red-600')
+            else:
+                # Inne błędy
+                ui.notify(f"Błąd generowania: {error_msg[:100]}", type='negative')
+                if self.record_status:
+                    self.record_status.text = "Błąd generowania"
+                    self.record_status.classes(replace='text-red-600')
 
         finally:
             if self.generate_button:
@@ -1817,16 +1898,37 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         """Aktualizuje status Claude w UI."""
         if not hasattr(self, 'claude_status_label'):
             return
+            
         claude_token = load_claude_token()
-        if self.config.get("session_key"):
+        session_key = self.config.get("session_key")
+        gemini_key = self.config.get("api_key")
+        gen_model = self.config.get("generation_model", "Auto")
+
+        # 1. Wymuszone Gemini
+        if gen_model == "Gemini":
+            self.claude_status_label.text = 'Claude: Wyłączony (wybrano Gemini)'
+            self.claude_status_label.classes('text-gray-400 text-sm', remove='text-green-600 text-orange-600')
+            return
+
+        # 2. Session Key (Najwyższy priorytet)
+        if session_key:
             self.claude_status_label.text = 'Claude: Session Key aktywny'
-            self.claude_status_label.classes('text-green-600 text-sm', remove='text-orange-600 text-gray-500')
+            self.claude_status_label.classes('text-green-600 text-sm', remove='text-orange-600 text-gray-400')
+        
+        # 3. OAuth Token
         elif claude_token:
-            self.claude_status_label.text = 'Claude: OAuth token dostepny'
-            self.claude_status_label.classes('text-orange-600 text-sm', remove='text-green-600 text-gray-500')
+            # W Auto: jeśli mamy Gemini Key i brak Session Key -> Ignorujemy OAuth
+            if gen_model == "Auto" and gemini_key:
+                self.claude_status_label.text = 'Claude: OAuth (nieużywany - woli Gemini)'
+                self.claude_status_label.classes('text-gray-500 text-sm', remove='text-green-600 text-orange-600')
+            else:
+                self.claude_status_label.text = 'Claude: OAuth token dostępny'
+                self.claude_status_label.classes('text-orange-600 text-sm', remove='text-green-600 text-gray-400')
+        
+        # 4. Brak dostępu
         else:
-            self.claude_status_label.text = 'Claude: Niedostepny (tylko Gemini)'
-            self.claude_status_label.classes('text-gray-500 text-sm', remove='text-green-600 text-orange-600')
+            self.claude_status_label.text = 'Claude: Niedostępny'
+            self.claude_status_label.classes('text-gray-400 text-sm', remove='text-green-600 text-orange-600')
 
     def _save_session_from_dialog(self, session_key: str, dialog):
         """Zapisuje session key z dialogu."""
@@ -1842,22 +1944,52 @@ Odpowiedz TYLKO poprawnym kodem JSON:
             ui.notify("Wpisz session key", type='warning')
 
     def _auto_get_key(self):
-        """Uruchamia instalator rozszerzenia (wymaga uprawnień Admin)."""
-        import subprocess
+        """Uruchamia Edge z załadowanym rozszerzeniem (metoda --load-extension)."""
+        with ui.dialog() as dialog, ui.card():
+            ui.label('UWAGA: Ta operacja musi zamknąć przeglądarkę Edge!')
+            ui.label('Zapisz swoją pracę w innych oknach Edge przed kontynuowaniem.')
+            ui.label('Po kliknięciu "OK", Edge otworzy się na chwilę, pobierze klucz i prześle go do aplikacji.')
+            
+            def start_process():
+                dialog.close()
+                self._run_edge_with_extension()
+            
+            with ui.row().classes('w-full justify-end'):
+                ui.button('Anuluj', on_click=dialog.close).props('flat')
+                ui.button('OK, Zamknij Edge i Pobierz', on_click=start_process).props('color=red')
+        
+        dialog.open()
 
-        installer_path = os.path.join(os.path.dirname(__file__), "extension", "installer.py")
+    def _run_edge_with_extension(self):
+        ui.notify("Restartuję Edge...", type='warning')
+        
+        # 1. Zabij Edge
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe"], 
+                         stdout=subprocess.DEVNULL, 
+                         stderr=subprocess.DEVNULL)
+            time.sleep(2)
+        except Exception:
+            pass
 
-        if not os.path.exists(installer_path):
-            ui.notify("Brak pliku installer.py w folderze extension/", type='negative')
-            return
-
-        ui.notify("Uruchamiam instalator... Zaakceptuj uprawnienia Admin.", type='info')
-
-        # Uruchom jako Administrator
-        import ctypes
-        ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", "python", f'"{installer_path}"', None, 1
-        )
+        # 2. Przygotuj ścieżkę do rozszerzenia
+        extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "extension"))
+        
+        # 3. Uruchom Edge z flagą
+        # --new-window wymusza nowe okno
+        # --load-extension ładuje nasze rozszerzenie bez instalacji (wymaga trybu dev, ale flaga usually works)
+        # Otwieramy Claude (zeby pobrac klucz) ORAZ nasza aplikacje (zeby uzytkownik wrocil)
+        try:
+            cmd = [
+                "start", "msedge",
+                f"--load-extension={extension_path}",
+                "https://claude.ai",
+                "http://localhost:8089"
+            ]
+            subprocess.Popen(cmd, shell=True)
+            ui.notify("Otwarto Edge. Zaloguj się na Claude.ai jeśli trzeba.", type='info')
+        except Exception as e:
+            ui.notify(f"Błąd uruchamiania Edge: {e}", type='negative')
 
     def _open_gemini_studio(self):
         """Otwiera Google AI Studio w przeglądarce."""
@@ -1883,6 +2015,39 @@ Odpowiedz TYLKO poprawnym kodem JSON:
         else:
             ui.notify("Brak tekstu do skopiowania", type='warning')
 
+    def _check_session_key_update(self):
+        """Sprawdza czy session key zmienił się w pliku config (np. przez rozszerzenie)."""
+        try:
+            # Wczytaj config z dysku bez zapisywania stanu obiektu
+            disk_config = load_config()
+            disk_key = disk_config.get("session_key", "")
+            
+            # Pobierz aktualną wartość z UI (jeśli istnieje)
+            current_ui_key = ""
+            if hasattr(self, 'session_input'):
+                current_ui_key = self.session_input.value
+            
+            # Jeśli jest zmiana: zaktualizuj UI i wewnętrzny config
+            if disk_key and disk_key != current_ui_key:
+                print("[UI] Wykryto nowy session key z pliku! Aktualizuję UI.", flush=True)
+                
+                # Aktualizuj config w pamięci
+                self.config["session_key"] = disk_key
+                
+                # Aktualizuj UI
+                if hasattr(self, 'session_input'):
+                    self.session_input.value = disk_key
+                    self.session_input.update() # Wymuś odświeżenie elementu
+                
+                # Aktualizuj status
+                self._update_claude_status()
+                
+                # Powiadomienie
+                ui.notify("Pobrano nowy klucz Claude!", type='positive')
+                
+        except Exception:
+            pass
+
     # === MAIN UI ===
 
     def build_ui(self):
@@ -1898,6 +2063,9 @@ Odpowiedz TYLKO poprawnym kodem JSON:
 
         # Timer to refresh status during loading
         ui.timer(1.0, self._refresh_status_timer)
+        
+        # Timer to check for session key updates (auto-refresh from extension)
+        ui.timer(2.0, self._check_session_key_update)
 
         # Header with status indicator
         with ui.header().classes('bg-blue-700 text-white'):
@@ -1997,13 +2165,17 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                             password_toggle_button=True,
                             value=self.config.get("api_key", "")
                         ).classes('flex-1').on(
-                            'change', lambda e: self.config.update({"api_key": e.value})
+                            'change', lambda: self.config.update({"api_key": self.gemini_input.value})
                         )
                         ui.button(
                             'Pobierz',
                             icon='open_in_new',
                             on_click=self._open_gemini_studio
                         ).props('flat dense').tooltip('Otworz Google AI Studio')
+                        ui.button(
+                            icon='delete',
+                            on_click=lambda: (setattr(self.gemini_input, 'value', ''), self.config.update({"api_key": ""}), save_config(self.config))
+                        ).props('flat dense').tooltip('Wyczyść klucz')
 
                     # Claude Session Key
                     with ui.row().classes('w-full items-end gap-2'):
@@ -2014,13 +2186,17 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                             value=self.config.get("session_key", ""),
                             placeholder="sk-ant-sid01-..."
                         ).classes('flex-1').on(
-                            'change', lambda e: self.config.update({"session_key": e.value})
+                            'change', lambda: self.config.update({"session_key": self.session_input.value})
                         )
                         ui.button(
                             'Auto',
                             icon='extension',
                             on_click=self._auto_get_key
                         ).props('flat dense').tooltip('Zainstaluj rozszerzenie i pobierz klucz (wymaga Admin)')
+                        ui.button(
+                            icon='delete',
+                            on_click=lambda: (setattr(self.session_input, 'value', ''), self.config.update({"session_key": ""}), save_config(self.config))
+                        ).props('flat dense').tooltip('Wyczyść klucz')
 
                     # Status
                     self.claude_status_label = ui.label('')
@@ -2049,6 +2225,8 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                             self.record_tooltip = ui.tooltip('Kliknij aby nagrać')
 
                         self.record_status = ui.label('Gotowy do nagrywania').classes('text-gray-500')
+                        # Update initial state immediately
+                        self._update_record_button()
 
                     self.transcript_area = ui.textarea(
                         label='Transkrypcja wywiadu',
@@ -2060,11 +2238,18 @@ Odpowiedz TYLKO poprawnym kodem JSON:
                         ui.button('Kopiuj', icon='content_copy', on_click=lambda: self.copy_to_clipboard(self.transcript_area.value or '', 'Transkrypcja')).props('flat')
 
             # === GENERATION ===
-            with ui.row().classes('w-full justify-center'):
+            with ui.column().classes('w-full items-center gap-2'):
+                with ui.row().classes('items-center gap-4'):
+                    ui.label('Model AI do opisu:').classes('text-gray-600')
+                    self.gen_model_radio = ui.radio(
+                        ['Auto', 'Claude', 'Gemini'], 
+                        value=self.config.get('generation_model', 'Auto')
+                    ).props('inline').on('change', lambda: (self.config.update({'generation_model': self.gen_model_radio.value}), save_config(self.config)))
+
                 self.generate_button = ui.button(
                     'Generuj opis',
                     icon='auto_awesome',
-                    on_click=lambda: asyncio.create_task(self.generate_description()),
+                    on_click=self.generate_description,
                     color='green'
                 ).classes('text-lg px-8 py-4')
 
