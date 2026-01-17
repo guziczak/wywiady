@@ -339,9 +339,13 @@ class WywiadApp:
         # Initialize Services
         self.llm_service = LLMService() if LLMService else None
         self.browser_service = BrowserService() if BrowserService else None
-        
+
         if not self.llm_service: print("[WARN] LLMService not available", flush=True)
         if not self.browser_service: print("[WARN] BrowserService not available", flush=True)
+
+        # Last generation result (for saving visits)
+        self.last_generation_result = None
+        self.last_model_used = ""
 
         # State variables
         self.is_recording = False
@@ -1414,11 +1418,19 @@ class WywiadApp:
             if self.record_status:
                 self.record_status.text = "Opis wygenerowany!"
                 self.record_status.classes(replace='text-green-600')
-            
+
+            # Store last result for saving
+            self.last_generation_result = result_json
+            self.last_model_used = used_model
+
+            # Show save button
+            if hasattr(self, 'save_visit_button') and self.save_visit_button:
+                self.save_visit_button.set_visibility(True)
+
             # Info o fallbacku
             if "Fallback" in used_model:
                 ui.notify(f"Użyto modelu zapasowego: {used_model}", type='warning', timeout=5000)
-            
+
             print(f"[UI] Description generated successfully using {used_model}", flush=True)
 
         except ValueError as e:
@@ -1471,8 +1483,27 @@ class WywiadApp:
         
         self.copy_to_clipboard(json.dumps(data, indent=2, ensure_ascii=False), "Pełny Raport JSON")
 
+    def _open_save_visit_dialog(self):
+        """Otwiera dialog zapisywania wizyty."""
+        if not self.last_generation_result:
+            ui.notify("Najpierw wygeneruj opis", type='warning')
+            return
 
+        transcript = self.transcript_area.value if self.transcript_area else ""
+        diagnoses = self.diagnosis_grid.options.get('rowData', []) if self.diagnosis_grid else []
+        procedures = self.procedure_grid.options.get('rowData', []) if self.procedure_grid else []
 
+        try:
+            from app_ui.components.visit_save_dialog import open_save_visit_dialog
+            open_save_visit_dialog(
+                transcript=transcript,
+                diagnoses=diagnoses,
+                procedures=procedures,
+                model_used=self.last_model_used,
+                on_save=lambda visit: ui.notify(f"Wizyta zapisana: {visit.id[:8]}...", type='positive')
+            )
+        except ImportError as e:
+            ui.notify(f"Moduł zapisywania niedostępny: {e}", type='negative')
 
 
     def _update_claude_status(self):
@@ -1711,6 +1742,15 @@ def main():
 
     print("[STARTUP] Starting app...", flush=True)
 
+    # === DATABASE MIGRATIONS ===
+    try:
+        from core.migrations import run_migrations
+        applied = run_migrations()
+        if applied:
+            print(f"[STARTUP] Applied {len(applied)} migration(s)", flush=True)
+    except Exception as e:
+        print(f"[STARTUP] Migration error (non-fatal): {e}", flush=True)
+
     # === GLOBAL INITIALIZATION ===
     def init_global_state():
         """Inicjalizuje globalny stan (np. wczytuje modele)."""
@@ -1746,6 +1786,29 @@ def main():
         # W przyszłości można tu przekazać istniejący stan, jeśli chcemy
         view = LiveInterviewView(app_instance)
         view.create_ui()
+
+    @ui.page('/history')
+    def history_page():
+        """Strona historii wizyt."""
+        from app_ui.views.history_view import create_history_view
+        from app_ui.components.header import create_header
+
+        # Minimalny app context dla headera
+        class MinimalApp:
+            def __init__(self):
+                self.dark_mode = ui.dark_mode()
+                self.status_indicator = None
+                self.status_label = None
+                self.cancel_button = None
+
+            def _on_cancel_click(self):
+                pass
+
+        mini_app = MinimalApp()
+        create_header(mini_app)
+
+        with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
+            create_history_view()
 
     # API endpoint dla rozszerzenia przeglądarki
     from fastapi import Request

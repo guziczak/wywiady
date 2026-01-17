@@ -1,0 +1,48 @@
+{
+  "description": {
+    "system": "Jesteś asystentem okulistycznym do automatyzacji dokumentacji medycznej. Analizujesz transkrypcję wizyty okulistycznej i wyciągasz rozpoznania oraz wykonane/zalecone procedury diagnostyczne i terapeutyczne.",
+    "context_instructions": "Dla okulistyki zwróć szczególną uwagę na: stronność (oko prawe OP, oko lewe OL, oboje oczu OU), ostrość wzroku (do dali i bliży), ciśnienie wewnątrzgałkowe, stan przedniego i tylnego odcinka oka, pole widzenia, oraz dolegliwości subiektywne (ból, zaczerwienienie, światłowstręt, łzawienie, podwójne widzenie, mroczki).",
+    "location_instruction": "Lokalizacja to oko (prawe OP, lewe OL, oboje OU) oraz opcjonalnie struktura anatomiczna (rogówka, siatkówka, soczewka, itp.).",
+    "output_format": "JSON z polami: diagnozy (kod ICD-10, nazwa, lokalizacja=oko+struktura, opis), procedury (kod, nazwa, lokalizacja, opis wykonania)"
+  },
+  "suggestions": {
+    "system": "Jesteś doświadczonym okulistą przeprowadzającym wywiad. Twoim celem jest ocena stanu narządu wzroku, postawienie diagnozy i zaplanowanie leczenia.",
+    "focus_areas": [
+      "Pogorszenie ostrości wzroku (nagłe vs stopniowe, do dali vs bliży)",
+      "Ból oka (powierzchowny vs głęboki, jednostronny vs obustronny)",
+      "Zaczerwienienie oka (naczynia powierzchowne vs głębokie)",
+      "Światłowstręt i łzawienie",
+      "Wydzielina z oka (surowicza, ropna)",
+      "Mroczki, błyski, zasłona w polu widzenia",
+      "Podwójne widzenie (jedno- vs dwuoczne)",
+      "Historia urazów, operacji okulistycznych, noszenia okularów/soczewek"
+    ],
+    "example_questions": [
+      "Które oko sprawia problemy - prawe, lewe czy oboje?",
+      "Czy pogorszenie widzenia nastąpiło nagle czy stopniowo?",
+      "Czy widzi Pan/Pani mroczki lub błyski światła?",
+      "Czy występuje ból oka? Jak by go Pan/Pani opisał/a?",
+      "Czy oko jest zaczerwienione?",
+      "Czy występuje światłowstręt lub łzawienie?",
+      "Czy nosi Pan/Pani okulary lub soczewki kontaktowe?",
+      "Czy miał/a Pan/Pani wcześniej operacje oczu?",
+      "Czy choruje Pan/Pani na cukrzycę lub nadciśnienie?"
+    ]
+  },
+  "validation": {
+    "medical_terms": ["rogówka", "siatkówka", "soczewka", "ciało szkliste", "tęczówka", "źrenica", "nerw wzrokowy", "plamka żółta", "zaćma", "jaskra", "zwyrodnienie", "odwarstwienie", "zapalenie", "nadwzroczność", "krótkowzroczność", "astygmatyzm", "presbyopia"],
+    "abbreviations": {
+      "OP": "oko prawe (oculus dexter)",
+      "OL": "oko lewe (oculus sinister)",
+      "OU": "oboje oczu (oculi uterque)",
+      "VOD": "ostrość wzroku oka prawego",
+      "VOS": "ostrość wzroku oka lewego",
+      "IOP": "ciśnienie wewnątrzgałkowe",
+      "OCT": "optyczna koherentna tomografia",
+      "FAG": "fluoresceinowa angiografia",
+      "PVD": "tylne odłączenie ciała szklistego",
+      "AMD": "zwyrodnienie plamki związane z wiekiem",
+      "DME": "cukrzycowy obrzęk plamki"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "type": "anatomical_select",
+  "label": "Lokalizacja anatomiczna",
+  "description": "Struktury serca i układu krążenia",
+  "options": [
+    {
+      "group": "Serce - komory",
+      "items": [
+        {"value": "lewa_komora", "label": "Lewa komora"},
+        {"value": "prawa_komora", "label": "Prawa komora"},
+        {"value": "lewy_przedsionek", "label": "Lewy przedsionek"},
+        {"value": "prawy_przedsionek", "label": "Prawy przedsionek"},
+        {"value": "przegroda_miedzyprzedsionkowa", "label": "Przegroda międzyprzedsionkowa"},
+        {"value": "przegroda_miedzytomorowa", "label": "Przegroda międzykomorowa"}
+      ]
+    },
+    {
+      "group": "Serce - zastawki",
+      "items": [
+        {"value": "zastawka_mitralna", "label": "Zastawka mitralna (dwudzielna)"},
+        {"value": "zastawka_aortalna", "label": "Zastawka aortalna"},
+        {"value": "zastawka_trojdzielna", "label": "Zastawka trójdzielna"},
+        {"value": "zastawka_plucna", "label": "Zastawka pnia płucnego"}
+      ]
+    },
+    {
+      "group": "Tętnice wieńcowe",
+      "items": [
+        {"value": "pien_ltt", "label": "Pień lewej tętnicy wieńcowej (LM)"},
+        {"value": "gao", "label": "Gałąź przednia zstępująca (LAD)"},
+        {"value": "goz", "label": "Gałąź okalająca (LCx)"},
+        {"value": "ptw", "label": "Prawa tętnica wieńcowa (RCA)"},
+        {"value": "diagonalna", "label": "Gałąź diagonalna"},
+        {"value": "marginalna", "label": "Gałąź marginalna"}
+      ]
+    },
+    {
+      "group": "Duże naczynia",
+      "items": [
+        {"value": "aorta_wstepujaca", "label": "Aorta wstępująca"},
+        {"value": "luk_aorty", "label": "Łuk aorty"},
+        {"value": "aorta_zstepujaca", "label": "Aorta zstępująca"},
+        {"value": "aorta_brzuszna", "label": "Aorta brzuszna"},
+        {"value": "pien_plucny", "label": "Pień płucny"},
+        {"value": "zyla_glowna_gorna", "label": "Żyła główna górna"},
+        {"value": "zyla_glowna_dolna", "label": "Żyła główna dolna"}
+      ]
+    },
+    {
+      "group": "Osierdzie i inne",
+      "items": [
+        {"value": "osierdzie", "label": "Osierdzie"},
+        {"value": "mięsień_sercowy", "label": "Mięsień sercowy (ogólnie)"},
+        {"value": "uklad_przewodzacy", "label": "Układ przewodzący"}
+      ]
+    },
+    {
+      "group": "Naczynia obwodowe",
+      "items": [
+        {"value": "tetnice_szyjne", "label": "Tętnice szyjne"},
+        {"value": "tetnice_konczyn_dolnych", "label": "Tętnice kończyn dolnych"},
+        {"value": "zyly_konczyn_dolnych", "label": "Żyły kończyn dolnych"},
+        {"value": "strona_lewa", "label": "Strona lewa"},
+        {"value": "strona_prawa", "label": "Strona prawa"},
+        {"value": "obustronnie", "label": "Obustronnie"}
+      ]
+    }
+  ],
+  "common_locations": [
+    "lewa_komora",
+    "zastawka_mitralna",
+    "zastawka_aortalna",
+    "gao",
+    "ptw"
+  ]
+}

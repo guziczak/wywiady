@@ -54,6 +54,13 @@ def create_results_section(app):
                 'rowData': []
             }).classes('h-64 w-full')
             
-            # Kopiowanie (jako JSON)
-            with ui.row().classes('w-full justify-end'):
+            # Kopiowanie i zapisywanie
+            with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Kopiuj JSON', icon='code', on_click=app._copy_results_json).props('flat')
+                app.save_visit_button = ui.button(
+                    'Zapisz wizytę',
+                    icon='save',
+                    on_click=app._open_save_visit_dialog,
+                    color='primary'
+                ).props('flat')
+                app.save_visit_button.set_visibility(False)  # Pokaż dopiero po wygenerowaniu

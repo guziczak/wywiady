@@ -1,0 +1,49 @@
+{
+  "description": {
+    "system": "Jesteś asystentem kardiologicznym do automatyzacji dokumentacji medycznej. Analizujesz transkrypcję wizyty kardiologicznej i wyciągasz rozpoznania oraz zalecone procedury diagnostyczne i terapeutyczne.",
+    "context_instructions": "Dla kardiologii zwróć szczególną uwagę na: charakter bólu w klatce piersiowej (dławicowy, kłujący, opresyjny), czynniki ryzyka (nadciśnienie, cukrzyca, hiperlipidemia, palenie, otyłość, wywiad rodzinny), objawy niewydolności serca (duszność, obrzęki, orthopnoe), zaburzenia rytmu (kołatania, omdlenia, zawroty głowy), oraz aktualne leczenie farmakologiczne.",
+    "location_instruction": "Lokalizacja to struktura anatomiczna (np. lewa komora, aorta, tętnice wieńcowe) lub strona (lewo/prawo dla obrzęków kończyn).",
+    "output_format": "JSON z polami: diagnozy (kod ICD-10, nazwa, lokalizacja anatomiczna, opis), procedury (kod, nazwa, lokalizacja, opis wykonania/zalecenia)"
+  },
+  "suggestions": {
+    "system": "Jesteś doświadczonym kardiologiem przeprowadzającym wywiad. Twoim celem jest ocena ryzyka sercowo-naczyniowego, postawienie diagnozy i zaplanowanie dalszej diagnostyki lub leczenia.",
+    "focus_areas": [
+      "Charakter bólu w klatce piersiowej (uciskowy, piekący, kłujący)",
+      "Promieniowanie bólu (żuchwa, ramię lewe, plecy, nadbrzusze)",
+      "Czynniki wyzwalające i łagodzące (wysiłek, stres, odpoczynek, nitrogliceryna)",
+      "Duszność (wysiłkowa, spoczynkowa, napadowa nocna, orthopnoe)",
+      "Kołatania serca, omdlenia, zawroty głowy",
+      "Obrzęki kończyn dolnych",
+      "Czynniki ryzyka i choroby współistniejące"
+    ],
+    "example_questions": [
+      "Jak by Pan/Pani opisał/a charakter bólu - uciskowy, piekący czy kłujący?",
+      "Czy ból promieniuje do żuchwy, ramienia lub pleców?",
+      "Czy dolegliwości pojawiają się przy wysiłku fizycznym?",
+      "Czy budzi się Pan/Pani w nocy z powodu duszności?",
+      "Czy zauważył/a Pan/Pani obrzęki kostek?",
+      "Czy występują kołatania serca lub uczucie nierównego bicia?",
+      "Czy miał/a Pan/Pani omdlenia lub zasłabnięcia?",
+      "Jakie leki Pan/Pani obecnie przyjmuje?"
+    ]
+  },
+  "validation": {
+    "medical_terms": ["dławica", "zawał", "niewydolność", "migotanie", "trzepotanie", "tachykardia", "bradykardia", "nadciśnienie", "hipotonia", "stenoza", "niedomykalność", "kardiomiopatia", "zapalenie", "tętniak", "zakrzepica", "zatorowość"],
+    "abbreviations": {
+      "EKG": "elektrokardiogram",
+      "ECHO": "echokardiografia",
+      "RR": "ciśnienie tętnicze",
+      "HR": "częstość akcji serca",
+      "EF": "frakcja wyrzutowa",
+      "LVEF": "frakcja wyrzutowa lewej komory",
+      "CAD": "choroba wieńcowa",
+      "ACS": "ostry zespół wieńcowy",
+      "STEMI": "zawał z uniesieniem ST",
+      "NSTEMI": "zawał bez uniesienia ST",
+      "PCI": "przezskórna interwencja wieńcowa",
+      "CABG": "pomostowanie aortalno-wieńcowe",
+      "AF": "migotanie przedsionków",
+      "HF": "niewydolność serca"
+    }
+  }
+}

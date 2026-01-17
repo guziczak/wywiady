@@ -115,32 +115,56 @@ class LLMService:
 
 from core.knowledge_manager import KnowledgeManager
 
-# ... (reszta importów)
+# Specialization Manager (opcjonalny import)
+try:
+    from core.specialization_manager import get_specialization_manager
+    SPEC_MANAGER_AVAILABLE = True
+except ImportError:
+    SPEC_MANAGER_AVAILABLE = False
 
     async def generate_description(
-        self, 
-        transcript: str, 
+        self,
+        transcript: str,
         icd10_codes: Dict, # Deprecated, kept for compat but unused
         config: Dict,
-        spec_id: int = 1 # Domyślnie Stomatologia
+        spec_id: int = None  # None = użyj aktywnej specjalizacji
     ) -> Tuple[Dict[str, Any], str]:
         """
         Główna metoda generująca opis.
+
+        Używa dynamicznych promptów ze SpecializationManager jeśli dostępny.
         """
-        
+
+        # Pobierz aktywną specjalizację jeśli nie podano
+        if spec_id is None and SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            spec_id = spec_manager.get_active().id
+        elif spec_id is None:
+            spec_id = 1  # Fallback do stomatologii
+
         # 1. Pobierz wiedzę z bazy
         km = KnowledgeManager()
         context_data = km.get_context_for_specialization(spec_id)
-        
+
         # Ogranicz kontekst dla promptu (żeby nie przekroczyć limitu tokenów)
-        # Bierzemy max 300 procedur i 300 kodów ICD
         icd10_list = context_data.get("icd10", [])[:300]
         icd9_list = context_data.get("icd9", [])[:300]
-        
+
         icd_context = json.dumps(icd10_list, indent=2, ensure_ascii=False)
         proc_context = json.dumps(icd9_list, indent=2, ensure_ascii=False)
 
-        prompt = f"""Jesteś asystentem do automatyzacji dokumentacji medycznej.
+        # 2. Buduj prompt (dynamiczny jeśli SpecializationManager dostępny)
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            prompt = spec_manager.build_description_prompt(
+                transcript=transcript,
+                icd_context=icd_context,
+                proc_context=proc_context,
+                spec_id=spec_id
+            )
+        else:
+            # Fallback - stary hardcoded prompt
+            prompt = f"""Jesteś asystentem do automatyzacji dokumentacji medycznej.
 Analizujesz transkrypcję wizyty lekarskiej i wyciągasz z niej wykonane procedury oraz diagnozy.
 
 Dostepne słowniki (BAZA WIEDZY):
@@ -157,7 +181,7 @@ INSTRUKCJA:
 2. Dla każdej pozycji znajdź NAJLEPIEJ pasujący kod z powyższych list.
 3. Wyekstrahuj LOKALIZACJĘ (jeśli dotyczy):
    - Stomatologia: numer zęba (FDI: 11-48, 51-85).
-   - Inne: strona (Lewa/Prawa/Obustronnie), konkretny organ (np. "palec wskazujący ręki prawej").
+   - Inne: strona (Lewa/Prawa/Obustronnie), konkretny organ.
 4. Jeśli procedury/kodu nie ma na liście, użyj najbardziej zbliżonego lub ogólnego.
 
 Format wyjściowy JSON:
@@ -167,7 +191,7 @@ Format wyjściowy JSON:
       "kod": "K02.1",
       "nazwa": "Próchnica zębiny",
       "opis_tekstowy": "Głęboki ubytek na powierzchni żującej",
-      "zab": "16" (lub inna lokalizacja np. "Oko lewe")
+      "zab": "16"
     }}
   ],
   "procedury": [
@@ -175,7 +199,7 @@ Format wyjściowy JSON:
       "kod": "23.2",
       "nazwa": "Odbudowa zęba...",
       "opis_tekstowy": "Wypełnienie kompozytowe światłoutwardzalne",
-      "zab": "16" (lub inna lokalizacja)
+      "zab": "16"
     }}
   ]
 }}
@@ -290,7 +314,8 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         self,
         transcript: str,
         config: Dict,
-        exclude_questions: Optional[List[str]] = None
+        exclude_questions: Optional[List[str]] = None,
+        spec_id: int = None
     ) -> List[str]:
         """
         Generuje sugestie pytań uzupełniających.
@@ -299,18 +324,30 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
             transcript: Transkrypcja rozmowy
             config: Konfiguracja z kluczami API
             exclude_questions: Lista pytań do wykluczenia (już zadane)
+            spec_id: ID specjalizacji (None = aktywna)
         """
 
-        # Format wykluczeń
-        exclude_section = ""
-        if exclude_questions:
-            exclude_list = "\n".join([f"- {q}" for q in exclude_questions])
-            exclude_section = f"""
+        # Buduj prompt (dynamiczny jeśli SpecializationManager dostępny)
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            if spec_id is None:
+                spec_id = spec_manager.get_active().id
+            prompt = spec_manager.build_suggestions_prompt(
+                transcript=transcript,
+                exclude_questions=exclude_questions,
+                spec_id=spec_id
+            )
+        else:
+            # Fallback - stary hardcoded prompt
+            exclude_section = ""
+            if exclude_questions:
+                exclude_list = "\n".join([f"- {q}" for q in exclude_questions])
+                exclude_section = f"""
 PYTANIA JUŻ ZADANE (NIE POWTARZAJ ICH):
 {exclude_list}
 """
 
-        prompt = f"""Jesteś doświadczonym stomatologiem przeprowadzającym wywiad.
+            prompt = f"""Jesteś doświadczonym lekarzem przeprowadzającym wywiad.
 Twoim celem jest postawienie precyzyjnej diagnozy (ICD-10) oraz zaplanowanie leczenia.
 
 Oto dotychczasowy przebieg rozmowy:
@@ -330,7 +367,7 @@ Jeśli wywiad jest kompletny, zasugeruj: ["Wywiad kompletny - można przejść d
 Jeśli brak danych, zasugeruj 3 pytania ogólne.
 
 Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
-["Czy ból nasila się w nocy?", "Czy ząb reaguje na ciepło?", "Czy występuje obrzęk?"]
+["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]
 """
         # Wybór modelu (analogicznie jak w generate_description, ale uproszczone dla szybkosci)
         gemini_key = config.get("api_key", "")

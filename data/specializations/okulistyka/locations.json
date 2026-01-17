@@ -1,0 +1,55 @@
+{
+  "type": "eye_select",
+  "label": "Oko",
+  "description": "Lokalizacja okulistyczna - oko i struktura anatomiczna",
+  "eye_options": [
+    {"value": "OP", "label": "Oko prawe (OP)", "full_name": "Oculus dexter"},
+    {"value": "OL", "label": "Oko lewe (OL)", "full_name": "Oculus sinister"},
+    {"value": "OU", "label": "Oboje oczu (OU)", "full_name": "Oculi uterque"}
+  ],
+  "structures": [
+    {
+      "group": "Przedni odcinek",
+      "items": [
+        {"value": "rogowka", "label": "Rogówka"},
+        {"value": "spojowka", "label": "Spojówka"},
+        {"value": "twardowka", "label": "Twardówka"},
+        {"value": "teczowka", "label": "Tęczówka"},
+        {"value": "zrenica", "label": "Źrenica"},
+        {"value": "soczewka", "label": "Soczewka"},
+        {"value": "komora_przednia", "label": "Komora przednia"},
+        {"value": "kat_przesaczania", "label": "Kąt przesączania"},
+        {"value": "cialo_rzeskowe", "label": "Ciało rzęskowe"}
+      ]
+    },
+    {
+      "group": "Tylny odcinek",
+      "items": [
+        {"value": "cialo_szkliste", "label": "Ciało szkliste"},
+        {"value": "siatkowka", "label": "Siatkówka"},
+        {"value": "plamka_zolta", "label": "Plamka żółta (macula)"},
+        {"value": "dol_srodkowy", "label": "Dołek środkowy (fovea)"},
+        {"value": "tarcza_nerwu", "label": "Tarcza nerwu wzrokowego"},
+        {"value": "naczynia_siatkowki", "label": "Naczynia siatkówki"},
+        {"value": "naczyniowka", "label": "Naczyniówka"},
+        {"value": "obwod_siatkowki", "label": "Obwód siatkówki"}
+      ]
+    },
+    {
+      "group": "Przydatki oka",
+      "items": [
+        {"value": "powieki", "label": "Powieki"},
+        {"value": "aparat_lzowy", "label": "Aparat łzowy"},
+        {"value": "miesniesie_okoruchowe", "label": "Mięśnie okoruchowe"},
+        {"value": "oczodol", "label": "Oczodół"},
+        {"value": "nerw_wzrokowy", "label": "Nerw wzrokowy"}
+      ]
+    }
+  ],
+  "common_combinations": [
+    {"eye": "OP", "structure": "soczewka", "label": "Soczewka oka prawego"},
+    {"eye": "OL", "structure": "soczewka", "label": "Soczewka oka lewego"},
+    {"eye": "OU", "structure": "siatkowka", "label": "Siatkówka obojga oczu"},
+    {"eye": "OP", "structure": "rogowka", "label": "Rogówka oka prawego"}
+  ]
+}
