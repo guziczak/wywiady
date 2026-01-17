@@ -4,6 +4,12 @@ Nowoczesne GUI do generowania opisow stomatologicznych z wywiadu glosowego.
 """
 
 import asyncio
+import sys
+
+# Windows: użyj SelectorEventLoop zamiast ProactorEventLoop
+# ProactorEventLoop nie obsługuje prawidłowo Ctrl+C
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import concurrent.futures
 import json
 import os
@@ -84,8 +90,6 @@ class CancellableTask:
     def elapsed_seconds(self) -> int:
         return int(time.time() - self.start_time)
 
-from nicegui import ui, app
-
 # Sciezki konfiguracji
 CONFIG_FILE = Path(__file__).parent / "config.json"
 ICD_FILE = Path(__file__).parent / "icd10.json"
@@ -143,18 +147,22 @@ except ImportError as e:
 
 # UI Components
 try:
-    from ui.components.header import create_header
-    from ui.components.settings import create_settings_section
-    from ui.components.recording import create_recording_section
-    from ui.components.results import create_results_section
-    from ui.live import LiveInterviewView
+    from app_ui.components.header import create_header
+    from app_ui.components.settings import create_settings_section
+    from app_ui.components.recording import create_recording_section
+    from app_ui.components.results import create_results_section
+    from app_ui.live import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
+
+from nicegui import ui, app
 
 # Global TranscriberManager instance (Singleton)
 GLOBAL_TRANSCRIBER_MANAGER = None
 # Transkrypt z live interview do przekazania do głównego widoku
 GLOBAL_LIVE_TRANSCRIPT = None
+# Windows Ctrl+C handler (musi być globalna żeby nie była garbage collectowana)
+_WIN_CTRL_HANDLER = None
 
 def get_transcriber_manager():
     global GLOBAL_TRANSCRIBER_MANAGER
@@ -489,9 +497,14 @@ class WywiadApp:
                 print(f"[LOAD] Subprocess done - model cached, skipping main process preload", flush=True)
 
                 # Ustaw urządzenie w backendzie (to jest szybkie)
-                backend = self.transcriber_manager.get_current_backend()
                 if backend_type == "openvino_whisper":
-                    backend.set_device(device)
+                    try:
+                        from core.transcriber import TranscriberType
+                        ov_backend = self.transcriber_manager.get_backend(TranscriberType.OPENVINO_WHISPER)
+                        if hasattr(ov_backend, 'set_device'):
+                            ov_backend.set_device(device)
+                    except Exception as e:
+                        print(f"[LOAD] Could not set device on backend: {e}", flush=True)
 
                 self.model_state = ModelState.READY
                 self.loaded_model = LoadedModelInfo(
@@ -927,8 +940,26 @@ class WywiadApp:
 
     def delete_model(self, model_name: str):
         """Usuwa pobrany model."""
-        # TODO: Implement model deletion
-        ui.notify(f"Usuwanie modelu {model_name} - TODO", type='warning')
+        if not self.transcriber_manager:
+            return
+
+        try:
+            backend = self.transcriber_manager.get_current_backend()
+
+            # Sprawdź czy to nie jest aktywny model
+            if backend.get_current_model() == model_name:
+                ui.notify(f"Nie można usunąć aktywnego modelu!", type='negative')
+                return
+
+            success = backend.delete_model(model_name)
+            if success:
+                ui.notify(f"Model {model_name} usunięty", type='positive')
+            else:
+                ui.notify(f"Nie udało się usunąć modelu {model_name}", type='negative')
+
+            self.refresh_model_cards()
+        except Exception as e:
+            ui.notify(f"Błąd: {e}", type='negative')
 
     def select_backend(self, backend_value: str):
         """Wybiera backend transkrypcji."""
@@ -1339,7 +1370,7 @@ class WywiadApp:
                 self.suggestion_btn.props(remove='loading')
 
     async def generate_description(self):
-        """Generuje opis stomatologiczny używając LLMService."""
+        """Generuje opis stomatologiczny używając LLMService (Struktura JSON)."""
         transcript = self.transcript_area.value if self.transcript_area else ""
         if not transcript.strip():
             if self.record_status:
@@ -1356,28 +1387,28 @@ class WywiadApp:
             self.generate_button.props('loading')
 
         try:
-            # Wywołanie serwisu (Core Logic)
-            result, used_model = await self.llm_service.generate_description(
+            # Domyślnie Stomatologia (ID 1) - TODO: Selektor specjalizacji
+            spec_id = 1
+            
+            # Wywołanie serwisu (z nowym formatem JSON)
+            result_json, used_model = await self.llm_service.generate_description(
                 transcript,
-                self.icd10_codes,
-                self.config
+                self.icd10_codes, # Deprecated, ale musi być przekazane
+                self.config,
+                spec_id=spec_id
             )
 
-            # Update UI fields
-            icd_code = result.get("icd10", "")
-            diagnosis = result.get("rozpoznanie", "-")
+            # Update UI Grids
+            diagnozy = result_json.get("diagnozy", [])
+            procedury = result_json.get("procedury", [])
             
-            if icd_code and icd_code not in ["-", "brak", "Brak", "None"]:
-                 final_diagnosis = f"[{icd_code}] {diagnosis}"
-            else:
-                 final_diagnosis = diagnosis
-
-            if self.recognition_field:
-                self.recognition_field.value = final_diagnosis
-            if self.service_field:
-                self.service_field.value = result.get("swiadczenie", "-")
-            if self.procedure_field:
-                self.procedure_field.value = result.get("procedura", "-")
+            if self.diagnosis_grid:
+                self.diagnosis_grid.options['rowData'] = diagnozy
+                self.diagnosis_grid.update()
+                
+            if self.procedure_grid:
+                self.procedure_grid.options['rowData'] = procedury
+                self.procedure_grid.update()
 
             # Status Update
             if self.record_status:
@@ -1427,6 +1458,18 @@ class WywiadApp:
         finally:
             if self.generate_button:
                 self.generate_button.props(remove='loading')
+
+    def _copy_results_json(self):
+        """Kopiuje wyniki jako JSON do schowka."""
+        if not hasattr(self, 'diagnosis_grid') or not hasattr(self, 'procedure_grid'):
+            return
+            
+        data = {
+            "diagnozy": self.diagnosis_grid.options.get('rowData', []),
+            "procedury": self.procedure_grid.options.get('rowData', [])
+        }
+        
+        self.copy_to_clipboard(json.dumps(data, indent=2, ensure_ascii=False), "Pełny Raport JSON")
 
 
 
@@ -1640,21 +1683,28 @@ def main():
     # Setup safe exit
     def handle_sigint(signum, frame):
         print("\n[APP] Otrzymano sygnał przerwania. Zamykanie...", flush=True)
-        # Próbujemy zamknąć ładnie, ale jak nie wyjdzie to force exit
+        import os
+        import sys
+
+        # Na Windows - natychmiastowe zamknięcie (Ctrl+C często nie działa z asyncio)
+        if sys.platform == 'win32':
+            print("[APP] Windows force exit.", flush=True)
+            os._exit(0)
+
+        # Próbujemy zamknąć ładnie
         try:
             if GLOBAL_TRANSCRIBER_MANAGER:
-                # Tu można dodać cleanup managera
                 pass
         except:
             pass
         finally:
             print("[APP] Force exit.", flush=True)
-            import os
             os._exit(0)
 
     import signal
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGTERM, handle_sigint)
+
 
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
@@ -1664,52 +1714,21 @@ def main():
     # === GLOBAL INITIALIZATION ===
     def init_global_state():
         """Inicjalizuje globalny stan (np. wczytuje modele)."""
-        print("[STARTUP] Initializing global state...", flush=True)
-        config = ConfigManager()
-        manager = get_transcriber_manager()
+        # ... (kod init_global_state) ...
+
+    # Force signal handler on startup
+    def register_signal_handlers():
+        import signal
+        import os
+        def force_exit(signum, frame):
+            print("\n[APP] Forced Exit via Signal", flush=True)
+            os._exit(0)
         
-        if manager:
-            # Restore saved backend
-            saved_backend = config.get("transcriber_backend", "gemini_cloud")
-            try:
-                from core.transcriber import TranscriberType
-                backend_enum = TranscriberType(saved_backend)
-                manager.set_current_backend(backend_enum)
-                print(f"[STARTUP] Restored backend: {saved_backend}", flush=True)
-            except Exception as e:
-                print(f"[STARTUP] Could not restore backend: {e}", flush=True)
+        signal.signal(signal.SIGINT, force_exit)
+        signal.signal(signal.SIGTERM, force_exit)
+        print("[APP] Signal handlers registered", flush=True)
 
-            # Force device
-            selected_device = config.get("selected_device", "auto")
-            if selected_device != "auto":
-                try:
-                    ov_backend = manager.get_backend(TranscriberType.OPENVINO_WHISPER)
-                    ov_backend.set_device(selected_device)
-                    print(f"[STARTUP] Forced device: {selected_device}", flush=True)
-                except Exception as e:
-                    print(f"[STARTUP] Could not set device: {e}", flush=True)
-
-            # Restore model
-            saved_model = config.get("transcriber_model", "small")
-            try:
-                current_backend = manager.get_current_backend()
-                if hasattr(current_backend, 'get_current_model') and current_backend.get_current_model() != saved_model:
-                     current_backend.set_model(saved_model)
-                     print(f"[STARTUP] Restored model: {saved_model}", flush=True)
-            except Exception as e:
-                print(f"[STARTUP] Could not restore model: {e}", flush=True)
-
-            # Start preload if needed
-            # if saved_backend in ["openvino_whisper", "faster_whisper", "openai_whisper"]:
-            #     print(f"[STARTUP] Starting background preload...", flush=True)
-            #     def preload_thread():
-            #         try:
-            #             backend = manager.get_current_backend()
-            #             backend.preload()
-            #             print("[STARTUP] Preload finished.", flush=True)
-            #         except Exception as e:
-            #             print(f"[STARTUP] Preload error: {e}", flush=True)
-            #     threading.Thread(target=preload_thread, daemon=True).start()
+    app.on_startup(register_signal_handlers)
 
     # Run initialization in background to not block startup
     threading.Thread(target=init_global_state, daemon=True).start()
@@ -1834,6 +1853,21 @@ pause
                 'Content-Disposition': f'attachment; filename="Instaluj_Wywiad_Plus_{browser}.bat"'
             }
         )
+
+    def cleanup():
+        print("[APP] Shutting down...", flush=True)
+        # Force kill any child processes if needed
+        import psutil
+        try:
+            parent = psutil.Process(os.getpid())
+            children = parent.children(recursive=True)
+            for child in children:
+                child.kill()
+        except:
+            pass
+        print("[APP] Cleanup done.", flush=True)
+
+    app.on_shutdown(cleanup)
 
     ui.run(
         title='Wywiad+ v2',

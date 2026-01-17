@@ -53,8 +53,10 @@ class ConfigManager:
     def config(self) -> AppConfig:
         return self._config
 
-    def update(self, **kwargs):
-        """Aktualizuje wiele pól naraz i zapisuje."""
+    def update(self, data=None, **kwargs):
+        """Aktualizuje wiele pól naraz i zapisuje. Akceptuje dict lub kwargs."""
+        if data is not None:
+            kwargs.update(data)
         changed = False
         for key, value in kwargs.items():
             if hasattr(self._config, key):

@@ -4,6 +4,9 @@ Wspiera: Gemini Cloud, faster-whisper, openai-whisper
 """
 
 import os
+
+# Wyłącz telemetrię OpenVINO (może powodować konflikty z huggingface_hub)
+os.environ['OPENVINO_TELEMETRY_ENABLE'] = '0'
 import shutil
 import subprocess
 import sys
@@ -223,6 +226,10 @@ class TranscriberBackend(ABC):
         """Ustawia model do użycia."""
         pass
 
+    def delete_model(self, model_name: str) -> bool:
+        """Usuwa pobrany model. Zwraca True jeśli sukces."""
+        return False  # Domyślnie nie obsługuje usuwania
+
 
 # ========== GEMINI CLOUD ==========
 
@@ -386,21 +393,55 @@ class FasterWhisperTranscriber(TranscriberBackend):
             download_root = MODELS_DIR / "faster-whisper"
             download_root.mkdir(parents=True, exist_ok=True)
 
-            # Track progress via files count
-            progress_state = {'current': 0, 'total': 0}
+            # Track progress - śledź sumę wszystkich bajtów
+            progress_state = {
+                'bytes_bars': {},  # id(bar) -> {'current': n, 'total': t}
+                'last_pct': 0,
+                'last_update': 0
+            }
 
             class ProgressTqdm(base_tqdm):
                 def __init__(self, *args, **kwargs):
+                    # Filtruj nieznane argumenty (np. 'name' z nowych wersji huggingface_hub)
+                    kwargs.pop('name', None)
                     super().__init__(*args, **kwargs)
-                    if self.total:
-                        progress_state['total'] = self.total
+                    # Zarejestruj każdy pasek (total może być None na początku)
+                    progress_state['bytes_bars'][id(self)] = {
+                        'current': 0,
+                        'total': self.total or 0
+                    }
 
                 def update(self, n=1):
                     super().update(n)
-                    progress_state['current'] = self.n
-                    if progress_callback and progress_state['total'] > 0:
-                        pct = progress_state['current'] / progress_state['total']
-                        progress_callback(pct)
+                    bar_id = id(self)
+                    if bar_id in progress_state['bytes_bars']:
+                        # Aktualizuj current i total (total może się zmienić)
+                        progress_state['bytes_bars'][bar_id]['current'] = self.n or 0
+                        if self.total:
+                            progress_state['bytes_bars'][bar_id]['total'] = self.total
+
+                        # Oblicz łączny progress (tylko paski z known total > 1KB)
+                        bars_with_total = [
+                            b for b in progress_state['bytes_bars'].values()
+                            if b['total'] > 1000
+                        ]
+
+                        if bars_with_total:
+                            total_bytes = sum(b['total'] for b in bars_with_total)
+                            current_bytes = sum(b['current'] for b in bars_with_total)
+
+                            if total_bytes > 0 and progress_callback:
+                                pct = min(1.0, current_bytes / total_bytes)
+                                # Aktualizuj co 1%
+                                if pct - progress_state['last_pct'] >= 0.01 or pct >= 0.99:
+                                    progress_state['last_pct'] = pct
+                                    progress_callback(pct)
+
+                def close(self):
+                    bar_id = id(self)
+                    if bar_id in progress_state['bytes_bars']:
+                        del progress_state['bytes_bars'][bar_id]
+                    super().close()
 
             if progress_callback:
                 progress_callback(0.0)
@@ -430,6 +471,27 @@ class FasterWhisperTranscriber(TranscriberBackend):
         self._model_name = model_name
         self._model = None  # Reset - załaduj przy następnym użyciu
         return True
+
+    def delete_model(self, model_name: str) -> bool:
+        """Usuwa pobrany model faster-whisper."""
+        if model_name not in self.MODELS:
+            return False
+
+        # Nie można usunąć aktywnego modelu
+        if model_name == self._model_name:
+            return False
+
+        model_path = self._get_model_path(model_name)
+        if not model_path.exists():
+            return False
+
+        try:
+            shutil.rmtree(model_path)
+            print(f"[FasterWhisper] Model {model_name} usunięty", flush=True)
+            return True
+        except Exception as e:
+            print(f"[FasterWhisper] Błąd usuwania modelu: {e}", flush=True)
+            return False
 
 
 # ========== OPENAI-WHISPER ==========
@@ -671,22 +733,27 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
         # Wczytaj audio
         print("[OpenVINO] Loading audio with librosa...", flush=True)
         raw_speech, _ = librosa.load(audio_path, sr=16000)
-        print(f"[OpenVINO] Audio loaded: {len(raw_speech)} samples", flush=True)
+        return self.transcribe_raw(raw_speech, language)
+
+    def transcribe_raw(self, raw_speech, language: str = "pl") -> str:
+        """Transkrybuje surowe audio (numpy array)."""
+        self._ensure_model()
+        
+        print(f"[OpenVINO] transcribe_raw: {len(raw_speech)} samples", flush=True)
 
         # Mapowanie języka
         lang_token = f"<|{language}|>"
 
         # Transkrypcja
-        print("[OpenVINO] Starting transcription...", flush=True)
         result = self._model.generate(
             raw_speech,
             max_new_tokens=448,
             language=lang_token,
             task="transcribe",
         )
-        print(f"[OpenVINO] Transcription done: {str(result)[:50]}...", flush=True)
-
-        return str(result).strip()
+        text = str(result).strip()
+        print(f"[OpenVINO] Raw transcription done: {text[:50]}...", flush=True)
+        return text
 
     def is_available(self) -> Tuple[bool, Optional[str]]:
         try:
@@ -739,38 +806,82 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
             if not hf_model:
                 return False
 
-            # Track progress via files count
-            progress_state = {'current': 0, 'total': 0}
+            # Track progress - śledź sumę wszystkich bajtów
+            progress_state = {
+                'bytes_bars': {},  # id(bar) -> {'current': n, 'total': t}
+                'last_pct': 0,
+                'last_update': 0
+            }
 
             class ProgressTqdm(base_tqdm):
                 def __init__(self, *args, **kwargs):
+                    # Filtruj nieznane argumenty (np. 'name' z nowych wersji huggingface_hub)
+                    kwargs.pop('name', None)
                     super().__init__(*args, **kwargs)
-                    if self.total:
-                        progress_state['total'] = self.total
+                    # Zarejestruj każdy pasek (total może być None na początku)
+                    progress_state['bytes_bars'][id(self)] = {
+                        'current': 0,
+                        'total': self.total or 0
+                    }
 
                 def update(self, n=1):
                     super().update(n)
-                    progress_state['current'] = self.n
-                    if progress_callback and progress_state['total'] > 0:
-                        pct = progress_state['current'] / progress_state['total']
-                        progress_callback(pct)
+                    bar_id = id(self)
+                    if bar_id in progress_state['bytes_bars']:
+                        # Aktualizuj current i total (total może się zmienić)
+                        progress_state['bytes_bars'][bar_id]['current'] = self.n or 0
+                        if self.total:
+                            progress_state['bytes_bars'][bar_id]['total'] = self.total
+
+                        # Oblicz łączny progress (tylko paski z known total > 1KB)
+                        bars_with_total = [
+                            b for b in progress_state['bytes_bars'].values()
+                            if b['total'] > 1000
+                        ]
+
+                        if bars_with_total:
+                            total_bytes = sum(b['total'] for b in bars_with_total)
+                            current_bytes = sum(b['current'] for b in bars_with_total)
+
+                            if total_bytes > 0 and progress_callback:
+                                pct = min(1.0, current_bytes / total_bytes)
+                                # Aktualizuj co 1%
+                                if pct - progress_state['last_pct'] >= 0.01 or pct >= 0.99:
+                                    progress_state['last_pct'] = pct
+                                    progress_callback(pct)
+
+                def close(self):
+                    bar_id = id(self)
+                    if bar_id in progress_state['bytes_bars']:
+                        del progress_state['bytes_bars'][bar_id]
+                    super().close()
 
             if progress_callback:
                 progress_callback(0.0)
 
             # Pobierz model z HuggingFace
-            snapshot_download(
-                repo_id=hf_model,
-                local_dir=str(model_path),
-                tqdm_class=ProgressTqdm if progress_callback else None,
-            )
+            # Uwaga: tqdm_class może powodować problemy w niektórych wersjach huggingface_hub
+            try:
+                snapshot_download(
+                    repo_id=hf_model,
+                    local_dir=str(model_path),
+                    tqdm_class=ProgressTqdm if progress_callback else None,
+                )
+            except TypeError:
+                # Fallback bez custom tqdm
+                snapshot_download(
+                    repo_id=hf_model,
+                    local_dir=str(model_path),
+                )
 
             if progress_callback:
                 progress_callback(1.0)
 
             return True
         except Exception as e:
+            import traceback
             print(f"Błąd pobierania modelu OpenVINO: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
             return False
 
     def get_current_model(self) -> Optional[str]:
@@ -783,6 +894,27 @@ class OpenVINOWhisperTranscriber(TranscriberBackend):
             self._model_name = model_name
             self._model = None  # Reset - załaduj przy następnym użyciu
             return True
+
+    def delete_model(self, model_name: str) -> bool:
+        """Usuwa pobrany model OpenVINO."""
+        if model_name not in self.MODELS:
+            return False
+
+        # Nie można usunąć aktywnego modelu
+        if model_name == self._model_name:
+            return False
+
+        model_path = self._get_model_path(model_name)
+        if not model_path.exists():
+            return False
+
+        try:
+            shutil.rmtree(model_path)
+            print(f"[OpenVINO] Model {model_name} usunięty", flush=True)
+            return True
+        except Exception as e:
+            print(f"[OpenVINO] Błąd usuwania modelu: {e}", flush=True)
+            return False
 
 
 # ========== MANAGER ==========

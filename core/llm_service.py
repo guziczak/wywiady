@@ -25,8 +25,12 @@ except ImportError:
 # W glownej aplikacji dodajemy sciezke do tools, tutaj robimy to samo dla bezpieczenstwa
 TOOLS_DIR = Path(__file__).parent.parent / "tools"
 PROXY_PATH = TOOLS_DIR / "claude-code-py" / "src"
+COMMON_TOOLS_PATH = Path(r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
+
 if str(PROXY_PATH) not in sys.path:
     sys.path.insert(0, str(PROXY_PATH))
+if str(COMMON_TOOLS_PATH) not in sys.path:
+    sys.path.insert(0, str(COMMON_TOOLS_PATH))
 
 try:
     from proxy import start_proxy_server, get_proxy_base_url
@@ -109,41 +113,77 @@ class LLMService:
         )
         return response.text.strip()
 
+from core.knowledge_manager import KnowledgeManager
+
+# ... (reszta importów)
+
     async def generate_description(
         self, 
         transcript: str, 
-        icd10_codes: Dict, 
-        config: Dict
+        icd10_codes: Dict, # Deprecated, kept for compat but unused
+        config: Dict,
+        spec_id: int = 1 # Domyślnie Stomatologia
     ) -> Tuple[Dict[str, Any], str]:
         """
         Główna metoda generująca opis.
-        Zwraca krotkę: (wynik_json, nazwa_uzytego_modelu)
         """
         
-        # 1. Przygotowanie Promptu
-        icd_context = json.dumps(icd10_codes, indent=2, ensure_ascii=False)
-        prompt = f"""Jestes asystentem do formatowania dokumentacji stomatologicznej.
-Twoim zadaniem jest przeksztalcenie surowych notatek z wywiadu stomatologa na sformatowany tekst dokumentacji.
+        # 1. Pobierz wiedzę z bazy
+        km = KnowledgeManager()
+        context_data = km.get_context_for_specialization(spec_id)
+        
+        # Ogranicz kontekst dla promptu (żeby nie przekroczyć limitu tokenów)
+        # Bierzemy max 300 procedur i 300 kodów ICD
+        icd10_list = context_data.get("icd10", [])[:300]
+        icd9_list = context_data.get("icd9", [])[:300]
+        
+        icd_context = json.dumps(icd10_list, indent=2, ensure_ascii=False)
+        proc_context = json.dumps(icd9_list, indent=2, ensure_ascii=False)
 
-Dostepne kody ICD-10 (Baza wiedzy):
+        prompt = f"""Jesteś asystentem do automatyzacji dokumentacji medycznej.
+Analizujesz transkrypcję wizyty lekarskiej i wyciągasz z niej wykonane procedury oraz diagnozy.
+
+Dostepne słowniki (BAZA WIEDZY):
+--- ICD-10 (Diagnozy) ---
 {icd_context}
+... (i więcej)
+
+--- ICD-9 PL (Procedury) ---
+{proc_context}
+... (i więcej)
 
 INSTRUKCJA:
-1. Przeanalizuj tekst i wybierz NAJLEPIEJ pasujacy kod z powyzszej listy.
-2. JEŚLI transkrypcja nie zawiera wystarczających danych medycznych (np. tylko powitanie, szum, pusta rozmowa), wpisz "-" w polach rozpoznania i kodu. NIE ZMYŚLAJ DIAGNOZY.
-3. Sformatuj wynik w JSON.
+1. Przeanalizuj tekst i zidentyfikuj WSZYSTKIE wykonane czynności oraz postawione diagnozy.
+2. Dla każdej pozycji znajdź NAJLEPIEJ pasujący kod z powyższych list.
+3. Wyekstrahuj LOKALIZACJĘ (jeśli dotyczy):
+   - Stomatologia: numer zęba (FDI: 11-48, 51-85).
+   - Inne: strona (Lewa/Prawa/Obustronnie), konkretny organ (np. "palec wskazujący ręki prawej").
+4. Jeśli procedury/kodu nie ma na liście, użyj najbardziej zbliżonego lub ogólnego.
 
-Wymagane pola JSON:
-- "rozpoznanie": tekst diagnozy (lub "-" gdy brak danych)
-- "icd10": kod z listy (lub "-" gdy brak danych)
-- "swiadczenie": wykonane zabiegi (lub "-" gdy brak danych)
-- "procedura": szczegolowy opis (lub "-" gdy brak danych)
+Format wyjściowy JSON:
+{{
+  "diagnozy": [
+    {{
+      "kod": "K02.1",
+      "nazwa": "Próchnica zębiny",
+      "opis_tekstowy": "Głęboki ubytek na powierzchni żującej",
+      "zab": "16" (lub inna lokalizacja np. "Oko lewe")
+    }}
+  ],
+  "procedury": [
+    {{
+      "kod": "23.2",
+      "nazwa": "Odbudowa zęba...",
+      "opis_tekstowy": "Wypełnienie kompozytowe światłoutwardzalne",
+      "zab": "16" (lub inna lokalizacja)
+    }}
+  ]
+}}
 
 Transkrypcja wywiadu:
 {transcript}
 
-Odpowiedz TYLKO poprawnym kodem JSON:
-{{"rozpoznanie": "...", "icd10": "...", "swiadczenie": "...", "procedura": "..."}}"""
+Odpowiedz TYLKO poprawnym kodem JSON."""
 
         # 2. Pobranie kluczy i preferencji
         gemini_key = config.get("api_key", "")
@@ -307,11 +347,18 @@ Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
                 session_key = config.get("session_key", "")
                 claude_token = self._load_claude_token()
                 
+                # DEBUG INFO
+                print(f"[LLM] Checking Claude availability:", flush=True)
+                print(f"[LLM] PROXY_AVAILABLE: {PROXY_AVAILABLE}", flush=True)
+                print(f"[LLM] Session Key present: {bool(session_key)}", flush=True)
+                print(f"[LLM] OAuth Token present: {bool(claude_token)}", flush=True)
+                
                 if (session_key or claude_token) and PROXY_AVAILABLE:
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
                     # Używamy retry
                     response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
+                    print(f"[LLM] No valid configuration found. Returning 'Brak konfiguracji AI'.", flush=True)
                     return ["Brak konfiguracji AI"]
 
             # Parse JSON
@@ -349,44 +396,28 @@ Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
 
         questions_str = "\n".join([f"- {q}" for q in suggested_questions]) if suggested_questions else "(brak)"
 
-        prompt = f"""Jesteś asystentem do walidacji transkrypcji mowy w gabinecie stomatologicznym.
+        prompt = f"""Jesteś asystentem do formatowania transkrypcji medycznej.
 
-KONTEKST ROZMOWY (wcześniejsze wypowiedzi):
-{context if context else "(początek rozmowy)"}
+KONTEKST (poprzednie zdania):
+{context if context else "(brak)"}
 
-SUGEROWANE PYTANIA LEKARZA (referencja):
-{questions_str}
-
-NOWY SEGMENT DO WALIDACJI:
+NOWY SEGMENT (surowy tekst z rozpoznawania mowy):
 "{segment}"
 
-ZADANIE - ROZPOZNAJ KTO MÓWI:
+ZADANIE:
+Twoim jedynym celem jest dodanie interpunkcji (kropki, przecinki, znaki zapytania) i wielkich liter.
 
-1. LEKARZ zadaje PYTANIA:
-   - Zaczyna od "Czy", "Jak", "Kiedy", "Gdzie", "Od kiedy", "Co"
-   - Często pasuje do jednego z sugerowanych pytań
-   - Whisper może transkrybować "Czy" jako "Te", "To", "Ty" - wtedy POPRAW
-   - Kończy się znakiem zapytania
+ZASADY KRYTYCZNE (BEZWZGLĘDNE):
+1. NIE ZMIENIAJ SŁÓW. Nie poprawiaj gramatyki, nie "zgaduj" co pacjent chciał powiedzieć.
+2. Jeśli segment brzmi jak bełkot lub urwane słowa - ZOSTAW GO TAK JAK JEST, dodaj tylko kropkę.
+3. NIE SKRACAJ tekstu. Każde słowo z wejścia musi znaleźć się w wyjściu.
+4. NIE HALUCYNUJ (nie dopisuj "Dziękuję", "Do widzenia" jeśli tego nie ma w tekście).
 
-2. PACJENT daje ODPOWIEDZI:
-   - To STWIERDZENIA, NIE pytania!
-   - Np. "Boli mnie górna czwórka", "Tak, reaguje na zimne", "Od tygodnia"
-   - NIE zamieniaj odpowiedzi pacjenta na pytania!
-   - Kończy się kropką
+Rozpoznawanie mówcy (opcjonalne):
+- Jeśli ewidentnie widać zmianę mówcy (pytanie lekarza -> odpowiedź pacjenta), ustaw needs_newline=true.
 
-WSKAZÓWKI ROZPOZNAWANIA:
-- Jeśli poprzednia wypowiedź to PYTANIE → nowa to prawdopodobnie ODPOWIEDŹ pacjenta
-- Jeśli poprzednia wypowiedź to ODPOWIEDŹ → nowa to prawdopodobnie PYTANIE lekarza
-- Krótkie "tak", "nie", "mhm" → to odpowiedzi pacjenta
-- Opisy objawów ("boli", "reaguje", "od X dni") → odpowiedzi pacjenta
-
-ZASADY OGÓLNE:
-- is_complete = false tylko gdy zdanie jest URWANE w połowie
-- needs_newline = true gdy zmiana mówiącego (lekarz↔pacjent) lub nowy temat
-- Popraw błędy transkrypcji, ale ZACHOWAJ sens i typ wypowiedzi
-
-Odpowiedz TYLKO w formacie JSON:
-{{"is_complete": true/false, "corrected_text": "...", "needs_newline": true/false, "confidence": 0.0-1.0}}"""
+Odpowiedz JSON:
+{{"corrected_text": "...", "needs_newline": true/false}}"""
 
         gemini_key = config.get("api_key", "")
         loop = asyncio.get_event_loop()

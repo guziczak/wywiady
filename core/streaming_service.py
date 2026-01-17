@@ -1,103 +1,189 @@
 import threading
 import queue
 import time
+from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
 
+# Define models path
+MODELS_DIR = Path(__file__).parent.parent / "models" / "faster-whisper"
+
+# Cache for OpenVINO backends to prevent re-loading on NPU
+_OPENVINO_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+
+class OpenVINOShim:
+    """Nakładka na OpenVINOWhisperTranscriber udająca interface faster-whisper. Implements Singleton per model."""
+    def __new__(cls, model_name, device):
+        key = f"{model_name}_{device}"
+        with _CACHE_LOCK:
+            if key not in _OPENVINO_CACHE:
+                instance = super(OpenVINOShim, cls).__new__(cls)
+                instance._initialized = False
+                instance._exec_lock = threading.Lock() # Lock na wykonanie
+                _OPENVINO_CACHE[key] = instance
+            return _OPENVINO_CACHE[key]
+
+    def __init__(self, model_name, device):
+        if getattr(self, '_initialized', False):
+            return
+            
+        print(f"[OpenVINOShim] Initializing {model_name} with requested device: '{device}'", flush=True)
+        from core.transcriber import OpenVINOWhisperTranscriber
+        self.backend = OpenVINOWhisperTranscriber()
+        # Wymuś nazwę
+        self.backend._model_name = model_name
+        
+        # Ustaw urządzenie (jeśli nie auto)
+        if device and device.lower() != "auto":
+            self.backend.set_device(device)
+            
+        # Załaduj model synchronicznie
+        self.backend._ensure_model()
+        self._initialized = True
+
+    def transcribe(self, audio, beam_size=5, language="pl", vad_filter=True, word_timestamps=False):
+        # OpenVINO backend oczekuje numpy array (float32) lub ścieżki
+        # Zwracamy obiekt udający segmenty faster-whisper
+        class Segment:
+            def __init__(self, text):
+                self.text = text
+        
+        # Transkrypcja - GUARDED BY LOCK
+        with self._exec_lock:
+            text = self.backend.transcribe_raw(audio, language=language)
+        
+        # Zwracamy listę segmentów (jeden duży segment) i info (dummy)
+        return [Segment(text)], None
+
 class StreamingTranscriber:
     """
-    Kaskadowy transkryber z trzema warstwami:
-    - Warstwa 1 (provisional): Small model, 2s chunki, real-time
-    - Warstwa 2 (improved): Small model, większy kontekst, co 5-7s
-    - Warstwa 3 (final): Large model, kompletne fragmenty
+    Kaskadowy transkryber z trzema warstwami.
+    Wspiera backendy: faster-whisper (domyślny) oraz OpenVINO.
     """
 
-    def __init__(self, model_size="small", device="auto", compute_type="int8"):
+    def __init__(self, model_size="small", device="auto", compute_type="int8", use_openvino=False):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
-        self.model_small = None
+        self.use_openvino = use_openvino
+        
+        self.model_tiny = None
+        self.model_medium = None
         self.model_large = None
         self.is_running = False
         self.audio_queue = queue.Queue()
 
+        # Ensure models dir exists (tylko dla faster-whisper)
+        if not use_openvino:
+            MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
         # Callbacks dla różnych warstw
-        self.callback_provisional = None  # Szary jasny (real-time)
-        self.callback_improved = None     # Szary ciemny (kontekstowy)
-        self.callback_final = None        # Czarny (finalizacja)
+        self.callback_provisional = None
+        self.callback_improved = None
+        self.callback_final = None
+        self.external_backend = None # Deprecated logic, but kept for compatibility
 
         # Audio params
         self.sample_rate = 16000
         self.block_size = 4096  # ~250ms
 
-        # PEŁNY BUFOR AUDIO - nie czyścimy!
+        # PEŁNY BUFOR AUDIO
         self.full_audio_buffer = []
         self.full_audio_samples = 0
 
         # Śledzenie segmentów
-        self.finalized_samples = 0  # Do którego sample'a mamy finalizację
-        self.last_improved_samples = 0  # Do którego sample'a zrobiliśmy improved
+        self.finalized_samples = 0
+        self.last_improved_samples = 0
 
-        # Timing dla warstw
+        # Timing
         self.last_improved_time = 0
-        self.improved_interval = 5.0  # Co 5 sekund robimy improved
+        self.improved_interval = 5.0
 
-        # Detekcja ciszy - ASYNC TIMER
+        # Detekcja ciszy
         self.silence_timer = None
-        self.silence_threshold = 2.0  # 2s ciszy = finalizacja
-        self._silence_lock = threading.Lock()  # Lock dla thread-safety
+        self.silence_threshold = 2.0
+        self._silence_lock = threading.Lock()
 
     def load_model(self):
-        """Ładuje model small."""
-        if self.model_small:
+        """Ładuje model tiny (warstwa 1 - provisional)."""
+        if self.model_tiny:
             return
-        print(f"[STREAM] Loading faster-whisper {self.model_size} on {self.device}...", flush=True)
+            
+        print(f"[STREAM] Loading tiny model (OpenVINO={self.use_openvino})...", flush=True)
         try:
-            self.model_small = WhisperModel(
-                self.model_size,
-                device=self.device if self.device != "auto" else "cpu",
-                compute_type=self.compute_type
-            )
-            print("[STREAM] Small model loaded!", flush=True)
+            if self.use_openvino:
+                self.model_tiny = OpenVINOShim("tiny", self.device)
+            else:
+                self.model_tiny = WhisperModel(
+                    "tiny",
+                    device=self.device if self.device != "auto" else "cpu",
+                    compute_type=self.compute_type,
+                    download_root=str(MODELS_DIR)
+                )
+            print("[STREAM] Tiny model loaded!", flush=True)
         except Exception as e:
-            print(f"[STREAM] Model load error: {e}", flush=True)
-            if self.device == "cuda":
+            print(f"[STREAM] Tiny model load error: {e}", flush=True)
+            # Fallback dla faster-whisper na CPU, dla OpenVINO rzucamy błąd
+            if not self.use_openvino and self.device == "cuda":
                 print("[STREAM] Fallback to CPU...", flush=True)
-                self.model_small = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+                self.model_tiny = WhisperModel("tiny", device="cpu", compute_type="int8", download_root=str(MODELS_DIR))
 
-    def load_large_model(self, model_path=None):
-        """Ładuje model large (opcjonalnie)."""
-        if self.model_large:
-            return
-        # Na razie używamy medium jako "large" dla faster-whisper
-        # Można też użyć zewnętrznego modelu
-        print("[STREAM] Loading large model (medium)...", flush=True)
-        try:
-            self.model_large = WhisperModel(
-                "medium",
-                device=self.device if self.device != "auto" else "cpu",
-                compute_type=self.compute_type
-            )
-            print("[STREAM] Large model loaded!", flush=True)
-        except Exception as e:
-            print(f"[STREAM] Large model error: {e}", flush=True)
-            self.model_large = None
+    def load_cascade_models(self, model_path=None):
+        """Ładuje modele medium i large dla warstw 2 i 3."""
+        # Medium
+        if not self.model_medium:
+            print(f"[STREAM] Loading medium model (OpenVINO={self.use_openvino})...", flush=True)
+            try:
+                if self.use_openvino:
+                    self.model_medium = OpenVINOShim("medium", self.device)
+                else:
+                    self.model_medium = WhisperModel(
+                        "medium",
+                        device=self.device if self.device != "auto" else "cpu",
+                        compute_type=self.compute_type,
+                        download_root=str(MODELS_DIR)
+                    )
+                print("[STREAM] Medium model loaded!", flush=True)
+            except Exception as e:
+                print(f"[STREAM] Medium model error: {e}", flush=True)
+                self.model_medium = None
 
-    def start(self, callback_provisional, callback_improved=None, callback_final=None):
+        # Large
+        if not self.model_large:
+            print(f"[STREAM] Loading large model (OpenVINO={self.use_openvino})...", flush=True)
+            try:
+                if self.use_openvino:
+                    self.model_large = OpenVINOShim("large-v3", self.device)
+                else:
+                    self.model_large = WhisperModel(
+                        "large-v3",
+                        device=self.device if self.device != "auto" else "cpu",
+                        compute_type=self.compute_type,
+                        download_root=str(MODELS_DIR)
+                    )
+                print("[STREAM] Large model loaded!", flush=True)
+            except Exception as e:
+                print(f"[STREAM] Large model error: {e}", flush=True)
+                self.model_large = None
+
+    def start(self, callback_provisional, callback_improved=None, callback_final=None, external_backend=None):
         """
         Uruchamia streaming z wieloma callbackami.
 
         Args:
-            callback_provisional: fn(text, start_sample, end_sample) - real-time, szary jasny
-            callback_improved: fn(text, start_sample, end_sample) - kontekstowy, szary ciemny
-            callback_final: fn(text, start_sample, end_sample) - finalizacja, czarny
+            callback_provisional: fn(text, start_sample, end_sample)
+            callback_improved: fn(text, start_sample, end_sample)
+            callback_final: fn(text, start_sample, end_sample)
+            external_backend: Opcjonalny backend OpenVINO do finalizacji
         """
         self.callback_provisional = callback_provisional
         self.callback_improved = callback_improved or callback_provisional
         self.callback_final = callback_final or callback_improved or callback_provisional
+        self.external_backend = external_backend
 
-        if not self.model_small:
+        if not self.model_tiny:
             self.load_model()
 
         self.is_running = True
@@ -202,7 +288,7 @@ class StreamingTranscriber:
             self._cancel_silence_timer()
 
         try:
-            segments, info = self.model_small.transcribe(
+            segments, info = self.model_tiny.transcribe(
                 audio_data,
                 beam_size=1,
                 language="pl",
@@ -301,7 +387,10 @@ class StreamingTranscriber:
             duration = len(segment_audio) / self.sample_rate
             print(f"[STREAM] Improved: {duration:.1f}s audio (from sample {start_sample})", flush=True)
 
-            segments, info = self.model_small.transcribe(
+            # Użyj medium model jeśli dostępny, inaczej tiny
+            model = self.model_medium if self.model_medium else self.model_tiny
+
+            segments, info = model.transcribe(
                 segment_audio,
                 beam_size=3,  # Lepszy beam dla jakości
                 language="pl",
@@ -310,8 +399,11 @@ class StreamingTranscriber:
 
             text = " ".join([s.text for s in segments]).strip()
 
-            if text and self.callback_improved:
-                self.callback_improved(text, start_sample, self.full_audio_samples)
+            try:
+                if text and self.callback_improved:
+                    self.callback_improved(text, start_sample, self.full_audio_samples)
+            except Exception as cb_err:
+                print(f"[STREAM] Callback improved error: {cb_err}", flush=True)
 
             self.last_improved_samples = self.full_audio_samples
 
@@ -340,26 +432,42 @@ class StreamingTranscriber:
 
         try:
             duration = len(segment_audio) / self.sample_rate
-            print(f"[STREAM] Final: {duration:.1f}s audio", flush=True)
+            
+            # Hybrid Mode: OpenVINO for finalization if available
+            if self.external_backend and hasattr(self.external_backend, 'transcribe_raw'):
+                print(f"[STREAM] Final (External OpenVINO): {duration:.1f}s audio", flush=True)
+                # OpenVINO expects float32 array, which we have
+                text = self.external_backend.transcribe_raw(segment_audio, language="pl")
+            else:
+                backend_name = "OpenVINOShim" if self.use_openvino else "Faster-Whisper"
+                print(f"[STREAM] Final ({backend_name}): {duration:.1f}s audio", flush=True)
+                # Użyj large model jeśli dostępny, inaczej medium, inaczej tiny
+                if self.model_large:
+                    model = self.model_large
+                    beam = 5
+                elif self.model_medium:
+                    model = self.model_medium
+                    beam = 4
+                else:
+                    model = self.model_tiny
+                    beam = 3
 
-            # Użyj large model jeśli dostępny, inaczej small z lepszymi parametrami
-            model = self.model_large if self.model_large else self.model_small
-            beam = 5 if self.model_large else 3
+                segments, info = model.transcribe(
+                    segment_audio,
+                    beam_size=beam,
+                    language="pl",
+                    vad_filter=True,
+                    word_timestamps=False
+                )
+                text = " ".join([s.text for s in segments]).strip()
 
-            segments, info = model.transcribe(
-                segment_audio,
-                beam_size=beam,
-                language="pl",
-                vad_filter=True,
-                word_timestamps=False
-            )
+            try:
+                if text and self.callback_final:
+                    self.callback_final(text, self.finalized_samples, self.full_audio_samples)
+            except Exception as cb_err:
+                print(f"[STREAM] Callback final error: {cb_err}", flush=True)
 
-            text = " ".join([s.text for s in segments]).strip()
-
-            if text and self.callback_final:
-                self.callback_final(text, self.finalized_samples, self.full_audio_samples)
-
-            # Oznacz jako sfinalizowane
+            # Oznacz jako sfinalizowane - ZAWSZE, nawet jak callback padnie
             self.finalized_samples = self.full_audio_samples
 
         except Exception as e:
