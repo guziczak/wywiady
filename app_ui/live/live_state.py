@@ -4,8 +4,11 @@ Centralne zarządzanie stanem transkrypcji i sugestii.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from core.diarization import DiarizationResult, DiarizationSegment, SpeakerRole
 
 
 class SessionStatus(Enum):
@@ -30,6 +33,32 @@ class Suggestion:
     question: str
     used: bool = False
     clicked_at: Optional[float] = None
+
+
+@dataclass
+class DiarizationInfo:
+    """Informacje o diaryzacji sesji."""
+    segments: List['DiarizationSegment'] = field(default_factory=list)
+    speaker_mapping: Dict[str, 'SpeakerRole'] = field(default_factory=dict)
+    enabled: bool = False
+    is_processing: bool = False
+    num_speakers: int = 0
+
+    @property
+    def has_data(self) -> bool:
+        """Czy są dane diaryzacji."""
+        return len(self.segments) > 0
+
+    def get_formatted_transcript(self) -> str:
+        """Zwraca transkrypcję z oznaczeniami mówców."""
+        if not self.segments:
+            return ""
+        lines = []
+        for seg in self.segments:
+            if seg.text:
+                label = seg.role.display_name if hasattr(seg.role, 'display_name') else str(seg.role)
+                lines.append(f"{label}: {seg.text}")
+        return "\n".join(lines)
 
 
 class LiveState:
@@ -58,10 +87,14 @@ class LiveState:
         # Pending validation queue
         self.pending_validation: List[str] = []
 
+        # Diaryzacja
+        self.diarization: Optional[DiarizationInfo] = None
+
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
         self._on_suggestions_change: Optional[Callable] = None
         self._on_status_change: Optional[Callable] = None
+        self._on_diarization_change: Optional[Callable] = None
 
     # === SUBSCRIPTION ===
 
@@ -76,6 +109,10 @@ class LiveState:
     def on_status_change(self, callback: Callable):
         """Rejestruje callback na zmianę statusu."""
         self._on_status_change = callback
+
+    def on_diarization_change(self, callback: Callable):
+        """Rejestruje callback na zmianę diaryzacji."""
+        self._on_diarization_change = callback
 
     # === TRANSCRIPT MANAGEMENT ===
 
@@ -180,8 +217,67 @@ class LiveState:
         self.suggestions = []
         self.asked_questions = []
         self.pending_validation = []
+        self.diarization = None
         self._notify_transcript_change()
         self._notify_suggestions_change()
+
+    # === DIARIZATION ===
+
+    def set_diarization_processing(self, processing: bool = True):
+        """Ustawia stan przetwarzania diaryzacji."""
+        if self.diarization is None:
+            self.diarization = DiarizationInfo()
+        self.diarization.is_processing = processing
+        self._notify_diarization_change()
+
+    def set_diarization_result(self, result: 'DiarizationResult'):
+        """Ustawia wynik diaryzacji."""
+        from core.diarization import SpeakerRole
+
+        self.diarization = DiarizationInfo(
+            segments=result.segments,
+            speaker_mapping=result.speaker_mapping,
+            num_speakers=result.num_speakers,
+            enabled=True,
+            is_processing=False
+        )
+        print(f"[STATE] Diarization set: {len(result.segments)} segments, {result.num_speakers} speakers", flush=True)
+        self._notify_diarization_change()
+
+    def toggle_diarization(self) -> bool:
+        """Włącza/wyłącza wyświetlanie diaryzacji."""
+        if self.diarization is None:
+            return False
+        self.diarization.enabled = not self.diarization.enabled
+        self._notify_diarization_change()
+        return self.diarization.enabled
+
+    def swap_speaker_roles(self):
+        """Zamienia role mówców (Lekarz <-> Pacjent)."""
+        if not self.diarization or not self.diarization.has_data:
+            return
+
+        from core.diarization import SpeakerRole
+
+        # Zamień w mapowaniu
+        new_mapping = {}
+        for speaker_id, role in self.diarization.speaker_mapping.items():
+            if role == SpeakerRole.DOCTOR:
+                new_mapping[speaker_id] = SpeakerRole.PATIENT
+            elif role == SpeakerRole.PATIENT:
+                new_mapping[speaker_id] = SpeakerRole.DOCTOR
+            else:
+                new_mapping[speaker_id] = role
+
+        self.diarization.speaker_mapping = new_mapping
+
+        # Zastosuj do segmentów
+        for segment in self.diarization.segments:
+            if segment.speaker_id in new_mapping:
+                segment.role = new_mapping[segment.speaker_id]
+
+        print(f"[STATE] Speaker roles swapped", flush=True)
+        self._notify_diarization_change()
 
     # === HELPERS ===
 
@@ -250,3 +346,10 @@ class LiveState:
                 self._on_status_change()
             except Exception as e:
                 print(f"[LiveState] Status callback error: {e}")
+
+    def _notify_diarization_change(self):
+        if self._on_diarization_change:
+            try:
+                self._on_diarization_change()
+            except Exception as e:
+                print(f"[LiveState] Diarization callback error: {e}")

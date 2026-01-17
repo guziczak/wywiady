@@ -109,8 +109,21 @@ class TranscriptPanel:
 
         # Subscribe to state changes
         self.state.on_transcript_change(self._on_state_change)
+        self.state.on_diarization_change(self._on_diarization_change)
 
         return self.container
+
+    def _on_diarization_change(self):
+        """Callback gdy zmieni się diaryzacja."""
+        if self._client is None:
+            return
+
+        try:
+            with self._client:
+                self._render()
+                self._auto_scroll()
+        except Exception as e:
+            print(f"[TRANSCRIPT] Diarization render error: {e}", flush=True)
 
     def _on_state_change(self):
         """Callback gdy zmieni się stan."""
@@ -217,6 +230,12 @@ class TranscriptPanel:
 
     def _build_html(self, animate: bool = False, animate_layer: str = "improved") -> str:
         """Buduje HTML z tokenami słów."""
+        # Jeśli diaryzacja włączona i ma dane - użyj specjalnego renderingu
+        if (self.state.diarization and
+            self.state.diarization.enabled and
+            self.state.diarization.has_data):
+            return self._render_diarized()
+
         html_parts = []
 
         # 1. Validated text - zawsze statyczny
@@ -366,6 +385,90 @@ class TranscriptPanel:
                 ''')
             except Exception:
                 pass
+
+    def _render_diarized(self) -> str:
+        """Renderuje transkrypcję z podziałem na mówców."""
+        if not self.state.diarization or not self.state.diarization.segments:
+            return self._render_empty_state()
+
+        html_parts = []
+
+        # Import SpeakerRole dynamicznie (żeby uniknąć circular import)
+        try:
+            from core.diarization import SpeakerRole
+        except ImportError:
+            SpeakerRole = None
+
+        for segment in self.state.diarization.segments:
+            if not segment.text:
+                continue
+
+            # Określ kolor i label na podstawie roli
+            role = segment.role
+            if SpeakerRole:
+                if role == SpeakerRole.DOCTOR:
+                    bg_color = "#E3F2FD"  # Jasny niebieski
+                    border_color = "#1976D2"
+                    label = "👨‍⚕️ Lekarz"
+                    text_color = "#1565C0"
+                elif role == SpeakerRole.PATIENT:
+                    bg_color = "#E8F5E9"  # Jasny zielony
+                    border_color = "#388E3C"
+                    label = "🙍 Pacjent"
+                    text_color = "#2E7D32"
+                else:
+                    bg_color = "#F5F5F5"  # Jasny szary
+                    border_color = "#9E9E9E"
+                    label = "❓ Nieznany"
+                    text_color = "#616161"
+            else:
+                # Fallback bez importu
+                bg_color = "#F5F5F5"
+                border_color = "#9E9E9E"
+                label = segment.speaker_id
+                text_color = "#616161"
+
+            safe_text = html.escape(segment.text)
+
+            html_parts.append(f'''
+                <div class="diarized-segment" style="
+                    background: {bg_color};
+                    padding: 10px 14px;
+                    margin: 6px 0;
+                    border-radius: 8px;
+                    border-left: 4px solid {border_color};
+                ">
+                    <div style="
+                        font-size: 11px;
+                        color: {text_color};
+                        font-weight: 600;
+                        margin-bottom: 4px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    ">{label}</div>
+                    <div style="color: #333; line-height: 1.5;">{safe_text}</div>
+                </div>
+            ''')
+
+        if html_parts:
+            # Dodaj info o liczbie mówców
+            num_speakers = self.state.diarization.num_speakers
+            header = f'''
+                <div style="
+                    text-align: center;
+                    padding: 8px;
+                    margin-bottom: 12px;
+                    background: #FAFAFA;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    color: #666;
+                ">
+                    🎙️ Wykryto <strong>{num_speakers}</strong> mówców
+                </div>
+            '''
+            return header + '\n'.join(html_parts)
+        else:
+            return self._render_empty_state()
 
     def clear(self):
         """Czyści transkrypcję."""

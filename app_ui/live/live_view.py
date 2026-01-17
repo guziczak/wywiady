@@ -19,6 +19,15 @@ try:
 except ImportError:
     StreamingTranscriber = None
 
+# Diarization service (opcjonalny)
+try:
+    from core.diarization import get_diarization_service, DiarizationService
+    DIARIZATION_AVAILABLE = True
+except ImportError:
+    get_diarization_service = None
+    DiarizationService = None
+    DIARIZATION_AVAILABLE = False
+
 
 class LiveInterviewView:
     """
@@ -83,7 +92,13 @@ class LiveInterviewView:
         # UI Components
         self.transcript_panel: Optional[TranscriptPanel] = None
         self.prompter_panel: Optional[PrompterPanel] = None
-        
+
+        # Diarization service
+        self.diarization_service: Optional[DiarizationService] = None
+        if DIARIZATION_AVAILABLE:
+            self.diarization_service = get_diarization_service()
+            print(f"[LIVE] Diarization available: {self.diarization_service.backend.name if self.diarization_service.backend else 'None'}", flush=True)
+
         # Model status refs
         self._model_status_container = None
 
@@ -295,7 +310,46 @@ class LiveInterviewView:
             ui.notify("Brak transkryptu do zapisania", type='warning')
             return
 
-        # Zapisz do storage
+        # Uruchom diaryzację w tle
+        asyncio.create_task(self._finish_with_diarization(final_transcript))
+
+    async def _finish_with_diarization(self, final_transcript: str):
+        """Kończy wywiad z diaryzacją (async)."""
+        # Diaryzacja (jeśli dostępna i mamy audio)
+        if self.diarization_service and self.transcriber:
+            try:
+                ui.notify("Analizuję mówców...", type='info')
+                self.state.set_diarization_processing(True)
+
+                audio = self.transcriber.get_full_audio()
+                if len(audio) >= 16000:  # Min 1 sekunda
+                    print(f"[LIVE] Running diarization on {len(audio)} samples...", flush=True)
+
+                    # Uruchom diaryzację w wątku (nie blokuj UI)
+                    result = await self.diarization_service.diarize_with_transcript(
+                        audio=audio,
+                        transcript=final_transcript,
+                        sample_rate=16000
+                    )
+
+                    self.state.set_diarization_result(result)
+                    print(f"[LIVE] Diarization done: {result.num_speakers} speakers, {len(result.segments)} segments", flush=True)
+
+                    # Zapisz transkrypt z mówcami do storage
+                    if result.segments:
+                        diarized_transcript = self.state.diarization.get_formatted_transcript()
+                        app.storage.user['live_transcript_diarized'] = diarized_transcript
+                else:
+                    print(f"[LIVE] Audio too short for diarization: {len(audio)} samples", flush=True)
+
+            except Exception as e:
+                print(f"[LIVE] Diarization error: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+            finally:
+                self.state.set_diarization_processing(False)
+
+        # Zapisz zwykły transkrypt do storage
         app.storage.user['live_transcript'] = final_transcript
         print(f"[LIVE] Saved {len(final_transcript)} chars to storage", flush=True)
 

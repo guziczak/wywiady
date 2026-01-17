@@ -46,6 +46,11 @@ class PrompterPanel:
         self._is_loading = False
         self._client = None  # NiceGUI client context
 
+        # Diarization controls
+        self._diarization_toggle = None
+        self._diarization_swap_btn = None
+        self._diarization_status = None
+
     def create(self) -> ui.card:
         """Tworzy panel suflera."""
         
@@ -74,6 +79,7 @@ class PrompterPanel:
         # Subscribe to state changes
         self.state.on_suggestions_change(self._on_suggestions_change)
         self.state.on_status_change(self._on_status_change)
+        self.state.on_diarization_change(self._on_diarization_change)
 
         return self.container
 
@@ -111,6 +117,82 @@ class PrompterPanel:
                     color='blue',
                     on_click=self._handle_finish
                 ).props('outline size=md')
+
+                # Separator
+                ui.element('div').classes('w-px h-6 bg-gray-300')
+
+                # === DIARIZATION CONTROLS ===
+                self._create_diarization_controls()
+
+    def _create_diarization_controls(self):
+        """Tworzy kontrolki diaryzacji."""
+        with ui.row().classes('items-center gap-2'):
+            # Status/Toggle
+            self._diarization_status = ui.badge(
+                '🎙️ Mówcy',
+                color='gray'
+            ).classes('text-xs cursor-pointer').on('click', self._toggle_diarization)
+
+            # Swap button (ukryty domyślnie)
+            self._diarization_swap_btn = ui.button(
+                icon='swap_horiz',
+                on_click=self._swap_roles
+            ).props('flat dense round size=sm').classes(
+                'text-gray-500 hover:text-blue-600'
+            ).tooltip('Zamień role (Lekarz ↔ Pacjent)')
+
+            # Domyślnie ukryj przyciski
+            self._diarization_swap_btn.set_visibility(False)
+
+    def _toggle_diarization(self):
+        """Przełącza wyświetlanie diaryzacji."""
+        if not self.state.diarization or not self.state.diarization.has_data:
+            ui.notify("Brak danych diaryzacji", type='info')
+            return
+
+        enabled = self.state.toggle_diarization()
+        self._update_diarization_ui()
+
+        if enabled:
+            ui.notify("Włączono podział na mówców", type='positive')
+        else:
+            ui.notify("Wyłączono podział na mówców", type='info')
+
+    def _swap_roles(self):
+        """Zamienia role mówców."""
+        if not self.state.diarization or not self.state.diarization.has_data:
+            return
+
+        self.state.swap_speaker_roles()
+        ui.notify("Zamieniono role mówców", type='positive')
+
+    def _update_diarization_ui(self):
+        """Aktualizuje UI diaryzacji."""
+        if not self._diarization_status:
+            return
+
+        diar = self.state.diarization
+
+        if diar is None or not diar.has_data:
+            self._diarization_status.text = '🎙️ Mówcy'
+            self._diarization_status.props('color=gray')
+            if self._diarization_swap_btn:
+                self._diarization_swap_btn.set_visibility(False)
+        elif diar.is_processing:
+            self._diarization_status.text = '⏳ Analizuję...'
+            self._diarization_status.props('color=blue')
+            if self._diarization_swap_btn:
+                self._diarization_swap_btn.set_visibility(False)
+        elif diar.enabled:
+            self._diarization_status.text = f'🎙️ {diar.num_speakers} mówców'
+            self._diarization_status.props('color=green')
+            if self._diarization_swap_btn:
+                self._diarization_swap_btn.set_visibility(True)
+        else:
+            self._diarization_status.text = f'🎙️ {diar.num_speakers} mówców (wyłączone)'
+            self._diarization_status.props('color=gray')
+            if self._diarization_swap_btn:
+                self._diarization_swap_btn.set_visibility(True)
 
     def _create_cards_container(self):
         """Tworzy kontener na karty sugestii."""
@@ -306,6 +388,16 @@ class PrompterPanel:
         try:
             with self._client:
                 self._render_cards()
+        except Exception:
+            pass
+
+    def _on_diarization_change(self):
+        """Callback gdy zmieni się diaryzacja."""
+        if self._client is None:
+            return
+        try:
+            with self._client:
+                self._update_diarization_ui()
         except Exception:
             pass
 
