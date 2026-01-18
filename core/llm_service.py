@@ -117,7 +117,7 @@ class LLMService:
             
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model="gemini-2.0-flash", # Zmiana na 2.0 Flash (stabilny i szybki)
+            model="gemini-2.5-flash",
             contents=prompt
         )
         return response.text.strip()
@@ -233,7 +233,7 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         # A. Wymuszone przez użytkownika
         if preferred_model == "Gemini" and has_gemini_key:
             model_type = "gemini"
-            model_name = "Gemini 2.0 Flash"
+            model_name = "Gemini 2.5 Flash"
         elif preferred_model == "Claude" and (has_session_key or has_oauth_token):
             model_type = "claude"
             model_name = "Claude (Session Key)" if has_session_key else "Claude (OAuth)"
@@ -245,7 +245,7 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
                 model_name = "Claude (Session Key)"
             elif has_gemini_key:
                 model_type = "gemini"
-                model_name = "Gemini 2.0 Flash"
+                model_name = "Gemini 2.5 Flash"
             elif has_oauth_token:
                 model_type = "claude"
                 model_name = "Claude (OAuth)"
