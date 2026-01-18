@@ -52,6 +52,9 @@ class AIController:
         
         # Main event loop reference (set during create_ui)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        
+        # ID specjalizacji (do kontekstowych sugestii)
+        self.current_spec_id: Optional[int] = None
 
     def on_regen_start(self, callback: callable):
         """Callback gdy zaczyna się regeneracja."""
@@ -64,6 +67,10 @@ class AIController:
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         """Ustawia referencję do głównego event loop."""
         self._loop = loop
+
+    def set_spec_id(self, spec_id: int):
+        """Ustawia ID aktywnej specjalizacji."""
+        self.current_spec_id = spec_id
 
     # === SMART TRIGGERS ===
 
@@ -219,7 +226,8 @@ class AIController:
             suggestions = await self.llm_service.generate_suggestions(
                 transcript,
                 self.config,
-                exclude_questions=exclude
+                exclude_questions=exclude,
+                spec_id=self.current_spec_id
             )
 
             if suggestions:

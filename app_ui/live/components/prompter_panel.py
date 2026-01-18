@@ -97,6 +97,42 @@ class PrompterPanel:
 
         return self.container
 
+    # === EVENT HANDLERS ===
+
+    def _handle_finish_click(self):
+        """Kliknięcie przycisku Zakończ (w headerze)."""
+        # Przełącz na tryb potwierdzenia
+        self.state.show_confirmation()
+
+    def _handle_confirm_finish(self, analyze_speakers: bool):
+        """Potwierdzenie zakończenia wywiadu."""
+        # Wywołaj callback rodzica (logika biznesowa zatrzymania)
+        if self.on_finish:
+            self.on_finish(analyze_speakers)
+        
+        # Przełącz na podsumowanie
+        self.state.show_summary()
+
+    def _handle_cancel_finish(self):
+        """Anulowanie zakończenia."""
+        self.state.cancel_confirmation()
+
+    def _handle_continue(self):
+        """Kliknięcie Kontynuuj w podsumowaniu."""
+        if self.on_continue:
+            self.on_continue()
+
+    def _handle_toggle_diarization(self):
+        """Przełączenie diaryzacji."""
+        if self.state.diarization:
+            self.state.toggle_diarization()
+
+    def _handle_swap_roles(self):
+        """Zamiana ról mówców."""
+        self.state.swap_speaker_roles()
+
+    # === UI CREATION ===
+
     def _create_header(self):
         """Tworzy nagłówek z kontrolkami."""
         with ui.row().classes(

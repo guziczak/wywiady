@@ -28,6 +28,12 @@ except ImportError:
     DiarizationService = None
     DIARIZATION_AVAILABLE = False
 
+# Specialization Manager (opcjonalny)
+try:
+    from core.specialization_manager import get_specialization_manager
+except ImportError:
+    get_specialization_manager = None
+
 
 class LiveInterviewView:
     """
@@ -138,6 +144,7 @@ class LiveInterviewView:
                     app_instance=self.app,
                     on_toggle_session=self._toggle_session,
                     on_finish=self._finish_interview,
+                    on_continue=self._navigate_next,
                     on_card_click=self._on_card_click
                 )
                 self.prompter_panel.create()
@@ -235,6 +242,14 @@ class LiveInterviewView:
         """Rozpoczyna sesję."""
         print("[LIVE] Starting session...", flush=True)
 
+        # Ustaw specjalizację w AI Controller
+        if get_specialization_manager:
+            spec_manager = get_specialization_manager()
+            spec = spec_manager.get_active()
+            if self.ai_controller:
+                self.ai_controller.set_spec_id(spec.id)
+                print(f"[LIVE] Using specialization: {spec.name} (ID={spec.id})", flush=True)
+
         # Reset stanu
         self.state.reset()
         if self.transcript_panel:
@@ -292,9 +307,9 @@ class LiveInterviewView:
 
         ui.notify("Sesja zatrzymana", type='info')
 
-    def _finish_interview(self):
+    def _finish_interview(self, analyze_speakers: bool = True):
         """Kończy wywiad i przekazuje transkrypt."""
-        print("[LIVE] Finishing interview...", flush=True)
+        print(f"[LIVE] Finishing interview (analyze={analyze_speakers})...", flush=True)
 
         # Zatrzymaj jeśli aktywne
         if self.state.status == SessionStatus.RECORDING:
@@ -302,23 +317,26 @@ class LiveInterviewView:
                 self.transcriber.force_finalize()
                 self.transcriber.stop()
             self.ai_controller.stop()
+            self.state.set_status(SessionStatus.PAUSED)
 
         # Zbierz pełny transkrypt
         final_transcript = self.state.full_transcript
 
         if not final_transcript:
             ui.notify("Brak transkryptu do zapisania", type='warning')
-            return
+        
+        # Zapisz do storage (wersja surowa)
+        self.app.storage.user['live_transcript'] = final_transcript
 
-        # Uruchom diaryzację w tle
-        asyncio.create_task(self._finish_with_diarization(final_transcript))
+        # Uruchom diaryzację w tle (jeśli wybrano)
+        if analyze_speakers:
+            asyncio.create_task(self._run_diarization(final_transcript))
 
-    async def _finish_with_diarization(self, final_transcript: str):
-        """Kończy wywiad z diaryzacją (async)."""
+    async def _run_diarization(self, final_transcript: str):
+        """Uruchamia diaryzację (async)."""
         # Diaryzacja (jeśli dostępna i mamy audio)
         if self.diarization_service and self.transcriber:
             try:
-                ui.notify("Analizuję mówców...", type='info')
                 self.state.set_diarization_processing(True)
 
                 audio = self.transcriber.get_full_audio()
@@ -335,7 +353,7 @@ class LiveInterviewView:
                     self.state.set_diarization_result(result)
                     print(f"[LIVE] Diarization done: {result.num_speakers} speakers, {len(result.segments)} segments", flush=True)
 
-                    # Zapisz transkrypt z mówcami do storage
+                    # Zapisz transkrypt z mówcami do storage (opcjonalnie, jako backup)
                     if result.segments:
                         diarized_transcript = self.state.diarization.get_formatted_transcript()
                         app.storage.user['live_transcript_diarized'] = diarized_transcript
@@ -349,13 +367,17 @@ class LiveInterviewView:
             finally:
                 self.state.set_diarization_processing(False)
 
-        # Zapisz zwykły transkrypt do storage
-        app.storage.user['live_transcript'] = final_transcript
-        print(f"[LIVE] Saved {len(final_transcript)} chars to storage", flush=True)
-
-        ui.notify("Wywiad zakończony! Przekierowuję...", type='positive')
-
-        # Przekieruj do głównej strony
+    def _navigate_next(self):
+        """Przechodzi do ekranu generowania opisu."""
+        # Przygotuj finalny transkrypt (z mówcami jeśli są)
+        transcript = self.state.full_transcript
+        
+        if self.state.diarization and self.state.diarization.has_data and self.state.diarization.enabled:
+            transcript = self.state.diarization.get_formatted_transcript()
+            
+        self.app.storage.user['live_transcript'] = transcript
+        print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
+        
         ui.navigate.to('/')
 
     # === TRANSCRIBER CALLBACKS ===
