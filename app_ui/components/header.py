@@ -29,9 +29,9 @@ def create_header(app, show_spec_switcher: bool = True):
                         'absolute inset-0 bg-white/20 rounded-full blur-md opacity-0 scale-50 transition-all duration-300 group-hover:opacity-100 group-hover:scale-150'
                     )
 
-                # Title with Tracking animation
+                # Title with Color/Shadow animation (no layout shift)
                 ui.label('Wywiad+').classes(
-                    'text-2xl font-bold tracking-tight transition-all duration-300 group-hover:tracking-wide group-hover:text-blue-100'
+                    'text-2xl font-bold tracking-tight transition-all duration-300 group-hover:text-blue-200 group-hover:drop-shadow-lg'
                 )
 
             # Specialization switcher

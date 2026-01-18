@@ -540,6 +540,30 @@ class WywiadApp:
                 )
                 elapsed = task.elapsed_seconds()
                 print(f"[LOAD] Model ready (cached) in {elapsed}s: {self.loaded_model}", flush=True)
+                
+                # AUTO-SWITCH: Jeśli brak klucza Gemini, a mamy model offline -> przełącz
+                gemini_key = self.config.get("api_key", "")
+                current_backend = self.config.get("transcriber_backend", "")
+                
+                if not gemini_key and current_backend == "gemini_cloud":
+                    print("[AUTO-SWITCH] Gemini key missing, switching to offline backend...", flush=True)
+                    # Preferuj openvino jeśli to on się załadował
+                    new_backend = "openvino_whisper" 
+                    
+                    # Jeśli mamy managera, ustaw
+                    if self.transcriber_manager:
+                        try:
+                            # Importuj typ enum dynamicznie
+                            from core.transcriber import TranscriberType
+                            self.transcriber_manager.set_current_backend(TranscriberType(new_backend))
+                            self.config["transcriber_backend"] = new_backend
+                            
+                            # Odśwież UI w wątku głównym
+                            # (chociaż jesteśmy w async, lepiej unikać problemów z NiceGUI)
+                            self.refresh_backend_buttons()
+                            ui.notify(f"Przełączono na {new_backend} (brak klucza Gemini)", type='positive')
+                        except Exception as e:
+                            print(f"[AUTO-SWITCH] Failed: {e}", flush=True)
             else:
                 self.model_state = ModelState.ERROR
                 self.model_error_message = "Subprocess failed"
