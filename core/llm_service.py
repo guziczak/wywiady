@@ -8,6 +8,16 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple, List
 
+# Core imports
+from core.knowledge_manager import KnowledgeManager
+
+# Specialization Manager (opcjonalny import)
+try:
+    from core.specialization_manager import get_specialization_manager
+    SPEC_MANAGER_AVAILABLE = True
+except ImportError:
+    SPEC_MANAGER_AVAILABLE = False
+
 # Importy opcjonalne (zaleznosci)
 try:
     from google import genai
@@ -21,8 +31,7 @@ try:
 except ImportError:
     Anthropic = None
 
-# Obsluga Proxy dla Claude (zakladajac ze sciezka jest ustawiona lub wzgledna)
-# W glownej aplikacji dodajemy sciezke do tools, tutaj robimy to samo dla bezpieczenstwa
+# Obsluga Proxy dla Claude
 TOOLS_DIR = Path(__file__).parent.parent / "tools"
 PROXY_PATH = TOOLS_DIR / "claude-code-py" / "src"
 COMMON_TOOLS_PATH = Path(r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
@@ -37,6 +46,7 @@ try:
     PROXY_AVAILABLE = True
 except ImportError:
     PROXY_AVAILABLE = False
+
 
 class LLMService:
     def __init__(self):
@@ -85,7 +95,6 @@ class LLMService:
                 raise Exception("Nie udalo sie uruchomic proxy")
 
         client = Anthropic(api_key=auth_token)
-        # Uzywamy streamingu dla responsywnosci (choc tutaj zbieramy calosc)
         stream = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1024,
@@ -108,19 +117,31 @@ class LLMService:
             
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.0-flash", # Zmiana na 2.0 Flash (stabilny i szybki)
             contents=prompt
         )
         return response.text.strip()
 
-from core.knowledge_manager import KnowledgeManager
-
-# Specialization Manager (opcjonalny import)
-try:
-    from core.specialization_manager import get_specialization_manager
-    SPEC_MANAGER_AVAILABLE = True
-except ImportError:
-    SPEC_MANAGER_AVAILABLE = False
+    def _call_with_retry(self, func, *args, max_retries=3, initial_delay=1.0):
+        """Wywołuje funkcję z mechanizmem retry (exponential backoff)."""
+        delay = initial_delay
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args)
+            except Exception as e:
+                error_msg = str(e)
+                # Retry tylko dla błędów serwera (5xx) lub Rate Limit (429)
+                if "500" in error_msg or "503" in error_msg or "429" in error_msg or "Overloaded" in error_msg:
+                    print(f"[LLM] Error: {e}. Retrying in {delay}s... ({attempt+1}/{max_retries})", flush=True)
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                    last_exception = e
+                else:
+                    raise e # Inne błędy (np. auth) rzucamy od razu
+        
+        raise last_exception
 
     async def generate_description(
         self,
@@ -131,7 +152,6 @@ except ImportError:
     ) -> Tuple[Dict[str, Any], str]:
         """
         Główna metoda generująca opis.
-
         Używa dynamicznych promptów ze SpecializationManager jeśli dostępny.
         """
 
@@ -146,14 +166,14 @@ except ImportError:
         km = KnowledgeManager()
         context_data = km.get_context_for_specialization(spec_id)
 
-        # Ogranicz kontekst dla promptu (żeby nie przekroczyć limitu tokenów)
+        # Ogranicz kontekst dla promptu
         icd10_list = context_data.get("icd10", [])[:300]
         icd9_list = context_data.get("icd9", [])[:300]
 
         icd_context = json.dumps(icd10_list, indent=2, ensure_ascii=False)
         proc_context = json.dumps(icd9_list, indent=2, ensure_ascii=False)
 
-        # 2. Buduj prompt (dynamiczny jeśli SpecializationManager dostępny)
+        # 2. Buduj prompt
         if SPEC_MANAGER_AVAILABLE:
             spec_manager = get_specialization_manager()
             prompt = spec_manager.build_description_prompt(
@@ -163,44 +183,32 @@ except ImportError:
                 spec_id=spec_id
             )
         else:
-            # Fallback - stary hardcoded prompt
+            # Fallback
             prompt = f"""Jesteś asystentem do automatyzacji dokumentacji medycznej.
 Analizujesz transkrypcję wizyty lekarskiej i wyciągasz z niej wykonane procedury oraz diagnozy.
 
 Dostepne słowniki (BAZA WIEDZY):
 --- ICD-10 (Diagnozy) ---
 {icd_context}
-... (i więcej)
+...
 
 --- ICD-9 PL (Procedury) ---
 {proc_context}
-... (i więcej)
+...
 
 INSTRUKCJA:
 1. Przeanalizuj tekst i zidentyfikuj WSZYSTKIE wykonane czynności oraz postawione diagnozy.
 2. Dla każdej pozycji znajdź NAJLEPIEJ pasujący kod z powyższych list.
-3. Wyekstrahuj LOKALIZACJĘ (jeśli dotyczy):
-   - Stomatologia: numer zęba (FDI: 11-48, 51-85).
-   - Inne: strona (Lewa/Prawa/Obustronnie), konkretny organ.
+3. Wyekstrahuj LOKALIZACJĘ.
 4. Jeśli procedury/kodu nie ma na liście, użyj najbardziej zbliżonego lub ogólnego.
 
 Format wyjściowy JSON:
 {{
   "diagnozy": [
-    {{
-      "kod": "K02.1",
-      "nazwa": "Próchnica zębiny",
-      "opis_tekstowy": "Głęboki ubytek na powierzchni żującej",
-      "zab": "16"
-    }}
+    {{ "kod": "...", "nazwa": "...", "opis_tekstowy": "...", "zab": "..." }}
   ],
   "procedury": [
-    {{
-      "kod": "23.2",
-      "nazwa": "Odbudowa zęba...",
-      "opis_tekstowy": "Wypełnienie kompozytowe światłoutwardzalne",
-      "zab": "16"
-    }}
+    {{ "kod": "...", "nazwa": "...", "opis_tekstowy": "...", "zab": "..." }}
   ]
 }}
 
@@ -209,13 +217,12 @@ Transkrypcja wywiadu:
 
 Odpowiedz TYLKO poprawnym kodem JSON."""
 
-        # 2. Pobranie kluczy i preferencji
+        # 3. Pobranie kluczy i preferencji
         gemini_key = config.get("api_key", "")
         session_key = config.get("session_key", "")
         claude_token = self._load_claude_token()
         preferred_model = config.get("generation_model", "Auto")
 
-        # 3. Smart Selection Logic
         has_session_key = bool(session_key and session_key.startswith("sk-"))
         has_gemini_key = bool(gemini_key and GENAI_AVAILABLE)
         has_oauth_token = bool(claude_token and PROXY_AVAILABLE)
@@ -226,7 +233,7 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         # A. Wymuszone przez użytkownika
         if preferred_model == "Gemini" and has_gemini_key:
             model_type = "gemini"
-            model_name = "Gemini 3 Flash (Preview)"
+            model_name = "Gemini 2.0 Flash"
         elif preferred_model == "Claude" and (has_session_key or has_oauth_token):
             model_type = "claude"
             model_name = "Claude (Session Key)" if has_session_key else "Claude (OAuth)"
@@ -238,38 +245,39 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
                 model_name = "Claude (Session Key)"
             elif has_gemini_key:
                 model_type = "gemini"
-                model_name = "Gemini 3 Flash (Preview)"
+                model_name = "Gemini 2.0 Flash"
             elif has_oauth_token:
                 model_type = "claude"
                 model_name = "Claude (OAuth)"
 
         if not model_type:
-            raise ValueError("Brak dostępnego klucza API (skonfiguruj Claude lub Gemini)")
+            # Nie rzucamy błedu, próbujemy zwrócić pusty wynik z info
+            print("[LLM] Brak kluczy API. Generowanie niemożliwe.", flush=True)
+            return {"diagnozy": [], "procedury": []}, "Brak API"
 
-        # 4. Wykonanie (z asynchronicznością i fallbackiem)
+        # 4. Wykonanie
         loop = asyncio.get_event_loop()
         result_text = None
         used_model = model_name
 
         async def run_claude():
             auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
-            return await loop.run_in_executor(None, lambda: self._call_claude(auth_key, prompt))
+            return await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
 
         async def run_gemini():
-            return await loop.run_in_executor(None, lambda: self._call_gemini(gemini_key, prompt))
+            return await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
 
         if model_type == "claude":
             try:
                 print(f"[LLM] Próba użycia: {model_name}", flush=True)
                 result_text = await run_claude()
             except Exception as e:
-                # Fallback logic
                 if preferred_model == "Auto" and has_gemini_key:
                     print(f"[LLM] Claude error ({e}), fallback to Gemini...", flush=True)
                     used_model = "Gemini Flash (Fallback)"
                     result_text = await run_gemini()
                 else:
-                    raise e # Re-raise to be handled by UI
+                    raise e
         else:
             print(f"[LLM] Próba użycia: {model_name}", flush=True)
             result_text = await run_gemini()
@@ -287,28 +295,9 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
             result_json = json.loads(cleaned)
             return result_json, used_model
         except json.JSONDecodeError as e:
-            raise ValueError(f"Model zwrócił niepoprawny JSON: {e}")
-
-    def _call_with_retry(self, func, *args, max_retries=3, initial_delay=1.0):
-        """Wywołuje funkcję z mechanizmem retry (exponential backoff)."""
-        delay = initial_delay
-        last_exception = None
-        
-        for attempt in range(max_retries):
-            try:
-                return func(*args)
-            except Exception as e:
-                error_msg = str(e)
-                # Retry tylko dla błędów serwera (5xx) lub Rate Limit (429 - czasem warto poczekać)
-                if "500" in error_msg or "503" in error_msg or "429" in error_msg or "Overloaded" in error_msg:
-                    print(f"[LLM] Error: {e}. Retrying in {delay}s... ({attempt+1}/{max_retries})", flush=True)
-                    time.sleep(delay)
-                    delay *= 2  # Exponential backoff
-                    last_exception = e
-                else:
-                    raise e # Inne błędy (np. auth) rzucamy od razu
-        
-        raise last_exception
+            print(f"[LLM] JSON Error: {e}", flush=True)
+            # Próba naprawy prostego JSONA
+            return {"diagnozy": [], "procedury": []}, f"Błąd JSON ({used_model})"
 
     async def generate_suggestions(
         self,
@@ -317,17 +306,8 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         exclude_questions: Optional[List[str]] = None,
         spec_id: int = None
     ) -> List[str]:
-        """
-        Generuje sugestie pytań uzupełniających.
+        """Generuje sugestie pytań uzupełniających."""
 
-        Args:
-            transcript: Transkrypcja rozmowy
-            config: Konfiguracja z kluczami API
-            exclude_questions: Lista pytań do wykluczenia (już zadane)
-            spec_id: ID specjalizacji (None = aktywna)
-        """
-
-        # Buduj prompt (dynamiczny jeśli SpecializationManager dostępny)
         if SPEC_MANAGER_AVAILABLE:
             spec_manager = get_specialization_manager()
             if spec_id is None:
@@ -338,67 +318,34 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
                 spec_id=spec_id
             )
         else:
-            # Fallback - stary hardcoded prompt
             exclude_section = ""
             if exclude_questions:
                 exclude_list = "\n".join([f"- {q}" for q in exclude_questions])
-                exclude_section = f"""
-PYTANIA JUŻ ZADANE (NIE POWTARZAJ ICH):
-{exclude_list}
-"""
+                exclude_section = f"PYTANIA JUŻ ZADANE:\n{exclude_list}"
 
-            prompt = f"""Jesteś doświadczonym lekarzem przeprowadzającym wywiad.
-Twoim celem jest postawienie precyzyjnej diagnozy (ICD-10) oraz zaplanowanie leczenia.
-
-Oto dotychczasowy przebieg rozmowy:
----
+            prompt = f"""Jesteś doświadczonym lekarzem. Zasugeruj 3 pytania dla pacjenta.
+Kontekst:
 {transcript}
----
 {exclude_section}
-Zadanie:
-Zasugeruj DOKŁADNIE 3 krótkie, konkretne pytania, które warto teraz zadać pacjentowi, aby:
-1. Doprecyzować objawy (np. rodzaj bólu, czynniki wyzwalające).
-2. Wykluczyć inne schorzenia.
-3. Uzyskać brakujące informacje medyczne.
+Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
 
-WAŻNE: Nie powtarzaj pytań, które już padły w rozmowie lub były wcześniej sugerowane.
-
-Jeśli wywiad jest kompletny, zasugeruj: ["Wywiad kompletny - można przejść do badania", "Czy ma Pan/Pani inne dolegliwości?", "Czy przyjmuje Pan/Pani leki na stałe?"].
-Jeśli brak danych, zasugeruj 3 pytania ogólne.
-
-Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
-["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]
-"""
-        # Wybór modelu (analogicznie jak w generate_description, ale uproszczone dla szybkosci)
         gemini_key = config.get("api_key", "")
-        # Preferujemy Gemini bo jest szybkie i tanie (Flash)
-        
         loop = asyncio.get_event_loop()
         
         try:
             if gemini_key and GENAI_AVAILABLE:
-                # Używamy retry
                 response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
             else:
-                # Fallback to Claude logic if needed, or simplified
+                # Fallback to Claude logic
                 session_key = config.get("session_key", "")
                 claude_token = self._load_claude_token()
                 
-                # DEBUG INFO
-                print(f"[LLM] Checking Claude availability:", flush=True)
-                print(f"[LLM] PROXY_AVAILABLE: {PROXY_AVAILABLE}", flush=True)
-                print(f"[LLM] Session Key present: {bool(session_key)}", flush=True)
-                print(f"[LLM] OAuth Token present: {bool(claude_token)}", flush=True)
-                
                 if (session_key or claude_token) and PROXY_AVAILABLE:
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
-                    # Używamy retry
                     response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
-                    print(f"[LLM] No valid configuration found. Returning 'Brak konfiguracji AI'.", flush=True)
                     return ["Brak konfiguracji AI"]
 
-            # Parse JSON
             cleaned = response.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("```")[1]
@@ -413,73 +360,28 @@ Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
             return []
 
     async def validate_segment(self, segment: str, context: str, suggested_questions: List[str], config: Dict) -> Dict:
-        """
-        Waliduje segment transkrypcji przez AI.
+        """Waliduje segment transkrypcji przez AI (interpunkcja)."""
 
-        Args:
-            segment: Fragment tekstu do walidacji
-            context: Poprzedni sfinalizowany tekst (kontekst rozmowy)
-            suggested_questions: Aktualnie sugerowane pytania
-            config: Konfiguracja z kluczami API
-
-        Returns:
-            {
-                "is_complete": bool,  # Czy to kompletna myśl/zdanie
-                "corrected_text": str,  # Poprawiony tekst z interpunkcją
-                "needs_newline": bool,  # Czy dodać nową linię przed tym segmentem
-                "confidence": float  # 0.0-1.0
-            }
-        """
-
-        questions_str = "\n".join([f"- {q}" for q in suggested_questions]) if suggested_questions else "(brak)"
-
-        prompt = f"""Jesteś asystentem do formatowania transkrypcji medycznej.
-
-KONTEKST (poprzednie zdania):
-{context if context else "(brak)"}
-
-NOWY SEGMENT (surowy tekst z rozpoznawania mowy):
-"{segment}"
-
-ZADANIE:
-Twoim jedynym celem jest dodanie interpunkcji (kropki, przecinki, znaki zapytania) i wielkich liter.
-
-ZASADY KRYTYCZNE (BEZWZGLĘDNE):
-1. NIE ZMIENIAJ SŁÓW. Nie poprawiaj gramatyki, nie "zgaduj" co pacjent chciał powiedzieć.
-2. Jeśli segment brzmi jak bełkot lub urwane słowa - ZOSTAW GO TAK JAK JEST, dodaj tylko kropkę.
-3. NIE SKRACAJ tekstu. Każde słowo z wejścia musi znaleźć się w wyjściu.
-4. NIE HALUCYNUJ (nie dopisuj "Dziękuję", "Do widzenia" jeśli tego nie ma w tekście).
-
-Rozpoznawanie mówcy (opcjonalne):
-- Jeśli ewidentnie widać zmianę mówcy (pytanie lekarza -> odpowiedź pacjenta), ustaw needs_newline=true.
-
-Odpowiedz JSON:
-{{"corrected_text": "...", "needs_newline": true/false}}"""
+        prompt = f"""Popraw interpunkcję w tym segmencie transkrypcji medycznej. NIE ZMIENIAJ SŁÓW.
+Kontekst: {context}
+Segment: "{segment}"
+JSON: {{"corrected_text": "...", "needs_newline": true/false}}"""
 
         gemini_key = config.get("api_key", "")
         loop = asyncio.get_event_loop()
 
         try:
             if gemini_key and GENAI_AVAILABLE:
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt)
-                )
+                response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
             else:
-                # Fallback
                 session_key = config.get("session_key", "")
                 claude_token = self._load_claude_token()
-
                 if (session_key or claude_token) and PROXY_AVAILABLE:
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self._call_with_retry(self._call_claude, auth_key, prompt)
-                    )
+                    response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
-                    return {"is_complete": True, "corrected_text": segment, "needs_newline": False, "confidence": 0.5}
+                    return {"corrected_text": segment, "needs_newline": False}
 
-            # Parse JSON
             cleaned = response.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("```")[1]
@@ -487,11 +389,8 @@ Odpowiedz JSON:
                     cleaned = cleaned[4:]
             cleaned = cleaned.strip()
 
-            result = json.loads(cleaned)
-            print(f"[LLM] Validation result: {result}", flush=True)
-            return result
+            return json.loads(cleaned)
 
         except Exception as e:
             print(f"[LLM] Validation error: {e}", flush=True)
-            # Fallback - zakładamy że kompletne
-            return {"is_complete": True, "corrected_text": segment, "needs_newline": False, "confidence": 0.5}
+            return {"corrected_text": segment, "needs_newline": False}

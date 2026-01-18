@@ -126,24 +126,45 @@ except ImportError:
     ModelInfo = None
     TRANSCRIBER_AVAILABLE = False
 
+# Core services
 # LLM Service
 try:
     from core.llm_service import LLMService
 except ImportError as e:
-    print(f"[ERROR] Could not import LLMService: {e}")
+    print(f"[WARN] LLMService missing: {e}", flush=True)
     LLMService = None
 
 try:
     from core.browser_service import BrowserService
 except ImportError as e:
-    print(f"[ERROR] Could not import BrowserService: {e}")
+    print(f"[WARN] BrowserService missing: {e}", flush=True)
     BrowserService = None
 
 try:
     from core.config_manager import ConfigManager
 except ImportError as e:
-    print(f"[ERROR] Could not import ConfigManager: {e}")
+    print(f"[WARN] ConfigManager missing: {e}", flush=True)
     ConfigManager = None
+
+try:
+    from core.model_loader import ModelLoader
+except ImportError as e:
+    print(f"[WARN] ModelLoader missing: {e}", flush=True)
+    ModelLoader = None
+
+try:
+    from core.services.visit_service import VisitService
+except ImportError as e:
+    print(f"[WARN] VisitService missing: {e}", flush=True)
+    VisitService = None
+
+try:
+    from core.specialization_manager import get_specialization_manager
+except ImportError as e:
+    print(f"[WARN] SpecializationManager missing: {e}", flush=True)
+    get_specialization_manager = None
+
+SERVICES_AVAILABLE = LLMService is not None
 
 # UI Components
 try:
@@ -339,6 +360,7 @@ class WywiadApp:
         # Initialize Services
         self.llm_service = LLMService() if LLMService else None
         self.browser_service = BrowserService() if BrowserService else None
+        self.visit_service = VisitService() if VisitService else None
 
         if not self.llm_service: print("[WARN] LLMService not available", flush=True)
         if not self.browser_service: print("[WARN] BrowserService not available", flush=True)
@@ -1391,9 +1413,12 @@ class WywiadApp:
             self.generate_button.props('loading')
 
         try:
-            # Domyślnie Stomatologia (ID 1) - TODO: Selektor specjalizacji
+            # Pobierz aktywną specjalizację
             spec_id = 1
-            
+            if get_specialization_manager:
+                spec_manager = get_specialization_manager()
+                spec_id = spec_manager.get_active().id
+
             # Wywołanie serwisu (z nowym formatem JSON)
             result_json, used_model = await self.llm_service.generate_description(
                 transcript,

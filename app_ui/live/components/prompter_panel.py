@@ -131,6 +131,17 @@ class PrompterPanel:
         """Zamiana ról mówców."""
         self.state.swap_speaker_roles()
 
+    def _on_mode_change(self):
+        """Callback gdy zmieni się tryb panelu (SUGGESTIONS/CONFIRMING/SUMMARY)."""
+        if self._client:
+            with self._client:
+                self._render_content()
+                # Jeśli tryb SUMMARY lub CONFIRMING - ukryj header z przyciskiem Zakończ
+                if self.header_container:
+                    from app_ui.live.live_state import PrompterMode
+                    should_show = self.state.prompter_mode == PrompterMode.SUGGESTIONS
+                    self.header_container.set_visibility(should_show)
+
     # === UI CREATION ===
 
     def _create_header(self):
@@ -395,7 +406,7 @@ class PrompterPanel:
             return
         try:
             with self._client:
-                self._render_cards()
+                self._render_content()
         except Exception:
             pass
 
@@ -429,7 +440,7 @@ class PrompterPanel:
                 self.status_badge.text = 'GOTOWY'
                 self.status_badge.props('color=gray')
 
-            self._render_cards()
+            self._render_content()
             print("[PROMPTER] UI updated!", flush=True)
         except Exception as e:
             print(f"[PROMPTER] Error: {e}", flush=True)
@@ -453,6 +464,6 @@ class PrompterPanel:
         """Ustawia stan ładowania (wywoływany synchronicznie z UI)."""
         self._is_loading = loading
         try:
-            self._render_cards()
+            self._render_content()
         except Exception:
             pass
