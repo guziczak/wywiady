@@ -326,7 +326,7 @@ class LiveInterviewView:
             ui.notify("Brak transkryptu do zapisania", type='warning')
         
         # Zapisz do storage (wersja surowa)
-        self.app.storage.user['live_transcript'] = final_transcript
+        app.storage.user['live_transcript'] = final_transcript
 
         # Uruchom diaryzację w tle (jeśli wybrano)
         if analyze_speakers:
@@ -375,7 +375,7 @@ class LiveInterviewView:
         if self.state.diarization and self.state.diarization.has_data and self.state.diarization.enabled:
             transcript = self.state.diarization.get_formatted_transcript()
             
-        self.app.storage.user['live_transcript'] = transcript
+        app.storage.user['live_transcript'] = transcript
         print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
         
         ui.navigate.to('/')
