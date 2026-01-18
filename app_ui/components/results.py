@@ -34,10 +34,10 @@ def create_results_section(app):
             ui.label('Diagnozy (ICD-10)').classes('font-medium text-gray-600')
             app.diagnosis_grid = ui.aggrid({
                 'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'kod', 'width': 80},
-                    {'headerName': 'Lokalizacja', 'field': 'zab', 'width': 100}, # 'zab' w JSON, wyświetlamy jako Lokalizacja
-                    {'headerName': 'Nazwa (ICD-10)', 'field': 'nazwa', 'flex': 1},
-                    {'headerName': 'Opis kliniczny', 'field': 'opis_tekstowy', 'flex': 1},
+                    {'headerName': 'Kod', 'field': 'kod', 'checkboxSelection': True},
+                    {'headerName': 'Nazwa', 'field': 'nazwa'},
+                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab'},
+                    {'headerName': 'Opis', 'field': 'opis_tekstowy'}
                 ],
                 'rowData': []
             }).classes('h-48 w-full')
@@ -46,10 +46,10 @@ def create_results_section(app):
             ui.label('Procedury (ICD-9 / NFZ)').classes('font-medium text-gray-600')
             app.procedure_grid = ui.aggrid({
                 'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'kod', 'width': 80},
-                    {'headerName': 'Lokalizacja', 'field': 'zab', 'width': 100},
-                    {'headerName': 'Procedura', 'field': 'nazwa', 'flex': 1},
-                    {'headerName': 'Opis wykonania', 'field': 'opis_tekstowy', 'flex': 1},
+                    {'headerName': 'Kod', 'field': 'kod', 'checkboxSelection': True},
+                    {'headerName': 'Nazwa', 'field': 'nazwa'},
+                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab'},
+                    {'headerName': 'Opis', 'field': 'opis_tekstowy'}
                 ],
                 'rowData': []
             }).classes('h-64 w-full')

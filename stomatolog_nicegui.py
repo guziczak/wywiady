@@ -1427,17 +1427,46 @@ class WywiadApp:
                 spec_id=spec_id
             )
 
-            # Update UI Grids
-            diagnozy = result_json.get("diagnozy", [])
-            procedury = result_json.get("procedury", [])
+            # Pobierz aktywną specjalizację
+            spec_manager = None
+            spec_name = "Stomatologia"
+            if get_specialization_manager:
+                spec_manager = get_specialization_manager()
+                spec = spec_manager.get_active()
+                spec_name = spec.name
+                
+            # Dostosuj nagłówek kolumny lokalizacji
+            loc_header = "Ząb" if spec_name == "Stomatologia" else "Lokalizacja"
             
+            # Helper do czyszczenia danych (None -> "")
+            def clean_data(rows):
+                cleaned = []
+                for row in rows:
+                    new_row = row.copy()
+                    # Mapuj 'zab' lub 'location' na uniwersalne pole do wyświetlenia, jeśli trzeba
+                    # Ale tutaj zakładamy że JSON ma klucz 'zab' (z promptu)
+                    for k, v in new_row.items():
+                        if v is None:
+                            new_row[k] = ""
+                    cleaned.append(new_row)
+                return cleaned
+
+            # Wypełnij gridy
+            diagnozy = clean_data(result_json.get('diagnozy', []))
+            procedury = clean_data(result_json.get('procedury', []))
+            
+            print(f"[UI] Loading {len(diagnozy)} diagnoses into grid...", flush=True)
+
+            # Aktualizuj dane (bez ruszania kolumn)
             if self.diagnosis_grid:
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
-                
+                self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
+            
             if self.procedure_grid:
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
+                self.procedure_grid.run_grid_method('setRowData', procedury)
 
             # Status Update
             if self.record_status:
