@@ -1,6 +1,11 @@
 """
 Prompter Panel Component
 Panel suflera z kartami sugestii i kontrolkami.
+
+Obsługuje 3 tryby:
+- SUGGESTIONS: normalne karty sugestii AI
+- CONFIRMING: potwierdzenie zakończenia wywiadu
+- SUMMARY: podsumowanie po zakończeniu
 """
 
 from nicegui import ui
@@ -11,9 +16,15 @@ from app_ui.live.components.suggestion_card import (
     PlaceholderCard,
     EmptyStateCard
 )
+from app_ui.live.components.summary_components import (
+    ConfirmationBar,
+    SummaryStats,
+    SummaryActions
+)
+from app_ui.live.components.animation_styles import inject_animation_styles
 
 if TYPE_CHECKING:
-    from app_ui.live.live_state import LiveState, SessionStatus
+    from app_ui.live.live_state import LiveState, SessionStatus, PrompterMode
 
 
 class PrompterPanel:
@@ -29,32 +40,32 @@ class PrompterPanel:
         state: 'LiveState',
         app_instance=None,
         on_toggle_session: Optional[Callable] = None,
-        on_finish: Optional[Callable] = None,
+        on_finish: Optional[Callable[[bool], None]] = None,  # callback(analyze_speakers)
+        on_continue: Optional[Callable[[], None]] = None,    # nowy callback
         on_card_click: Optional[Callable[[str], None]] = None
     ):
         self.state = state
         self.app_instance = app_instance
         self.on_toggle_session = on_toggle_session
         self.on_finish = on_finish
+        self.on_continue = on_continue
         self.on_card_click = on_card_click
 
         # UI refs
         self.container = None
         self.cards_container = None
+        self.header_container = None
         self.action_btn = None
         self.status_badge = None
         self._is_loading = False
         self._client = None  # NiceGUI client context
 
-        # Diarization controls
-        self._diarization_toggle = None
-        self._diarization_swap_btn = None
-        self._diarization_status = None
-
     def create(self) -> ui.card:
         """Tworzy panel suflera."""
-        
         print(f"[PROMPTER] create() called, ui.context.client = {ui.context.client}", flush=True)
+
+        # Wstrzyknij style animacji
+        inject_animation_styles()
 
         self.container = ui.card().classes(
             'w-full '
@@ -66,11 +77,13 @@ class PrompterPanel:
         )
 
         with self.container:
-            # Header z kontrolkami
-            self._create_header()
+            # Header z kontrolkami (ukrywany w niektórych trybach)
+            self.header_container = ui.element('div').classes('w-full')
+            with self.header_container:
+                self._create_header()
 
-            # Kontener na karty
-            self._create_cards_container()
+            # Kontener na treść (karty/confirmation/summary)
+            self._create_content_container()
 
         # Capture client context for background updates
         self._client = ui.context.client
@@ -80,6 +93,7 @@ class PrompterPanel:
         self.state.on_suggestions_change(self._on_suggestions_change)
         self.state.on_status_change(self._on_status_change)
         self.state.on_diarization_change(self._on_diarization_change)
+        self.state.on_mode_change(self._on_mode_change)
 
         return self.container
 
@@ -111,109 +125,67 @@ class PrompterPanel:
                 ).props('size=md').classes('min-w-[100px]')
 
                 # Przycisk Zakończ
-                ui.button(
+                self.finish_btn = ui.button(
                     'Zakończ',
                     icon='check_circle',
                     color='blue',
-                    on_click=self._handle_finish
+                    on_click=self._handle_finish_click
                 ).props('outline size=md')
 
-                # Separator
-                ui.element('div').classes('w-px h-6 bg-gray-300')
-
-                # === DIARIZATION CONTROLS ===
-                self._create_diarization_controls()
-
-    def _create_diarization_controls(self):
-        """Tworzy kontrolki diaryzacji."""
-        with ui.row().classes('items-center gap-2'):
-            # Status/Toggle
-            self._diarization_status = ui.badge(
-                '🎙️ Mówcy',
-                color='gray'
-            ).classes('text-xs cursor-pointer').on('click', self._toggle_diarization)
-
-            # Swap button (ukryty domyślnie)
-            self._diarization_swap_btn = ui.button(
-                icon='swap_horiz',
-                on_click=self._swap_roles
-            ).props('flat dense round size=sm').classes(
-                'text-gray-500 hover:text-blue-600'
-            ).tooltip('Zamień role (Lekarz ↔ Pacjent)')
-
-            # Domyślnie ukryj przyciski
-            self._diarization_swap_btn.set_visibility(False)
-
-    def _toggle_diarization(self):
-        """Przełącza wyświetlanie diaryzacji."""
-        if not self.state.diarization or not self.state.diarization.has_data:
-            ui.notify("Brak danych diaryzacji", type='info')
-            return
-
-        enabled = self.state.toggle_diarization()
-        self._update_diarization_ui()
-
-        if enabled:
-            ui.notify("Włączono podział na mówców", type='positive')
-        else:
-            ui.notify("Wyłączono podział na mówców", type='info')
-
-    def _swap_roles(self):
-        """Zamienia role mówców."""
-        if not self.state.diarization or not self.state.diarization.has_data:
-            return
-
-        self.state.swap_speaker_roles()
-        ui.notify("Zamieniono role mówców", type='positive')
-
-    def _update_diarization_ui(self):
-        """Aktualizuje UI diaryzacji."""
-        if not self._diarization_status:
-            return
-
-        diar = self.state.diarization
-
-        if diar is None or not diar.has_data:
-            self._diarization_status.text = '🎙️ Mówcy'
-            self._diarization_status.props('color=gray')
-            if self._diarization_swap_btn:
-                self._diarization_swap_btn.set_visibility(False)
-        elif diar.is_processing:
-            self._diarization_status.text = '⏳ Analizuję...'
-            self._diarization_status.props('color=blue')
-            if self._diarization_swap_btn:
-                self._diarization_swap_btn.set_visibility(False)
-        elif diar.enabled:
-            self._diarization_status.text = f'🎙️ {diar.num_speakers} mówców'
-            self._diarization_status.props('color=green')
-            if self._diarization_swap_btn:
-                self._diarization_swap_btn.set_visibility(True)
-        else:
-            self._diarization_status.text = f'🎙️ {diar.num_speakers} mówców (wyłączone)'
-            self._diarization_status.props('color=gray')
-            if self._diarization_swap_btn:
-                self._diarization_swap_btn.set_visibility(True)
-
-    def _create_cards_container(self):
-        """Tworzy kontener na karty sugestii."""
-        self.cards_container = ui.row().classes(
-            'w-full '
-            'justify-center '
-            'gap-4 '
-            'min-h-[160px]'
+    def _create_content_container(self):
+        """Tworzy kontener na treść (karty/confirmation/summary)."""
+        self.cards_container = ui.element('div').classes(
+            'w-full min-h-[160px] transition-all-smooth'
         )
 
         with self.cards_container:
-            self._render_cards()
+            self._render_content()
 
-    def _render_cards(self):
-        """Renderuje karty na podstawie stanu."""
-        from app_ui.live.live_state import SessionStatus
+    def _render_content(self):
+        """Renderuje treść na podstawie trybu."""
+        from app_ui.live.live_state import PrompterMode
 
-        # Wyczyść istniejące karty
+        # Wyczyść kontener
         self.cards_container.clear()
 
         with self.cards_container:
+            mode = self.state.prompter_mode
+
+            if mode == PrompterMode.CONFIRMING:
+                self._render_confirmation()
+            elif mode == PrompterMode.SUMMARY:
+                self._render_summary()
+            else:
+                self._render_suggestions()
+
+    def _render_confirmation(self):
+        """Renderuje bar potwierdzenia zakończenia."""
+        ConfirmationBar(
+            state=self.state,
+            on_confirm=self._handle_confirm_finish,
+            on_cancel=self._handle_cancel_finish
+        ).create()
+
+    def _render_summary(self):
+        """Renderuje podsumowanie po zakończeniu."""
+        with ui.column().classes('w-full gap-4 animate-fade-in'):
+            # Statystyki
+            if self.state.interview_stats:
+                SummaryStats(self.state.interview_stats).create()
+
+            # Akcje
+            SummaryActions(
+                state=self.state,
+                on_continue=self._handle_continue,
+                on_toggle_diarization=self._handle_toggle_diarization,
+                on_swap_roles=self._handle_swap_roles
+            ).create()
+
+    def _render_suggestions(self):
+        """Renderuje karty sugestii (domyślny tryb)."""
+        from app_ui.live.live_state import SessionStatus
+
+        with ui.row().classes('w-full justify-center gap-4 flex-wrap'):
             # Sprawdź status sesji
             if self.state.status == SessionStatus.IDLE:
                 # Sesja nieaktywna - empty state

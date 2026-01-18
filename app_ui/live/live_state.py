@@ -18,6 +18,13 @@ class SessionStatus(Enum):
     PAUSED = "paused"
 
 
+class PrompterMode(Enum):
+    """Tryb panelu promptera."""
+    SUGGESTIONS = "suggestions"  # Normalne karty sugestii
+    CONFIRMING = "confirming"    # Potwierdzenie zakończenia
+    SUMMARY = "summary"          # Podsumowanie po zakończeniu
+
+
 @dataclass
 class TranscriptSegment:
     """Pojedynczy segment transkrypcji."""
@@ -61,6 +68,29 @@ class DiarizationInfo:
         return "\n".join(lines)
 
 
+@dataclass
+class InterviewStats:
+    """Statystyki sesji wywiadu."""
+    duration_seconds: float = 0.0
+    word_count: int = 0
+    speaker_count: int = 0
+    is_complete: bool = False
+
+    @property
+    def duration_formatted(self) -> str:
+        """Formatuje czas jako MM:SS."""
+        minutes = int(self.duration_seconds // 60)
+        seconds = int(self.duration_seconds % 60)
+        return f"{minutes}:{seconds:02d}"
+
+    @property
+    def duration_display(self) -> str:
+        """Wyświetlana wartość czasu."""
+        if self.duration_seconds < 60:
+            return f"{int(self.duration_seconds)}s"
+        return self.duration_formatted
+
+
 class LiveState:
     """
     Centralny stan sesji Live Interview.
@@ -90,11 +120,18 @@ class LiveState:
         # Diaryzacja
         self.diarization: Optional[DiarizationInfo] = None
 
+        # Tryb panelu i statystyki (dla nowego flow)
+        self.prompter_mode: PrompterMode = PrompterMode.SUGGESTIONS
+        self.interview_stats: Optional[InterviewStats] = None
+        self.analyze_speakers_preference: bool = True  # Zapamiętana preferencja
+        self._recording_start_time: Optional[float] = None
+
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
         self._on_suggestions_change: Optional[Callable] = None
         self._on_status_change: Optional[Callable] = None
         self._on_diarization_change: Optional[Callable] = None
+        self._on_mode_change: Optional[Callable] = None
 
     # === SUBSCRIPTION ===
 
@@ -113,6 +150,10 @@ class LiveState:
     def on_diarization_change(self, callback: Callable):
         """Rejestruje callback na zmianę diaryzacji."""
         self._on_diarization_change = callback
+
+    def on_mode_change(self, callback: Callable):
+        """Rejestruje callback na zmianę trybu panelu."""
+        self._on_mode_change = callback
 
     # === TRANSCRIPT MANAGEMENT ===
 
@@ -218,8 +259,64 @@ class LiveState:
         self.asked_questions = []
         self.pending_validation = []
         self.diarization = None
+        self.prompter_mode = PrompterMode.SUGGESTIONS
+        self.interview_stats = None
+        self._recording_start_time = None
         self._notify_transcript_change()
         self._notify_suggestions_change()
+
+    # === MODE & STATS ===
+
+    def set_mode(self, mode: PrompterMode):
+        """Zmienia tryb panelu promptera."""
+        if self.prompter_mode != mode:
+            self.prompter_mode = mode
+            print(f"[STATE] Mode changed to: {mode.value}", flush=True)
+            self._notify_mode_change()
+
+    def start_recording_timer(self):
+        """Rozpoczyna liczenie czasu nagrywania."""
+        import time
+        self._recording_start_time = time.time()
+
+    def compute_stats(self) -> InterviewStats:
+        """Oblicza statystyki sesji."""
+        import time
+
+        # Czas nagrywania
+        duration = 0.0
+        if self._recording_start_time:
+            duration = time.time() - self._recording_start_time
+
+        # Liczba słów
+        word_count = len(self._full_transcript.split()) if self._full_transcript else 0
+
+        # Liczba mówców
+        speaker_count = 0
+        if self.diarization and self.diarization.has_data:
+            speaker_count = self.diarization.num_speakers
+
+        self.interview_stats = InterviewStats(
+            duration_seconds=duration,
+            word_count=word_count,
+            speaker_count=speaker_count,
+            is_complete=True
+        )
+
+        return self.interview_stats
+
+    def show_confirmation(self):
+        """Przełącza na tryb potwierdzenia zakończenia."""
+        self.set_mode(PrompterMode.CONFIRMING)
+
+    def show_summary(self):
+        """Przełącza na tryb podsumowania."""
+        self.compute_stats()
+        self.set_mode(PrompterMode.SUMMARY)
+
+    def cancel_confirmation(self):
+        """Anuluje potwierdzenie i wraca do sugestii."""
+        self.set_mode(PrompterMode.SUGGESTIONS)
 
     # === DIARIZATION ===
 
@@ -353,3 +450,10 @@ class LiveState:
                 self._on_diarization_change()
             except Exception as e:
                 print(f"[LiveState] Diarization callback error: {e}")
+
+    def _notify_mode_change(self):
+        if self._on_mode_change:
+            try:
+                self._on_mode_change()
+            except Exception as e:
+                print(f"[LiveState] Mode callback error: {e}")
