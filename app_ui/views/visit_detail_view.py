@@ -79,32 +79,32 @@ class VisitDetailDialog:
         # Diagnoses
         ui.label('Diagnozy (ICD-10)').classes('text-lg font-bold mt-4')
         if self.visit.diagnoses:
-            ui.aggrid({
-                'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'icd10_code', 'width': 80},
-                    {'headerName': 'Lokalizacja', 'field': 'location', 'width': 100},
-                    {'headerName': 'Nazwa', 'field': 'icd10_name', 'flex': 1},
-                    {'headerName': 'Opis', 'field': 'description', 'flex': 1},
+            ui.table(
+                columns=[
+                    {'name': 'icd10_code', 'label': 'Kod', 'field': 'icd10_code', 'align': 'left'},
+                    {'name': 'location', 'label': 'Lokalizacja', 'field': 'location', 'align': 'left'},
+                    {'name': 'icd10_name', 'label': 'Nazwa', 'field': 'icd10_name', 'align': 'left'},
+                    {'name': 'description', 'label': 'Opis', 'field': 'description', 'align': 'left'},
                 ],
-                'rowData': [d.to_dict() for d in self.visit.diagnoses],
-                'domLayout': 'autoHeight',
-            }).classes('w-full h-auto')
+                rows=[d.to_dict() for d in self.visit.diagnoses],
+                row_key='icd10_code'
+            ).classes('w-full')
         else:
             ui.label('Brak diagnoz').classes('text-gray-500 italic')
 
         # Procedures
         ui.label('Procedury').classes('text-lg font-bold mt-4')
         if self.visit.procedures:
-            ui.aggrid({
-                'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'procedure_code', 'width': 80},
-                    {'headerName': 'Lokalizacja', 'field': 'location', 'width': 100},
-                    {'headerName': 'Procedura', 'field': 'procedure_name', 'flex': 1},
-                    {'headerName': 'Opis', 'field': 'description', 'flex': 1},
+            ui.table(
+                columns=[
+                    {'name': 'procedure_code', 'label': 'Kod', 'field': 'procedure_code', 'align': 'left'},
+                    {'name': 'location', 'label': 'Lokalizacja', 'field': 'location', 'align': 'left'},
+                    {'name': 'procedure_name', 'label': 'Procedura', 'field': 'procedure_name', 'align': 'left'},
+                    {'name': 'description', 'label': 'Opis', 'field': 'description', 'align': 'left'},
                 ],
-                'rowData': [p.to_dict() for p in self.visit.procedures],
-                'domLayout': 'autoHeight',
-            }).classes('w-full h-auto')
+                rows=[p.to_dict() for p in self.visit.procedures],
+                row_key='procedure_code'
+            ).classes('w-full')
         else:
             ui.label('Brak procedur').classes('text-gray-500 italic')
 

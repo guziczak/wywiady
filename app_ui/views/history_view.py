@@ -106,82 +106,39 @@ class HistoryView:
                 ).props('flat dense')
 
     def _create_table(self) -> None:
-        """Tabela wizyt."""
-        self.grid = ui.aggrid({
-            'columnDefs': [
-                {
-                    'headerName': 'Data',
-                    'field': 'visit_date',
-                    'width': 150,
-                    'sortable': True,
-                    'valueFormatter': 'value ? new Date(value).toLocaleString("pl-PL", {day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"}) : "-"'
-                },
-                {
-                    'headerName': 'Pacjent',
-                    'field': 'patient_name',
-                    'flex': 1,
-                    'minWidth': 150
-                },
-                {
-                    'headerName': 'Diagnozy',
-                    'field': 'diagnoses_summary',
-                    'width': 180,
-                    'cellStyle': {'fontFamily': 'monospace', 'fontSize': '12px'}
-                },
-                {
-                    'headerName': 'Status',
-                    'field': 'status',
-                    'width': 120,
-                    'cellRenderer': '''
-                        function(params) {
-                            const status = params.value;
-                            const color = status === 'completed' ? '#4CAF50' : '#FF9800';
-                            const text = status === 'completed' ? 'Zakonczona' : 'Szkic';
-                            return `<span style="color: ${color}; font-weight: bold;">${text}</span>`;
-                        }
-                    '''
-                },
-                {
-                    'headerName': 'Akcje',
-                    'field': 'id',
-                    'width': 150,
-                    'cellRenderer': '''
-                        function(params) {
-                            return `
-                                <button onclick="window.viewVisit('${params.value}')" title="Podgląd" style="margin-right: 5px;">👁</button>
-                                <button onclick="window.exportVisitPdf('${params.value}')" title="Eksport PDF" style="margin-right: 5px;">📄</button>
-                                <button onclick="window.deleteVisit('${params.value}')" title="Usuń">🗑</button>
-                            `;
-                        }
-                    '''
-                }
-            ],
-            'rowData': [],
-            'rowSelection': 'single',
-            'animateRows': True,
-            'pagination': False,  # Własna paginacja
-            'domLayout': 'autoHeight',
-        }).classes('w-full')
+        """Tabela wizyt (ui.table)."""
+        columns = [
+            {'name': 'visit_date', 'label': 'Data', 'field': 'visit_date', 'sortable': True},
+            {'name': 'patient_name', 'label': 'Pacjent', 'field': 'patient_name', 'sortable': True},
+            {'name': 'diagnoses_summary', 'label': 'Diagnozy', 'field': 'diagnoses_summary'},
+            {'name': 'status', 'label': 'Status', 'field': 'status', 'sortable': True},
+            {'name': 'actions', 'label': 'Akcje', 'field': 'actions'}
+        ]
 
-        # Rejestruj funkcje JS
-        ui.run_javascript('''
-            window.viewVisit = function(id) {
-                emitEvent('view_visit', {id: id});
-            };
-            window.exportVisitPdf = function(id) {
-                emitEvent('export_visit_pdf', {id: id});
-            };
-            window.deleteVisit = function(id) {
-                if (confirm('Czy na pewno chcesz usunąć tę wizytę?')) {
-                    emitEvent('delete_visit', {id: id});
-                }
-            };
+        self.grid = ui.table(columns=columns, rows=[], row_key='id').classes('w-full')
+        
+        # Slot na akcje
+        self.grid.add_slot('body-cell-actions', '''
+            <q-td :props="props">
+                <q-btn flat round dense icon="visibility" @click="$parent.$emit('view_visit', props.row.id)" />
+                <q-btn flat round dense icon="picture_as_pdf" @click="$parent.$emit('export_visit_pdf', props.row.id)" />
+                <q-btn flat round dense icon="delete" color="negative" @click="$parent.$emit('delete_visit', props.row.id)" />
+            </q-td>
+        ''')
+        
+        # Slot na status (kolory)
+        self.grid.add_slot('body-cell-status', '''
+            <q-td :props="props">
+                <q-badge :color="props.value === 'completed' ? 'green' : 'orange'">
+                    {{ props.value === 'completed' ? 'Zakończona' : 'Szkic' }}
+                </q-badge>
+            </q-td>
         ''')
 
-        # Obsługa eventów
-        ui.on('view_visit', lambda e: self._on_view_visit(e.args['id']))
-        ui.on('export_visit_pdf', lambda e: self._on_export_pdf(e.args['id']))
-        ui.on('delete_visit', lambda e: self._on_delete_visit(e.args['id']))
+        # Obsługa eventów z tabeli
+        self.grid.on('view_visit', lambda e: self._on_view_visit(e.args))
+        self.grid.on('export_visit_pdf', lambda e: self._on_export_pdf(e.args))
+        self.grid.on('delete_visit', lambda e: self._on_delete_visit(e.args))
 
     def _create_pagination(self) -> None:
         """Kontrolki paginacji."""
@@ -235,7 +192,7 @@ class HistoryView:
 
         # Aktualizuj tabelę
         if self.grid:
-            self.grid.options['rowData'] = row_data
+            self.grid.rows = row_data
             self.grid.update()
 
         # Aktualizuj paginację

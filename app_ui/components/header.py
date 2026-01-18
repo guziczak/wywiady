@@ -14,9 +14,25 @@ def create_header(app, show_spec_switcher: bool = True):
 
     with ui.header().classes('bg-blue-700 text-white'):
         with ui.row().classes('w-full items-center justify-between px-4'):
-            with ui.row().classes('items-center gap-2'):
-                ui.icon('medical_services', size='lg')
-                ui.label('Wywiad+').classes('text-2xl font-bold')
+            # Logo / Title - Modern Interactive
+            with ui.row().classes(
+                'items-center gap-3 cursor-pointer group select-none'
+            ).on('click', lambda: ui.navigate.to('/')):
+                
+                # Icon with Glow
+                with ui.element('div').classes('relative flex items-center justify-center'):
+                    ui.icon('medical_services', size='lg').classes(
+                        'transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 relative z-10'
+                    )
+                    # Glow effect background
+                    ui.element('div').classes(
+                        'absolute inset-0 bg-white/20 rounded-full blur-md opacity-0 scale-50 transition-all duration-300 group-hover:opacity-100 group-hover:scale-150'
+                    )
+
+                # Title with Tracking animation
+                ui.label('Wywiad+').classes(
+                    'text-2xl font-bold tracking-tight transition-all duration-300 group-hover:tracking-wide group-hover:text-blue-100'
+                )
 
             # Specialization switcher
             if show_spec_switcher:
