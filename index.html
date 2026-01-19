@@ -65,13 +65,21 @@
             padding: 1.5rem;
             border-radius: 8px;
             font-size: 0.95rem;
+            border-left: 4px solid #38bdf8;
         }
         .instructions ol {
             padding-left: 1.5rem;
             margin: 0;
         }
         .instructions li {
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.8rem;
+        }
+        code {
+            background: #0f172a;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #fbbf24;
         }
     </style>
 </head>
@@ -80,19 +88,23 @@
         <h1>Asystent Medyczny AI</h1>
         <p>Inteligentne wspomaganie wywiadów lekarskich i transkrypcja w czasie rzeczywistym.</p>
         
-        <a href="setup.bat" download="setup.bat" class="download-btn">
-            ROZPOCZNIJ
+        <a href="AsystentSetup.exe" download="AsystentSetup.exe" class="download-btn">
+            POBIERZ INSTALATOR
         </a>
         
-        <div class="subtext">Pobiera skrypt instalacyjny (Windows)</div>
+        <div class="subtext">Wersja dla systemu Windows 10/11</div>
 
         <div class="instructions">
-            <strong>Instrukcja:</strong>
+            <strong>Instrukcja instalacji:</strong>
             <ol>
-                <li>Kliknij przycisk powyżej, aby pobrać plik <code>setup.bat</code>.</li>
-                <li>Jeśli przeglądarka zablokuje pobieranie, wybierz "Zachowaj" (Keep).</li>
+                <li>Kliknij przycisk powyżej, aby pobrać <code>AsystentSetup.exe</code>.</li>
                 <li>Uruchom pobrany plik.</li>
-                <li>System Windows może wyświetlić niebieskie okno "System Windows ochronił ten komputer". Kliknij <u>Więcej informacji</u> a następnie <strong>Uruchom mimo to</strong>.</li>
+                <li>
+                    Jeśli zobaczysz niebieskie okno <em>"System Windows ochronił ten komputer"</em>:<br>
+                    kliknij <u>Więcej informacji</u>, a następnie <strong>Uruchom mimo to</strong>.
+                </li>
+                <li>Poczekaj, aż instalator pobierze pliki i skonfiguruje środowisko.</li>
+                <li>Na pulpicie pojawi się skrót <strong>Asystent Medyczny</strong>.</li>
             </ol>
         </div>
     </div>
