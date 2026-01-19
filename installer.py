@@ -21,6 +21,17 @@ def print_error(msg):
     input("Nacisnij ENTER aby zakonczyc...")
     sys.exit(1)
 
+def print_progress(prefix, current, total, width=30):
+    if total and total > 0:
+        ratio = min(max(current / total, 0), 1)
+        filled = int(width * ratio)
+        bar = "#" * filled + "-" * (width - filled)
+        percent = int(ratio * 100)
+        sys.stdout.write(f"\r{prefix} [{bar}] {percent}%")
+    else:
+        sys.stdout.write(f"\r{prefix} {current}")
+    sys.stdout.flush()
+
 def check_python():
     print_step("Sprawdzanie instalacji Python w systemie...")
     try:
@@ -53,7 +64,12 @@ def main():
     print_step("Pobieranie najnowszej wersji aplikacji...")
     zip_path = "repo.zip"
     try:
-        urllib.request.urlretrieve(REPO_URL, zip_path)
+        def _download_hook(block_num, block_size, total_size):
+            downloaded = block_num * block_size
+            print_progress("    Pobieranie", downloaded, total_size)
+
+        urllib.request.urlretrieve(REPO_URL, zip_path, reporthook=_download_hook)
+        print()  # newline after progress
     except Exception as e:
         print_error(f"Nie udalo sie pobrac plikow: {e}")
 
@@ -61,7 +77,12 @@ def main():
     print_step("Rozpakowywanie...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(".")
+            members = zip_ref.infolist()
+            total = len(members)
+            for i, member in enumerate(members, 1):
+                zip_ref.extract(member, ".")
+                print_progress("    Rozpakowywanie", i, total)
+            print()  # newline after progress
         
         # Przenoszenie z podkatalogu wywiady-main
         extracted_folder = "wywiady-main"
