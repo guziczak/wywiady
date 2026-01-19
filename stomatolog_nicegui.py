@@ -2053,6 +2053,25 @@ def main():
             import os
             import ctypes
             from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
+
+            # Ensure we are attached to a console (needed when launched from shortcuts)
+            if not kernel32.GetConsoleWindow():
+                try:
+                    kernel32.AttachConsole(-1)  # ATTACH_PARENT_PROCESS
+                except Exception:
+                    pass
+
+            # Make sure Ctrl+C is processed by console input
+            try:
+                STD_INPUT_HANDLE = -10
+                h = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+                mode = wintypes.DWORD()
+                if h and kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                    ENABLE_PROCESSED_INPUT = 0x0001
+                    kernel32.SetConsoleMode(h, mode.value | ENABLE_PROCESSED_INPUT)
+            except Exception:
+                pass
 
             @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
             def _handler(ctrl_type):
@@ -2063,8 +2082,8 @@ def main():
             # Keep reference to avoid GC
             global _WIN_CTRL_HANDLER
             _WIN_CTRL_HANDLER = _handler
-            ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler, True)
-            print("[APP] Windows console handler installed", flush=True)
+            ok = kernel32.SetConsoleCtrlHandler(_handler, True)
+            print(f"[APP] Windows console handler installed (ok={bool(ok)})", flush=True)
         except Exception as e:
             print(f"[APP] Windows console handler install failed: {e}", flush=True)
 
