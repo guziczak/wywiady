@@ -101,6 +101,27 @@ def run_with_spinner(cmd, label):
         details = out.strip() if out else "Brak szczegolow."
         print_error(f"{label} nieudane:\n{details}")
 
+def setup_local_https(install_dir):
+    cert_dir = os.path.join(install_dir, "certs")
+    cert_path = os.path.join(cert_dir, "localhost.pem")
+    key_path = os.path.join(cert_dir, "localhost-key.pem")
+    mkcert_exe = shutil.which("mkcert")
+    if not mkcert_exe:
+        print("    HTTPS: mkcert nie znaleziony (embed wymaga HTTPS na localhost).")
+        print("    Zainstaluj: winget install -e --id FiloSottile.mkcert")
+        return
+    try:
+        os.makedirs(cert_dir, exist_ok=True)
+        subprocess.check_call([mkcert_exe, "-install"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(
+            [mkcert_exe, "-cert-file", cert_path, "-key-file", key_path, "localhost", "127.0.0.1", "::1"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print("    HTTPS: cert localhost gotowy.")
+    except Exception:
+        print("    HTTPS: nie udalo sie skonfigurowac certyfikatu (pomijam).")
+
 def check_python():
     print_step("Sprawdzanie instalacji Python w systemie...")
     try:
@@ -201,7 +222,11 @@ def main():
         except Exception as e:
             print_error(f"Blad instalacji bibliotek: {e}")
 
-    # 7. Tworzenie skrotu (run_app.bat i Pulpit)
+    # 7. Opcjonalne HTTPS na localhost (do embedu)
+    print_step("Konfiguracja HTTPS (opcjonalnie)...")
+    setup_local_https(install_dir)
+
+    # 8. Tworzenie skrotu (run_app.bat i Pulpit)
     print_step("Konfiguracja skrotow...")
     
     # run_app.bat
@@ -211,6 +236,9 @@ def main():
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_OPEN_LANDING=1\n")
+        f.write("set WYWIAD_FIXED_PORT=1\n")
+        f.write("set WYWIAD_SSL_CERT=%cd%\\certs\\localhost.pem\n")
+        f.write("set WYWIAD_SSL_KEY=%cd%\\certs\\localhost-key.pem\n")
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
 

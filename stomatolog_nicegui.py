@@ -2127,6 +2127,16 @@ pause
 
     app.on_shutdown(cleanup)
 
+    def _is_port_free(port):
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", port))
+                return True
+            except OSError:
+                return False
+
     def _find_available_port(start=8089, end=8100):
         import socket
         for port in range(start, end + 1):
@@ -2139,11 +2149,20 @@ pause
                     continue
         return start
 
-    port = _find_available_port(8089, 8100)
+    fixed_port = os.environ.get("WYWIAD_FIXED_PORT") == "1"
+    if fixed_port and not _is_port_free(8089):
+        print("[APP] Port 8089 is required for embed. Close other instance and retry.", flush=True)
+        sys.exit(1)
+    port = 8089 if fixed_port else _find_available_port(8089, 8100)
     if port != 8089:
         print(f"[APP] Port 8089 in use, switching to {port}.", flush=True)
 
     # Opcjonalnie otworz landing + lokalny UI (np. gdy uruchamiane z instalatora)
+    ssl_cert = os.environ.get("WYWIAD_SSL_CERT")
+    ssl_key = os.environ.get("WYWIAD_SSL_KEY")
+    use_https = bool(ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key))
+    scheme = "https" if use_https else "http"
+
     if os.environ.get("WYWIAD_OPEN_LANDING") == "1":
         def _open_pages():
             try:
@@ -2151,7 +2170,7 @@ pause
                 time.sleep(1.0)
                 webbrowser.open("https://guziczak.github.io/wywiady/", new=1, autoraise=True)
                 time.sleep(0.5)
-                webbrowser.open(f"http://localhost:{port}", new=1, autoraise=True)
+                webbrowser.open(f"{scheme}://localhost:{port}", new=1, autoraise=True)
             except Exception:
                 pass
         threading.Thread(target=_open_pages, daemon=True).start()
@@ -2165,6 +2184,7 @@ pause
         binding_refresh_interval=0.1,
         reconnect_timeout=120.0,  # Dlugi timeout dla ladowania modeli
         storage_secret='wywiad_plus_secret_key',  # Wymagane dla reconnect
+        **({"ssl_certfile": ssl_cert, "ssl_keyfile": ssl_key} if use_https else {}),
     )
 
 
