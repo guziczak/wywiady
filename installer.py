@@ -29,21 +29,27 @@ def _human_bytes(num):
             return f"{size:.1f} {unit}"
         size /= 1024
 
+def _write_progress(line):
+    last_len = getattr(_write_progress, "_last_len", 0)
+    pad = " " * max(0, last_len - len(line))
+    sys.stdout.write("\r" + line + pad)
+    sys.stdout.flush()
+    _write_progress._last_len = len(line)
+
 def print_progress(prefix, current, total, width=30):
     if total and total > 0:
         ratio = min(max(current / total, 0), 1)
         filled = int(width * ratio)
         bar = "#" * filled + "-" * (width - filled)
         percent = int(ratio * 100)
-        sys.stdout.write(
-            f"\r{prefix} [{bar}] {percent}% ({_human_bytes(current)}/{_human_bytes(total)})"
+        _write_progress(
+            f"{prefix} [{bar}] {percent}% ({_human_bytes(current)}/{_human_bytes(total)})"
         )
     else:
         spinner = "|/-\\"
         idx = getattr(print_progress, "_spin", 0)
         print_progress._spin = (idx + 1) % len(spinner)
-        sys.stdout.write(f"\r{prefix} {spinner[idx]} {_human_bytes(current)}")
-    sys.stdout.flush()
+        _write_progress(f"{prefix} {spinner[idx]} {_human_bytes(current)}")
 
 def run_with_spinner(cmd, label):
     spinner = "|/-\\"
