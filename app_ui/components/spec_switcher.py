@@ -29,6 +29,8 @@ class SpecializationSwitcher:
         self.button_icon = None
         self.button_label = None
         self.select = None
+        self._label_to_id = {}
+        self._id_to_label = {}
 
     @staticmethod
     @lru_cache(maxsize=64)
@@ -73,20 +75,23 @@ class SpecializationSwitcher:
     def _create_compact(self, active_spec: Specialization) -> None:
         """Kompaktowy widok - dropdown select (stabilniejszy w EXE)."""
         options = []
+        self._label_to_id = {}
+        self._id_to_label = {}
         for spec in self.spec_manager.get_all():
             label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
-            options.append({'label': label, 'value': str(spec.id)})
+            options.append(label)
+            self._label_to_id[label] = spec.id
+            self._id_to_label[str(spec.id)] = label
 
-        values = {opt['value'] for opt in options}
-        current_value = str(active_spec.id)
-        if current_value not in values:
-            current_value = next(iter(values), None)
+        current_value = self._id_to_label.get(str(active_spec.id))
+        if current_value is None:
+            current_value = options[0] if options else None
 
         self.select = ui.select(
             options=options,
             value=current_value,
             on_change=lambda e: self._on_select_id(str(e.value)),
-        ).props('dense filled options-dense emit-value map-options').classes(
+        ).props('dense filled options-dense').classes(
             'min-w-48 text-white bg-white/10'
         )
 
@@ -120,7 +125,7 @@ class SpecializationSwitcher:
         if self.button_label:
             self.button_label.text = spec.name
         if self.select:
-            self.select.value = str(spec.id)
+            self.select.value = self._id_to_label.get(str(spec.id), self.select.value)
         if self.menu:
             self.menu.close()
 
@@ -138,12 +143,14 @@ class SpecializationSwitcher:
         if self.button_label:
             self.button_label.text = active_spec.name
         if self.select:
-            self.select.value = str(active_spec.id)
+            self.select.value = self._id_to_label.get(str(active_spec.id), self.select.value)
 
     def _on_select_id(self, spec_id: str) -> None:
-        """Obsługa wyboru specjalizacji po ID (dla select)."""
+        """Obsługa wyboru specjalizacji po labelu/ID (dla select)."""
         try:
-            # ids are ints in config, select value is string
+            # select zwraca label, mapuj na ID
+            if spec_id in self._label_to_id:
+                spec_id = self._label_to_id.get(spec_id)
             spec = next((s for s in self.spec_manager.get_all() if str(s.id) == str(spec_id)), None)
             if spec:
                 self._on_select(spec)
