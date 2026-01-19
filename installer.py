@@ -60,6 +60,40 @@ def write_build_info(path, info):
     except Exception:
         pass
 
+def ensure_pdf_fonts(install_dir):
+    fonts_dir = os.path.join(install_dir, "assets", "fonts")
+    os.makedirs(fonts_dir, exist_ok=True)
+    font_urls = {
+        "DejaVuSans.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans.ttf",
+        "DejaVuSans-Bold.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans-Bold.ttf",
+    }
+    fallback_fonts = {
+        "DejaVuSans.ttf": os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "arial.ttf"),
+        "DejaVuSans-Bold.ttf": os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "arialbd.ttf"),
+    }
+
+    for fname, url in font_urls.items():
+        fpath = os.path.join(fonts_dir, fname)
+        try:
+            if os.path.exists(fpath) and os.path.getsize(fpath) > 100_000:
+                continue
+        except OSError:
+            pass
+        print(f"    [WARN] Brak czcionki {fname} - pobieram...")
+        try:
+            urllib.request.urlretrieve(url, fpath)
+            continue
+        except Exception:
+            print(f"    [WARN] Nie udalo sie pobrac {fname}.")
+        # Fallback to Windows Arial if available
+        fallback = fallback_fonts.get(fname)
+        if fallback and os.path.exists(fallback):
+            try:
+                shutil.copy(fallback, fpath)
+                print(f"    [WARN] Uzywam fallback fontu z systemu Windows dla {fname}.")
+            except Exception:
+                pass
+
 def _human_bytes(num):
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(num)
@@ -191,21 +225,7 @@ def main():
                 os.rmdir(extracted_folder)
             
             os.remove(zip_path)
-            # Sprawdz fonty PDF (polskie znaki)
-            fonts_dir = os.path.join(install_dir, "assets", "fonts")
-            os.makedirs(fonts_dir, exist_ok=True)
-            font_urls = {
-                "DejaVuSans.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans.ttf",
-                "DejaVuSans-Bold.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans-Bold.ttf",
-            }
-            for fname, url in font_urls.items():
-                fpath = os.path.join(fonts_dir, fname)
-                if not os.path.exists(fpath):
-                    print(f"    [WARN] Brak czcionki {fname} - pobieram...")
-                    try:
-                        urllib.request.urlretrieve(url, fpath)
-                    except Exception:
-                        print(f"    [WARN] Nie udalo sie pobrac {fname}.")
+            ensure_pdf_fonts(install_dir)
     except Exception as e:
         print_error(f"Blad podczas rozpakowywania: {e}")
 
@@ -228,6 +248,10 @@ def main():
             run_with_spinner([venv_python, "-m", "pip", "install", "-r", "requirements.txt"], "    Instalacja bibliotek")
         except Exception as e:
             print_error(f"Blad instalacji bibliotek: {e}")
+
+    # 6b. Fonty PDF (polskie znaki) - zawsze sprawdz
+    print_step("Sprawdzanie czcionek PDF...")
+    ensure_pdf_fonts(install_dir)
 
     # 7. Tworzenie skrotu (run_app.bat i Pulpit)
     print_step("Konfiguracja skrotow...")

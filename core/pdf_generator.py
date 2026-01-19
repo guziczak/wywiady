@@ -58,38 +58,60 @@ class PDFGenerator:
         }
         self.base_font = "Helvetica"
         self.bold_font = "Helvetica-Bold"
+
+        def _maybe_download(path: Path, url: str) -> None:
+            try:
+                if not path.exists() or path.stat().st_size < 100_000:
+                    log(f"[PDF] Downloading font: {path}")
+                    urllib.request.urlretrieve(url, str(path))
+            except Exception as e:
+                log(f"[PDF] Font download failed for {path}: {e}")
+
+        def _register_font(font_name: str, path: Path) -> bool:
+            try:
+                if path.exists():
+                    size = path.stat().st_size
+                    log(f"[PDF] Font candidate: {path} ({size} bytes)")
+                    pdfmetrics.registerFont(TTFont(font_name, str(path)))
+                    return True
+                log(f"[PDF] Missing font: {path}")
+                return False
+            except Exception as e:
+                log(f"[PDF] Font register failed for {path}: {e}")
+                return False
+
         try:
             fonts_dir.mkdir(parents=True, exist_ok=True)
-            if not regular_path.exists():
-                log(f"[PDF] Missing font: {regular_path} - attempting download")
-                try:
-                    urllib.request.urlretrieve(font_urls["DejaVuSans.ttf"], str(regular_path))
-                except Exception as e:
-                    log(f"[PDF] Failed to download DejaVuSans.ttf: {e}")
-            if not bold_path.exists():
-                log(f"[PDF] Missing bold font: {bold_path} - attempting download")
-                try:
-                    urllib.request.urlretrieve(font_urls["DejaVuSans-Bold.ttf"], str(bold_path))
-                except Exception as e:
-                    log(f"[PDF] Failed to download DejaVuSans-Bold.ttf: {e}")
+            _maybe_download(regular_path, font_urls["DejaVuSans.ttf"])
+            _maybe_download(bold_path, font_urls["DejaVuSans-Bold.ttf"])
 
-            if regular_path.exists():
-                pdfmetrics.registerFont(TTFont("DejaVuSans", str(regular_path)))
+            has_regular = _register_font("DejaVuSans", regular_path)
+            has_bold = _register_font("DejaVuSans-Bold", bold_path)
+
+            if has_regular:
                 self.base_font = "DejaVuSans"
-            else:
-                log(f"[PDF] Missing font: {regular_path}")
-            if bold_path.exists():
-                pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(bold_path)))
+            if has_bold:
                 self.bold_font = "DejaVuSans-Bold"
-            else:
-                if self.base_font == "DejaVuSans":
-                    # Fallback to regular to keep Polish glyphs
+            elif has_regular:
+                # Use regular for bold to preserve Polish glyphs
+                self.bold_font = self.base_font
+
+            if not has_regular:
+                # Windows fallback (local system fonts)
+                win_fonts = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
+                arial = win_fonts / "arial.ttf"
+                arial_bold = win_fonts / "arialbd.ttf"
+                if _register_font("Arial", arial):
+                    self.base_font = "Arial"
+                if _register_font("Arial-Bold", arial_bold):
+                    self.bold_font = "Arial-Bold"
+                elif self.base_font == "Arial":
                     self.bold_font = self.base_font
-                log(f"[PDF] Missing bold font: {bold_path}")
-        except Exception:
-            # Fallback to built-in fonts
+        except Exception as e:
+            log(f"[PDF] Font initialization error: {e}")
             self.base_font = "Helvetica"
             self.bold_font = "Helvetica-Bold"
+
         log(f"[PDF] Using fonts: base={self.base_font}, bold={self.bold_font}")
 
         # Apply fonts to base styles
