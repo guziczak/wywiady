@@ -15,6 +15,16 @@ class AppConfig:
     transcriber_model: str = "small"
     selected_device: str = "auto"
     generation_model: str = "Auto"  # Auto, Claude, Gemini
+    # Dane gabinetu / lekarza
+    clinic_name: str = "Gabinet Medyczny"
+    clinic_address: str = ""
+    clinic_phone: str = ""
+    clinic_email: str = ""
+    clinic_nip: str = ""
+    clinic_regon: str = ""
+    doctor_name: str = ""
+    doctor_title: str = ""
+    doctor_pwz: str = ""
 
 class ConfigManager:
     """Zarządza ładowaniem i zapisywaniem konfiguracji."""

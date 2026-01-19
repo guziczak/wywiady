@@ -110,9 +110,26 @@ class Visit:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     patient_id: Optional[int] = None
     patient_name: str = ""  # Denormalizowane dla szybkiego wyświetlania
+    patient_identifier: str = ""  # PESEL lub inny identyfikator
+    patient_birth_date: str = ""
+    patient_sex: str = ""
+    patient_address: str = ""
+    patient_phone: str = ""
+    patient_email: str = ""
     specialization_id: int = 1  # Domyślnie stomatologia
     visit_date: datetime = field(default_factory=datetime.now)
     transcript: str = ""
+    subjective: str = ""  # Wywiad (S) - opcjonalnie, jeśli różne od transkrypcji
+    objective: str = ""  # Badanie przedmiotowe (O)
+    assessment: str = ""  # Ocena/rozpoznanie opisowe (A)
+    plan: str = ""  # Plan leczenia (P)
+    recommendations: str = ""
+    medications: str = ""
+    tests_ordered: str = ""
+    tests_results: str = ""
+    referrals: str = ""
+    certificates: str = ""
+    additional_notes: str = ""
     audio_path: Optional[str] = None
     status: VisitStatus = VisitStatus.DRAFT
     model_used: str = ""  # "Claude" / "Gemini"
@@ -151,9 +168,26 @@ class Visit:
             'id': self.id,
             'patient_id': self.patient_id,
             'patient_name': self.patient_name,
+            'patient_identifier': self.patient_identifier,
+            'patient_birth_date': self.patient_birth_date,
+            'patient_sex': self.patient_sex,
+            'patient_address': self.patient_address,
+            'patient_phone': self.patient_phone,
+            'patient_email': self.patient_email,
             'specialization_id': self.specialization_id,
             'visit_date': self.visit_date.isoformat() if self.visit_date else None,
             'transcript': self.transcript,
+            'subjective': self.subjective,
+            'objective': self.objective,
+            'assessment': self.assessment,
+            'plan': self.plan,
+            'recommendations': self.recommendations,
+            'medications': self.medications,
+            'tests_ordered': self.tests_ordered,
+            'tests_results': self.tests_results,
+            'referrals': self.referrals,
+            'certificates': self.certificates,
+            'additional_notes': self.additional_notes,
             'audio_path': self.audio_path,
             'status': str(self.status),
             'model_used': self.model_used,
@@ -196,9 +230,26 @@ class Visit:
             id=data.get('id', str(uuid.uuid4())),
             patient_id=data.get('patient_id'),
             patient_name=data.get('patient_name', ''),
+            patient_identifier=data.get('patient_identifier', ''),
+            patient_birth_date=data.get('patient_birth_date', ''),
+            patient_sex=data.get('patient_sex', ''),
+            patient_address=data.get('patient_address', ''),
+            patient_phone=data.get('patient_phone', ''),
+            patient_email=data.get('patient_email', ''),
             specialization_id=data.get('specialization_id', 1),
             visit_date=visit_date or datetime.now(),
             transcript=data.get('transcript', ''),
+            subjective=data.get('subjective', ''),
+            objective=data.get('objective', ''),
+            assessment=data.get('assessment', ''),
+            plan=data.get('plan', ''),
+            recommendations=data.get('recommendations', ''),
+            medications=data.get('medications', ''),
+            tests_ordered=data.get('tests_ordered', ''),
+            tests_results=data.get('tests_results', ''),
+            referrals=data.get('referrals', ''),
+            certificates=data.get('certificates', ''),
+            additional_notes=data.get('additional_notes', ''),
             audio_path=data.get('audio_path'),
             status=status,
             model_used=data.get('model_used', ''),

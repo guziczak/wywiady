@@ -116,3 +116,52 @@ def create_settings_section(app):
             app.extraction_spinner = ui.spinner('dots', size='sm').classes('hidden')
 
             ui.button('Zapisz ustawienia', icon='save', on_click=app.save_settings).classes('mt-2')
+
+    # === CLINIC DATA ===
+    with ui.expansion('Dane gabinetu i lekarza', icon='assignment').classes('w-full'):
+        with ui.column().classes('w-full gap-3 p-2'):
+            ui.label('Dane gabinetu:').classes('text-gray-600')
+            ui.input(
+                'Nazwa gabinetu',
+                value=app.config.get("clinic_name", "Gabinet Medyczny")
+            ).classes('w-full').on('change', lambda e: app.config.update({"clinic_name": e.value}))
+            ui.input(
+                'Adres',
+                value=app.config.get("clinic_address", "")
+            ).classes('w-full').on('change', lambda e: app.config.update({"clinic_address": e.value}))
+            with ui.row().classes('w-full gap-2'):
+                ui.input(
+                    'Telefon',
+                    value=app.config.get("clinic_phone", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"clinic_phone": e.value}))
+                ui.input(
+                    'Email',
+                    value=app.config.get("clinic_email", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"clinic_email": e.value}))
+            with ui.row().classes('w-full gap-2'):
+                ui.input(
+                    'NIP',
+                    value=app.config.get("clinic_nip", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"clinic_nip": e.value}))
+                ui.input(
+                    'REGON',
+                    value=app.config.get("clinic_regon", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"clinic_regon": e.value}))
+
+            ui.separator()
+            ui.label('Dane lekarza:').classes('text-gray-600')
+            ui.input(
+                'Imie i nazwisko',
+                value=app.config.get("doctor_name", "")
+            ).classes('w-full').on('change', lambda e: app.config.update({"doctor_name": e.value}))
+            with ui.row().classes('w-full gap-2'):
+                ui.input(
+                    'Tytul',
+                    value=app.config.get("doctor_title", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"doctor_title": e.value}))
+                ui.input(
+                    'PWZ',
+                    value=app.config.get("doctor_pwz", "")
+                ).classes('flex-1').on('change', lambda e: app.config.update({"doctor_pwz": e.value}))
+
+            ui.button('Zapisz dane gabinetu', icon='save', on_click=app.save_settings).classes('mt-2')
