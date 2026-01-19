@@ -63,26 +63,39 @@ class LiveInterviewView:
         self.transcriber = None
         if StreamingTranscriber:
             try:
-                # Sprawdź czy używamy OpenVINO (sprawdź config bezpośrednio dla pewności)
-                use_openvino = False
+                # 1. Pobierz konfigurację
                 config_backend = self.app.config.get("transcriber_backend", "")
-                if config_backend == "openvino_whisper":
+                selected_device = self.app.config.get("selected_device", "auto")
+                
+                # 2. Inteligentna detekcja OpenVINO
+                # Domyślnie z configu
+                use_openvino = (config_backend == "openvino_whisper")
+                
+                # Jeśli wybrano NPU -> ZAWSZE wymuś OpenVINO (faster-whisper nie wspiera NPU)
+                if selected_device == "NPU":
                     use_openvino = True
-                    print("[LIVE] Using OpenVINO (detected from config)", flush=True)
-                elif self.app.transcriber_manager:
+                    print("[LIVE] Force OpenVINO for NPU", flush=True)
+                
+                # Jeśli wybrano GPU (Intel) -> ZAWSZE wymuś OpenVINO (faster-whisper nie wspiera Intel GPU)
+                # Zakładamy, że user z Intel Arc/iGPU chce OpenVINO. 
+                # Jeśli ma NVIDIA, powinien używać 'cuda' w faster-whisper, ale tu UI daje ogólne 'GPU'.
+                # Dla bezpieczeństwa: Jeśli GPU i nie OpenVINO -> fallback do CPU (chyba że wykryjemy CUDA, ale to trudne tu)
+                if selected_device == "GPU" and not use_openvino:
+                    # Sprawdźmy czy to może być Intel GPU (w przyszłości można dodać detekcję vendora)
+                    # Na razie: Live View na Windows z Intel NPU/GPU -> preferuj OpenVINO
+                    # Ale jeśli user uparł się na faster-whisper... to on nie zadziała na Intel GPU.
+                    # Więc bezpieczny fallback:
+                    print("[LIVE] GPU selected with faster-whisper. Forcing CPU fallback (faster-whisper requires CUDA)", flush=True)
+                    selected_device = "cpu"
+
+                # 3. Sprawdź manager (jeśli config zawiódł)
+                if not use_openvino and self.app.transcriber_manager:
                     from core.transcriber import TranscriberType
                     if self.app.transcriber_manager.get_current_type() == TranscriberType.OPENVINO_WHISPER:
                         use_openvino = True
-                        print("[LIVE] Using OpenVINO (detected from manager)", flush=True)
 
-                # Pobierz wybrane urządzenie z configu
-                # Uwaga: self.app.config to ConfigManager instance
-                selected_device = self.app.config.get("selected_device", "auto")
-                print(f"[LIVE] Config reports selected_device: '{selected_device}'", flush=True)
-                
-                # Jeśli auto, pozwól OpenVINO zdecydować (lub jeśli backend to faster-whisper, auto=cpu/cuda)
-                
                 print(f"[LIVE] Initializing StreamingTranscriber with device={selected_device} (OpenVINO={use_openvino})", flush=True)
+                
                 self.transcriber = StreamingTranscriber(
                     model_size="tiny", 
                     use_openvino=use_openvino,

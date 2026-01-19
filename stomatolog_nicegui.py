@@ -264,6 +264,7 @@ class DeviceInfo:
     icon: str
     speed_multiplier: float
     available: bool
+    is_intel: bool = False
     recommended: bool = False
 
 
@@ -291,18 +292,22 @@ def detect_devices() -> list[DeviceInfo]:
         icon="memory",
         speed_multiplier=2.5 if has_npu else 0,
         available=has_npu,
+        is_intel=True,
         recommended=has_npu
     ))
 
     # GPU
     has_gpu = "GPU" in ov_devices
     gpu_name = "Intel UHD Graphics"
+    is_intel_gpu = True # Default assumption if OpenVINO detects it
     try:
         # Proba wykrycia nazwy GPU
         if has_gpu:
             from openvino import Core
             core = Core()
             gpu_name = core.get_property("GPU", "FULL_DEVICE_NAME")
+            if "NVIDIA" in gpu_name:
+                is_intel_gpu = False
     except Exception:
         pass
 
@@ -313,6 +318,7 @@ def detect_devices() -> list[DeviceInfo]:
         icon="videogame_asset",
         speed_multiplier=1.5 if has_gpu else 0,
         available=has_gpu,
+        is_intel=is_intel_gpu,
         recommended=has_gpu and not has_npu
     ))
 
@@ -356,6 +362,21 @@ class WywiadApp:
 
         # Transcriber
         self.transcriber_manager = get_transcriber_manager()
+
+        # Sync manager with config
+        if self.transcriber_manager:
+            try:
+                # Set API Key
+                api_key = self.config.get("api_key", "")
+                self.transcriber_manager.set_gemini_api_key(api_key)
+
+                # Set Backend
+                backend_val = self.config.get("transcriber_backend", "gemini_cloud")
+                if TRANSCRIBER_AVAILABLE:
+                    self.transcriber_manager.set_current_backend(TranscriberType(backend_val))
+                    print(f"[APP] Initialized TranscriberManager with backend: {backend_val}", flush=True)
+            except Exception as e:
+                print(f"[ERROR] Failed to sync TranscriberManager: {e}", flush=True)
         
         # Initialize Services
         self.llm_service = LLMService() if LLMService else None
@@ -729,7 +750,28 @@ class WywiadApp:
 
     def select_device(self, device_id: str):
         """Wybiera urządzenie i ładuje model."""
-        # Sprawdź czy już załadowane na tym urządzeniu
+        # Znajdź device info
+        device_info = next((d for d in self.devices if d.id == device_id), None)
+        
+        # SMART UX: Auto-switch to OpenVINO for Intel hardware
+        current_backend = self.config.get("transcriber_backend", "")
+        if device_info and (device_info.id == "NPU" or (device_info.id == "GPU" and device_info.is_intel)):
+            if current_backend != "openvino_whisper":
+                print(f"[UI] Smart UX: Auto-switching to OpenVINO for {device_id}", flush=True)
+                
+                # Zmień backend
+                if self.transcriber_manager:
+                    try:
+                        from core.transcriber import TranscriberType
+                        if self.transcriber_manager.set_current_backend(TranscriberType.OPENVINO_WHISPER):
+                            self.config["transcriber_backend"] = "openvino_whisper"
+                            self.refresh_backend_buttons()
+                            ui.notify(f"Przełączono na OpenVINO (wymagane dla {device_id})", type='positive')
+                    except Exception as e:
+                        print(f"[UI] Auto-switch failed: {e}", flush=True)
+
+        # Sprawdź czy już załadowane na tym urządzeniu (po ewentualnej zmianie backendu)
+        # Musimy sprawdzić ponownie stan, bo mógł się zmienić backend
         if (device_id == self.selected_device and
             self.model_state == ModelState.READY and
             self.loaded_model and
@@ -741,7 +783,7 @@ class WywiadApp:
         # Zapisz wybór
         self.selected_device = device_id
         self.config["selected_device"] = device_id
-        save_config(self.config)
+        self.config.save()
 
         # Odśwież karty i rozpocznij ładowanie
         self.refresh_device_cards()
@@ -751,15 +793,52 @@ class WywiadApp:
         """Odświeża karty urządzeń."""
         if self.device_cards_container:
             self.device_cards_container.clear()
+            current_backend = self.config.get("transcriber_backend", "")
+            
             with self.device_cards_container:
-                for device in self.devices:
-                    self.create_device_card(device)
+                # Jeśli wybrano chmurę, ukryj wybór sprzętu
+                if current_backend == "gemini_cloud":
+                    with ui.card().classes('w-full h-48 bg-blue-50 items-center justify-center text-center p-4 shadow-none border-2 border-blue-100'):
+                        with ui.row().classes('items-center gap-4'):
+                            ui.icon('cloud_upload', size='4xl').classes('text-blue-400')
+                            with ui.column().classes('items-start'):
+                                ui.label('Przetwarzanie w chmurze').classes('text-xl font-bold text-blue-800')
+                                ui.label('Obliczenia wykonywane są na serwerach Google.').classes('text-gray-600')
+                                ui.label('Twoja karta graficzna i procesor odpoczywają.').classes('text-sm text-gray-500')
+                    return
 
-    def create_device_card(self, device: DeviceInfo) -> ui.card:
+                # Dla offline - pokaż karty
+                for device in self.devices:
+                    self.create_device_card(device, current_backend)
+
+    def create_device_card(self, device: DeviceInfo, current_backend: str) -> ui.card:
         """Tworzy kartę urządzenia."""
         is_selected = (self.selected_device == device.id) or (self.selected_device == "auto" and device.recommended)
         is_loading = is_selected and self.model_state == ModelState.LOADING
         is_ready = is_selected and self.model_state == ModelState.READY and self.loaded_model and self.loaded_model.device == device.id
+
+        # Compatibility check
+        is_compatible = True
+        warning_msg = ""
+        compatibility_reason = ""
+        
+        # NPU requires OpenVINO
+        if device.id == "NPU":
+            if current_backend != "openvino_whisper":
+                is_compatible = False
+                warning_msg = "Wymaga OpenVINO"
+                compatibility_reason = "NPU jest obsługiwane tylko przez silnik OpenVINO. Kliknij, aby przełączyć."
+
+        # Intel GPU compatibility
+        elif device.id == "GPU" and device.is_intel:
+            if current_backend in ["faster_whisper", "openai_whisper"]:
+                is_compatible = False
+                warning_msg = "Brak CUDA (NVIDIA)"
+                compatibility_reason = "Ten silnik wymaga karty NVIDIA (CUDA). Dla Intel Arc użyj OpenVINO. Kliknij, aby przełączyć automatycznie."
+            elif current_backend != "openvino_whisper" and current_backend != "gemini_cloud":
+                 # Inne backendy (przyszłościowo)
+                 is_compatible = False
+                 warning_msg = "Wymaga OpenVINO"
 
         # Style
         base_classes = 'w-48 h-48 transition-all duration-200 cursor-pointer'
@@ -769,12 +848,19 @@ class WywiadApp:
             style_classes = f'{base_classes} ring-2 ring-green-500 bg-green-50'
         elif is_selected:
             style_classes = f'{base_classes} ring-2 ring-blue-500 bg-blue-50'
+        elif not is_compatible:
+            style_classes = f'{base_classes} opacity-70 bg-gray-50 border-dashed border-2 border-gray-300'
         else:
             style_classes = f'{base_classes} hover:shadow-lg'
 
         with ui.card().classes(style_classes) as card:
+            # Clickable even if not compatible (to trigger auto-switch)
             if device.available:
                 card.on('click', lambda d=device: self.select_device(d.id))
+            
+            # Tooltip explaining the limitation/switch
+            if compatibility_reason:
+                ui.tooltip(compatibility_reason)
 
             with ui.column().classes('items-center gap-2 p-3 w-full h-full justify-between'):
                 # Icon + Name
@@ -787,6 +873,8 @@ class WywiadApp:
                         color = 'text-blue-600'
                     elif not device.available:
                         color = 'text-gray-400'
+                    elif not is_compatible:
+                        color = 'text-orange-400'
                     else:
                         color = 'text-gray-600'
 
@@ -804,6 +892,8 @@ class WywiadApp:
                         ui.badge("GOTOWY", color='green')
                     elif is_selected:
                         ui.badge("WYBRANE", color='blue')
+                    elif warning_msg:
+                        ui.badge(warning_msg, color='orange')
                     elif device.recommended and device.available:
                         ui.badge("ZALECANE", color='gray')
                     elif device.available:
@@ -975,8 +1065,13 @@ class WywiadApp:
             backend = self.transcriber_manager.get_current_backend()
             if backend.set_model(model_name):
                 self.config["transcriber_model"] = model_name
-                save_config(self.config)
+                self.config.save()
                 ui.notify(f"Model {model_name} aktywowany!", type='positive')
+
+                # Reset state immediately
+                self.model_state = ModelState.LOADING
+                self.loaded_model = None
+                self._update_status_ui()
 
                 # Przeładuj model na aktualnym urządzeniu
                 self.refresh_model_cards()
@@ -1030,8 +1125,26 @@ class WywiadApp:
 
             if self.transcriber_manager.set_current_backend(backend_type):
                 self.config["transcriber_backend"] = backend_value
-                save_config(self.config)
+                self.config.save()
                 ui.notify(f"Wybrano: {info.name if info else backend_value}", type='positive')
+                
+                # SMART UX: Fallback to CPU if current device is not supported
+                # e.g. switching from OpenVINO (NPU) to Faster Whisper (CPU-only on Intel)
+                if backend_value != "openvino_whisper":
+                    current_device = next((d for d in self.devices if d.id == self.selected_device), None)
+                    if current_device and (current_device.id == "NPU" or (current_device.id == "GPU" and current_device.is_intel)):
+                        print(f"[UI] Smart UX: Reverting to CPU (backend {backend_value} does not support Intel NPU/GPU)", flush=True)
+                        self.selected_device = "CPU"
+                        self.config["selected_device"] = "CPU"
+                        self.config.save()
+                        ui.notify("Przełączono na CPU (backend nie wspiera NPU/GPU)", type='warning')
+
+                # Reset state immediately
+                self.model_state = ModelState.LOADING
+                self.loaded_model = None
+                self._update_status_ui()
+
+                self.refresh_device_cards() # Refresh to show compatibility badges
                 self.refresh_model_cards()
                 self.refresh_backend_buttons()
 
