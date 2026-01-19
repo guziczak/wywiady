@@ -4,6 +4,7 @@ PDF report generator based on ReportLab (pure Python, no system deps).
 
 import os
 import tempfile
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -51,9 +52,27 @@ class PDFGenerator:
         fonts_dir = (Path(__file__).parent.parent / "assets" / "fonts").resolve()
         regular_path = fonts_dir / "DejaVuSans.ttf"
         bold_path = fonts_dir / "DejaVuSans-Bold.ttf"
+        font_urls = {
+            "DejaVuSans.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans.ttf",
+            "DejaVuSans-Bold.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans-Bold.ttf",
+        }
         self.base_font = "Helvetica"
         self.bold_font = "Helvetica-Bold"
         try:
+            fonts_dir.mkdir(parents=True, exist_ok=True)
+            if not regular_path.exists():
+                log(f"[PDF] Missing font: {regular_path} - attempting download")
+                try:
+                    urllib.request.urlretrieve(font_urls["DejaVuSans.ttf"], str(regular_path))
+                except Exception as e:
+                    log(f"[PDF] Failed to download DejaVuSans.ttf: {e}")
+            if not bold_path.exists():
+                log(f"[PDF] Missing bold font: {bold_path} - attempting download")
+                try:
+                    urllib.request.urlretrieve(font_urls["DejaVuSans-Bold.ttf"], str(bold_path))
+                except Exception as e:
+                    log(f"[PDF] Failed to download DejaVuSans-Bold.ttf: {e}")
+
             if regular_path.exists():
                 pdfmetrics.registerFont(TTFont("DejaVuSans", str(regular_path)))
                 self.base_font = "DejaVuSans"

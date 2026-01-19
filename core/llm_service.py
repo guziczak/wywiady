@@ -316,19 +316,19 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         diag_context = json.dumps(diagnoses or [], ensure_ascii=False, indent=2)
         proc_context = json.dumps(procedures or [], ensure_ascii=False, indent=2)
 
-        prompt = f"""You are a clinician. Based on the transcript, produce a SOAP summary.
-Do not invent facts. If information is missing, return an empty string.
+        prompt = f"""Jestes lekarzem. Na podstawie transkrypcji przygotuj podsumowanie SOAP.
+Nie wymyslaj faktow. Jesli brak informacji, zwroc pusty string.
 
-Transcript:
+Transkrypcja:
 {transcript}
 
-Diagnoses (optional):
+Rozpoznania (opcjonalnie):
 {diag_context}
 
-Procedures (optional):
+Procedury (opcjonalnie):
 {proc_context}
 
-Return ONLY valid JSON with keys:
+Zwroc TYLKO poprawny JSON z kluczami:
 {{
   \"subjective\": \"\",
   \"objective\": \"\",
