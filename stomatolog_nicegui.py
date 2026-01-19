@@ -2089,22 +2089,38 @@ def main():
 
     install_windows_ctrl_handler()
 
-    # Fallback: allow quitting with 'Q' from console (when Ctrl+C is not delivered)
+    # Fallback: allow quitting with 'Q' or Ctrl+C from console (when Ctrl+C event is not delivered)
     def start_console_quit_listener():
         if sys.platform != 'win32':
             return
         try:
             import msvcrt
+            import ctypes
+            from ctypes import wintypes
         except Exception:
             return
 
         def _listener():
-            print("[APP] Press Q to quit (fallback)", flush=True)
+            # Disable processed input so Ctrl+C is captured as '\x03'
+            try:
+                kernel32 = ctypes.windll.kernel32
+                STD_INPUT_HANDLE = -10
+                h = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+                mode = wintypes.DWORD()
+                if h and kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                    ENABLE_PROCESSED_INPUT = 0x0001
+                    if mode.value & ENABLE_PROCESSED_INPUT:
+                        kernel32.SetConsoleMode(h, mode.value & ~ENABLE_PROCESSED_INPUT)
+                        print("[APP] Console raw mode enabled for Ctrl+C", flush=True)
+            except Exception:
+                pass
+
+            print("[APP] Press Q or Ctrl+C to quit (fallback)", flush=True)
             while True:
                 try:
                     if msvcrt.kbhit():
                         ch = msvcrt.getwch()
-                        if ch in ('q', 'Q'):
+                        if ch in ('q', 'Q', '\x03'):
                             print("[APP] Quit requested", flush=True)
                             os._exit(0)
                     time.sleep(0.1)
