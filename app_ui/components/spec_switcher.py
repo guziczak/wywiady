@@ -79,14 +79,14 @@ class SpecializationSwitcher:
         button_label = _label(active_spec) if active_spec else "Specjalizacja"
 
         with ui.dropdown_button(button_label, auto_close=True).props(
-            'flat dense dropdown-icon="arrow_drop_down"'
+            'flat dense dropdown-icon="arrow_drop_down" menu-class="bg-white text-gray-900"'
         ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
             if not specs:
-                ui.item('Brak specjalizacji').props('disabled')
+                ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
             for spec in specs:
                 is_active = spec.id == active_spec.id
                 text = _label(spec)
-                item = ui.item(text, on_click=lambda s=spec: self._on_select(s))
+                item = ui.item(text, on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900')
                 if is_active:
                     item.classes('font-bold')
         # Extra click handler to ensure open in desktop EXE
