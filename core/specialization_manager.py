@@ -166,6 +166,7 @@ class SpecializationManager:
         """Ładuje wszystkie specjalizacje z katalogu data/specializations/"""
         if not SPECIALIZATIONS_DIR.exists():
             print(f"[SPEC] Directory not found: {SPECIALIZATIONS_DIR}")
+            self._load_fallback_specializations()
             return
 
         for spec_dir in SPECIALIZATIONS_DIR.iterdir():
@@ -186,6 +187,22 @@ class SpecializationManager:
 
             except Exception as e:
                 print(f"[SPEC] Error loading {config_path}: {e}")
+
+        if not self._specializations:
+            print("[SPEC] No specializations loaded from disk. Using fallback defaults.")
+            self._load_fallback_specializations()
+
+    def _load_fallback_specializations(self) -> None:
+        """Awaryjne specjalizacje gdy brak danych na dysku."""
+        defaults = [
+            {"id": 1, "name": "Stomatologia", "slug": "stomatologia", "icon": "🦷", "enabled": True},
+            {"id": 2, "name": "Kardiologia", "slug": "kardiologia", "icon": "❤️", "enabled": True},
+            {"id": 3, "name": "Okulistyka", "slug": "okulistyka", "icon": "👁️", "enabled": True},
+        ]
+        for data in defaults:
+            spec = Specialization.from_dict(data)
+            self._specializations[spec.id] = spec
+            print(f"[SPEC] Loaded fallback: {spec.name} (ID={spec.id})")
 
     def _load_active_from_config(self) -> None:
         """Ładuje aktywną specjalizację z głównego configa."""
