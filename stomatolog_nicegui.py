@@ -2070,6 +2070,32 @@ def main():
 
     install_windows_ctrl_handler()
 
+    # Fallback: allow quitting with 'Q' from console (when Ctrl+C is not delivered)
+    def start_console_quit_listener():
+        if sys.platform != 'win32':
+            return
+        try:
+            import msvcrt
+        except Exception:
+            return
+
+        def _listener():
+            print("[APP] Press Q to quit (fallback)", flush=True)
+            while True:
+                try:
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getwch()
+                        if ch in ('q', 'Q'):
+                            print("[APP] Quit requested", flush=True)
+                            os._exit(0)
+                    time.sleep(0.1)
+                except Exception:
+                    time.sleep(0.5)
+
+        threading.Thread(target=_listener, daemon=True).start()
+
+    start_console_quit_listener()
+
 
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
