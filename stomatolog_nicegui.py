@@ -491,6 +491,37 @@ class WywiadApp:
             self._update_status_ui()
             return
 
+        # Dla backendów innych niż OpenVINO nie używamy subprocess loadera
+        if backend_type != "openvino_whisper":
+            # Sprawdź czy backend jest zainstalowany / dostępny
+            if self.transcriber_manager:
+                try:
+                    backends = self.transcriber_manager.get_available_backends()
+                    info = next((b for b in backends if b.type.value == backend_type), None)
+                    if info and not info.is_installed:
+                        self.model_state = ModelState.ERROR
+                        self.model_error_message = f"Brak pakietu: {info.pip_package}"
+                        self._update_status_ui()
+                        return
+                    if info and info.requires_ffmpeg and not info.ffmpeg_installed:
+                        self.model_state = ModelState.ERROR
+                        self.model_error_message = "Brak ffmpeg"
+                        self._update_status_ui()
+                        return
+                except Exception:
+                    pass
+
+            model_name = self._get_selected_model_name()
+            device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
+            self.model_state = ModelState.READY
+            self.loaded_model = LoadedModelInfo(
+                backend=backend_type,
+                model_name=model_name,
+                device=device
+            )
+            self._update_status_ui()
+            return
+
         if not self.transcriber_manager:
             self.model_state = ModelState.ERROR
             self.model_error_message = "Brak transcriber manager"
@@ -499,6 +530,18 @@ class WywiadApp:
 
         # Anuluj poprzednie zadanie (zabij subprocess)
         self._cancel_current_task()
+
+        # Sprawdź czy OpenVINO jest zainstalowane
+        try:
+            backends = self.transcriber_manager.get_available_backends()
+            info = next((b for b in backends if b.type.value == "openvino_whisper"), None)
+            if info and not info.is_installed:
+                self.model_state = ModelState.ERROR
+                self.model_error_message = "Brak openvino-genai"
+                self._update_status_ui()
+                return
+        except Exception:
+            pass
 
         # Utwórz nowe zadanie
         model_name = self._get_selected_model_name()
@@ -1163,6 +1206,7 @@ class WywiadApp:
 
     def show_install_dialog(self, info):
         """Pokazuje dialog instalacji backendu."""
+        client = ui.context.client
         with ui.dialog() as dialog, ui.card().classes('w-[450px]'):
             ui.label(f'Instalacja: {info.name}').classes('text-xl font-bold')
             ui.separator()
@@ -1283,12 +1327,12 @@ class WywiadApp:
                     success_card.visible = True
                     cancel_btn.text = "Zamknij"
                     cancel_btn.props('color=green')
-                    ui.notify(f"Zainstalowano {info.name}!", type='positive', timeout=5000)
+                    self._notify_client(client, f"Zainstalowano {info.name}!", type='positive', timeout=5000)
                 else:
                     error_message_label.text = message[:100]
                     error_card.visible = True
                     cancel_btn.text = "Zamknij"
-                    ui.notify(f"Blad: {message}", type='negative', timeout=5000)
+                    self._notify_client(client, f"Blad: {message}", type='negative', timeout=5000)
 
             install_btn.on('click', lambda: asyncio.create_task(do_install()))
 
@@ -1812,6 +1856,18 @@ class WywiadApp:
             ui.notify(f"Skopiowano: {label}", type='positive')
         else:
             ui.notify("Brak tekstu do skopiowania", type='warning')
+
+    def _notify_client(self, client, message: str, type: Optional[str] = None, timeout: Optional[int] = None):
+        """Bezpieczne notify w tle (bez slot context)."""
+        try:
+            options = {"message": str(message)}
+            if type:
+                options["type"] = type
+            if timeout:
+                options["timeout"] = timeout
+            client.outbox.enqueue_message("notify", options, client.id)
+        except Exception:
+            pass
 
     def _check_session_key_update(self):
         """Sprawdza czy session key zmienił się w pliku config (np. przez rozszerzenie)."""
