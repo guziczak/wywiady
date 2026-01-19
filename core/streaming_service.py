@@ -4,7 +4,12 @@ import time
 from pathlib import Path
 import numpy as np
 import sounddevice as sd
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+    _FASTER_WHISPER_IMPORT_ERROR = None
+except Exception as e:
+    WhisperModel = None
+    _FASTER_WHISPER_IMPORT_ERROR = str(e)
 
 # Define models path
 MODELS_DIR = Path(__file__).parent.parent / "models" / "faster-whisper"
@@ -77,6 +82,8 @@ class StreamingTranscriber:
 
         # Ensure models dir exists (tylko dla faster-whisper)
         if not use_openvino:
+            if WhisperModel is None:
+                raise RuntimeError(f"Brak faster-whisper: {_FASTER_WHISPER_IMPORT_ERROR}")
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Callbacks dla różnych warstw
@@ -116,6 +123,8 @@ class StreamingTranscriber:
             if self.use_openvino:
                 self.model_tiny = OpenVINOShim("tiny", self.device)
             else:
+                if WhisperModel is None:
+                    raise RuntimeError(f"Brak faster-whisper: {_FASTER_WHISPER_IMPORT_ERROR}")
                 self.model_tiny = WhisperModel(
                     "tiny",
                     device=self.device if self.device != "auto" else "cpu",
@@ -139,6 +148,8 @@ class StreamingTranscriber:
                 if self.use_openvino:
                     self.model_medium = OpenVINOShim("medium", self.device)
                 else:
+                    if WhisperModel is None:
+                        raise RuntimeError(f"Brak faster-whisper: {_FASTER_WHISPER_IMPORT_ERROR}")
                     self.model_medium = WhisperModel(
                         "medium",
                         device=self.device if self.device != "auto" else "cpu",
@@ -157,6 +168,8 @@ class StreamingTranscriber:
                 if self.use_openvino:
                     self.model_large = OpenVINOShim("large-v3", self.device)
                 else:
+                    if WhisperModel is None:
+                        raise RuntimeError(f"Brak faster-whisper: {_FASTER_WHISPER_IMPORT_ERROR}")
                     self.model_large = WhisperModel(
                         "large-v3",
                         device=self.device if self.device != "auto" else "cpu",

@@ -61,6 +61,7 @@ class LiveInterviewView:
 
         # Streaming transcriber
         self.transcriber = None
+        self.transcriber_error = None
         if StreamingTranscriber:
             try:
                 # 1. Pobierz konfigurację
@@ -106,6 +107,7 @@ class LiveInterviewView:
                 # Przeniesione do _start_background_loading wywoływanego przez timer
                 
             except Exception as e:
+                self.transcriber_error = str(e)
                 print(f"[LIVE] Could not init transcriber: {e}", flush=True)
 
         # UI Components
@@ -243,7 +245,7 @@ class LiveInterviewView:
     def _toggle_session(self):
         """Przełącza sesję nagrywania."""
         if not self.transcriber:
-            ui.notify("Brak modułu transkrypcji", type='negative')
+            ui.notify(self.transcriber_error or "Brak modułu transkrypcji", type='negative')
             return
 
         if self.state.status == SessionStatus.IDLE:

@@ -29,6 +29,7 @@ class SpecializationSwitcher:
         self.button_icon = None
         self.button_label = None
         self.dropdown = None
+        self.dialog = None
 
     @staticmethod
     @lru_cache(maxsize=64)
@@ -71,27 +72,31 @@ class SpecializationSwitcher:
             self._create_expanded(active_spec)
 
     def _create_compact(self, active_spec: Specialization) -> None:
-        """Kompaktowy widok - dropdown button (stabilny w EXE)."""
+        """Kompaktowy widok - przycisk + dialog (najpewniejsze w EXE)."""
         def _label(spec: Specialization) -> str:
             return f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
 
         specs = self.spec_manager.get_all()
         button_label = _label(active_spec) if active_spec else "Specjalizacja"
 
-        with ui.dropdown_button(button_label, auto_close=True).props(
-            'flat dense dropdown-icon="arrow_drop_down" menu-class="bg-white text-gray-900"'
-        ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
-            if not specs:
-                ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
-            for spec in specs:
-                is_active = spec.id == active_spec.id
-                text = _label(spec)
-                item = ui.item(text, on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900')
-                if is_active:
-                    item.classes('font-bold')
-        # Extra click handler to ensure open in desktop EXE
-        if self.dropdown:
-            self.dropdown.on('click', lambda: self.dropdown.open())
+        with ui.button(button_label, on_click=lambda: self.dialog.open()).props(
+            'flat dense'
+        ).classes('text-white bg-white/10 hover:bg-white/20'):
+            ui.icon('arrow_drop_down')
+
+        with ui.dialog() as self.dialog:
+            with ui.card().classes('min-w-64'):
+                ui.label('Wybierz specjalizację').classes('text-sm text-gray-500')
+                if not specs:
+                    ui.label('Brak specjalizacji').classes('text-gray-700')
+                else:
+                    with ui.list():
+                        for spec in specs:
+                            is_active = spec.id == active_spec.id
+                            text = _label(spec)
+                            item = ui.item(text, on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900')
+                            if is_active:
+                                item.classes('font-bold')
 
     def _create_expanded(self, active_spec: Specialization) -> None:
         """Rozwinięty widok - chips/tabs."""
@@ -125,6 +130,8 @@ class SpecializationSwitcher:
         if self.dropdown:
             label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
             self.dropdown.text = label
+        if self.dialog:
+            self.dialog.close()
         if self.menu:
             self.menu.close()
 
