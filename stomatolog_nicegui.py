@@ -2163,6 +2163,19 @@ pause
                 pass
         threading.Thread(target=_open_pages, daemon=True).start()
 
+    # Wycisz sporadyczne WinError 10054 z asyncio na Windowsie
+    def _silent_exception_handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError) and getattr(exc, "winerror", None) == 10054:
+            return
+        loop.default_exception_handler(context)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(_silent_exception_handler)
+    except Exception:
+        pass
+
     ui.run(
         title='Wywiad+ v2',
         port=port,
