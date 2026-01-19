@@ -2143,7 +2143,8 @@ pause
     if port != 8089:
         print(f"[APP] Port 8089 in use, switching to {port}.", flush=True)
 
-    # Opcjonalnie otworz landing + lokalny UI (np. gdy uruchamiane z instalatora)
+    auto_open = os.environ.get("WYWIAD_AUTO_OPEN") == "1"
+    # Opcjonalnie otworz landing (np. gdy uruchamiane z instalatora)
     scheme = "http"
 
     if os.environ.get("WYWIAD_OPEN_LANDING") == "1":
@@ -2152,8 +2153,6 @@ pause
                 import webbrowser
                 time.sleep(1.0)
                 webbrowser.open("https://guziczak.github.io/wywiady/", new=1, autoraise=True)
-                time.sleep(0.5)
-                webbrowser.open(f"{scheme}://localhost:{port}", new=1, autoraise=True)
             except Exception:
                 pass
         threading.Thread(target=_open_pages, daemon=True).start()
@@ -2162,7 +2161,7 @@ pause
         title='Wywiad+ v2',
         port=port,
         reload=False,
-        show=False,
+        show=auto_open,
         native=False,
         binding_refresh_interval=0.1,
         reconnect_timeout=120.0,  # Dlugi timeout dla ladowania modeli

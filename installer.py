@@ -212,6 +212,7 @@ def main():
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_OPEN_LANDING=1\n")
+        f.write("set WYWIAD_AUTO_OPEN=1\n")
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
 
