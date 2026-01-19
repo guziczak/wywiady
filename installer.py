@@ -153,6 +153,79 @@ def check_python():
     except (subprocess.CalledProcessError, FileNotFoundError):
         print_error("Nie znaleziono Pythona!\n"                    "Prosze zainstalowac Python 3.10+ ze strony python.org.\n"                    "PAMIETAJ aby zaznaczyc opcje 'Add Python to PATH' podczas instalacji.")
 
+def kill_running_app():
+    try:
+        # Zabij procesy powiązane z aplikacją (po command line)
+        ps = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.CommandLine -like '*stomatolog_nicegui.py*' -or $_.CommandLine -like '*AsystentMedyczny*' } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        )
+        subprocess.run(["powershell", "-Command", ps], capture_output=True)
+    except Exception:
+        pass
+
+def reset_installation(install_dir):
+    print_step("TRYB RESET: usuniecie calego folderu aplikacji")
+    print(f"    Folder: {install_dir}")
+    confirm = input("Wpisz TAK aby potwierdzic usuniecie: ").strip().lower()
+    if confirm not in ("tak", "t", "yes", "y"):
+        print("    Anulowano.")
+        sys.exit(0)
+
+    kill_running_app()
+
+    if os.path.exists(install_dir):
+        try:
+            shutil.rmtree(install_dir)
+        except Exception:
+            # Fallback: PowerShell remove
+            try:
+                subprocess.run(
+                    ["powershell", "-Command", f"Remove-Item -LiteralPath '{install_dir}' -Recurse -Force"],
+                    capture_output=True
+                )
+            except Exception:
+                pass
+
+    print_step("RESET ZAKONCZONY")
+    print("    Uruchom instalator ponownie aby zainstalowac od nowa.")
+    sys.exit(0)
+
+def prompt_quick_reset(timeout_sec: float = 2.0) -> bool:
+    """Pozwala szybko wywolac reset wpisujac 'rst' w konsoli."""
+    try:
+        import msvcrt
+    except Exception:
+        return False
+
+    if not sys.stdin.isatty():
+        return False
+
+    print("    Szybki reset: wpisz 'rst' w ciagu 2 sekund aby wyczyscic instalacje...")
+    start = time.time()
+    buf = ""
+    while (time.time() - start) < timeout_sec:
+        if msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\b":
+                buf = buf[:-1]
+                continue
+            buf += ch
+            try:
+                sys.stdout.write(ch)
+                sys.stdout.flush()
+            except Exception:
+                pass
+            if buf.lower().endswith("rst"):
+                print()
+                return True
+        time.sleep(0.05)
+    print()
+    return False
+
 def main():
     print("========================================================")
     print(f"   INSTALATOR {APP_NAME.upper()}")
@@ -164,11 +237,24 @@ def main():
     # 2. Ustal sciezki
     app_data = os.environ.get("LOCALAPPDATA")
     install_dir = os.path.join(app_data, APP_NAME)
+
+    # Tryb reset (usuwa cala instalacje)
+    if any(arg.lower() in ("--reset", "--wipe", "/reset", "/wipe") for arg in sys.argv[1:]):
+        reset_installation(install_dir)
+    elif prompt_quick_reset():
+        reset_installation(install_dir)
     
     print_step(f"Katalog instalacyjny: {install_dir}")
     
     if not os.path.exists(install_dir):
         os.makedirs(install_dir)
+
+    # Skopiuj instalator EXE do folderu instalacji (stabilna sciezka dla skrótu resetu)
+    try:
+        if str(sys.argv[0]).lower().endswith(".exe"):
+            shutil.copy2(sys.argv[0], os.path.join(install_dir, "AsystentSetup.exe"))
+    except Exception:
+        pass
     
     os.chdir(install_dir)
 
@@ -280,6 +366,19 @@ def main():
     $s.Save()
     """
     subprocess.run(["powershell", "-Command", ps_script], capture_output=True)
+
+    # Skrót resetu (czyści cały folder w AppData)
+    reset_shortcut = os.path.join(desktop, "Reset Asystent Medyczny.lnk")
+    reset_target = os.path.join(install_dir, "AsystentSetup.exe")
+    ps_reset = f"""
+    $s=(New-Object -COM WScript.Shell).CreateShortcut('{reset_shortcut}');
+    $s.TargetPath='{reset_target}';
+    $s.Arguments='--reset';
+    $s.WorkingDirectory='{install_dir}';
+    $s.IconLocation='{icon_path}';
+    $s.Save()
+    """
+    subprocess.run(["powershell", "-Command", ps_reset], capture_output=True)
 
     if remote_commit and not skip_download:
         write_state(state_path, {"commit": remote_commit})
