@@ -77,9 +77,14 @@ class SpecializationSwitcher:
             label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
             options.append({'label': label, 'value': str(spec.id)})
 
+        values = {opt['value'] for opt in options}
+        current_value = str(active_spec.id)
+        if current_value not in values:
+            current_value = next(iter(values), None)
+
         self.select = ui.select(
             options=options,
-            value=str(active_spec.id),
+            value=current_value,
             on_change=lambda e: self._on_select_id(str(e.value)),
         ).props('dense filled options-dense emit-value map-options').classes(
             'min-w-48 text-white bg-white/10'
