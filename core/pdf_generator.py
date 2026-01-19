@@ -14,6 +14,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from xml.sax.saxutils import escape as xml_escape
 
 from core.models import Visit
 
@@ -59,6 +60,25 @@ class PDFGenerator:
                 textColor=colors.HexColor("#555555"),
             )
         )
+        self.styles.add(
+            ParagraphStyle(
+                name="TableCell",
+                parent=self.styles["Normal"],
+                fontSize=8.5,
+                leading=10,
+                wordWrap="CJK",
+            )
+        )
+        self.styles.add(
+            ParagraphStyle(
+                name="TableHeader",
+                parent=self.styles["Normal"],
+                fontSize=8.5,
+                leading=10,
+                textColor=colors.black,
+                spaceAfter=2,
+            )
+        )
 
     @staticmethod
     def _format_date(value: datetime) -> str:
@@ -71,6 +91,12 @@ class PDFGenerator:
         if not value:
             return ""
         return value.strftime("%d.%m.%Y, %H:%M")
+
+    @staticmethod
+    def _safe_text(value) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
     def generate_visit_report(
         self,
@@ -123,26 +149,46 @@ class PDFGenerator:
 
         story.append(Paragraph("Wywiad", self.styles["SectionTitle"]))
         transcript = visit_dict.get("transcript", "-") or "-"
-        transcript_html = transcript.replace("\n", "<br/>")
+        transcript_html = xml_escape(self._safe_text(transcript)).replace("\n", "<br/>")
         story.append(Paragraph(transcript_html, self.styles["Normal"]))
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Rozpoznanie (ICD-10)", self.styles["SectionTitle"]))
-        diag_rows = [["Kod", "Lokalizacja", "Nazwa", "Opis kliniczny"]]
+        diag_rows = [
+            [
+                Paragraph("Kod", self.styles["TableHeader"]),
+                Paragraph("Lokalizacja", self.styles["TableHeader"]),
+                Paragraph("Nazwa", self.styles["TableHeader"]),
+                Paragraph("Opis kliniczny", self.styles["TableHeader"]),
+            ]
+        ]
         if diagnoses:
             for d in diagnoses:
                 diag_rows.append(
                     [
-                        d.get("icd10_code", ""),
-                        d.get("location", ""),
-                        d.get("icd10_name", ""),
-                        d.get("description", ""),
+                        Paragraph(xml_escape(self._safe_text(d.get("icd10_code"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(d.get("location"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(d.get("icd10_name"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(d.get("description"))), self.styles["TableCell"]),
                     ]
                 )
         else:
-            diag_rows.append(["-", "-", "Brak diagnoz", "-"])
+            diag_rows.append(
+                [
+                    Paragraph("-", self.styles["TableCell"]),
+                    Paragraph("-", self.styles["TableCell"]),
+                    Paragraph("Brak diagnoz", self.styles["TableCell"]),
+                    Paragraph("-", self.styles["TableCell"]),
+                ]
+            )
 
-        diag_table = Table(diag_rows, colWidths=[22 * mm, 30 * mm, 60 * mm, 60 * mm])
+        diag_col_widths = [
+            22 * mm,
+            28 * mm,
+            50 * mm,
+            doc.width - (22 + 28 + 50) * mm,
+        ]
+        diag_table = Table(diag_rows, colWidths=diag_col_widths, repeatRows=1)
         diag_table.setStyle(
             TableStyle(
                 [
@@ -150,6 +196,10 @@ class PDFGenerator:
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                 ]
             )
         )
@@ -157,21 +207,41 @@ class PDFGenerator:
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Wykonane procedury", self.styles["SectionTitle"]))
-        proc_rows = [["Kod", "Lokalizacja", "Procedura", "Opis wykonania"]]
+        proc_rows = [
+            [
+                Paragraph("Kod", self.styles["TableHeader"]),
+                Paragraph("Lokalizacja", self.styles["TableHeader"]),
+                Paragraph("Procedura", self.styles["TableHeader"]),
+                Paragraph("Opis wykonania", self.styles["TableHeader"]),
+            ]
+        ]
         if procedures:
             for p in procedures:
                 proc_rows.append(
                     [
-                        p.get("procedure_code", ""),
-                        p.get("location", ""),
-                        p.get("procedure_name", ""),
-                        p.get("description", ""),
+                        Paragraph(xml_escape(self._safe_text(p.get("procedure_code"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(p.get("location"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(p.get("procedure_name"))), self.styles["TableCell"]),
+                        Paragraph(xml_escape(self._safe_text(p.get("description"))), self.styles["TableCell"]),
                     ]
                 )
         else:
-            proc_rows.append(["-", "-", "Brak procedur", "-"])
+            proc_rows.append(
+                [
+                    Paragraph("-", self.styles["TableCell"]),
+                    Paragraph("-", self.styles["TableCell"]),
+                    Paragraph("Brak procedur", self.styles["TableCell"]),
+                    Paragraph("-", self.styles["TableCell"]),
+                ]
+            )
 
-        proc_table = Table(proc_rows, colWidths=[22 * mm, 30 * mm, 60 * mm, 60 * mm])
+        proc_col_widths = [
+            22 * mm,
+            28 * mm,
+            50 * mm,
+            doc.width - (22 + 28 + 50) * mm,
+        ]
+        proc_table = Table(proc_rows, colWidths=proc_col_widths, repeatRows=1)
         proc_table.setStyle(
             TableStyle(
                 [
@@ -179,6 +249,10 @@ class PDFGenerator:
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                 ]
             )
         )
