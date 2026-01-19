@@ -91,10 +91,11 @@ def main():
 
     # 6. Instalacja zaleznosci
     print_step("Instalowanie bibliotek (moze to potrwac)...")
-    pip_exe = os.path.join("venv", "Scripts", "pip")
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
     try:
-        subprocess.check_call([pip_exe, "install", "--upgrade", "pip"])
-        subprocess.check_call([pip_exe, "install", "-r", "requirements.txt"])
+        # Uzyj python -m pip, zeby nie probowac nadpisac uruchomionego pip.exe
+        subprocess.check_call([venv_python, "-m", "pip", "install", "--upgrade", "pip"])
+        subprocess.check_call([venv_python, "-m", "pip", "install", "-r", "requirements.txt"])
     except Exception as e:
         print_error(f"Blad instalacji bibliotek: {e}")
 

@@ -15,6 +15,7 @@ models/openvino-whisper/
 tmpclaude-*
 .nicegui/
 .claude/
+build/
 
 # Node
 node_modules/
