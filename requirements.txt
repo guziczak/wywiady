@@ -12,6 +12,8 @@ pywin32
 psutil
 huggingface_hub
 tqdm
+flask
+cloudscraper
 
 # PDF Export
 reportlab

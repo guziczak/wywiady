@@ -32,15 +32,10 @@ try:
 except ImportError:
     Anthropic = None
 
-# Obsluga Proxy dla Claude
-TOOLS_DIR = Path(__file__).parent.parent / "tools"
-PROXY_PATH = TOOLS_DIR / "claude-code-py" / "src"
-COMMON_TOOLS_PATH = Path(r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
-
-if str(PROXY_PATH) not in sys.path:
-    sys.path.insert(0, str(PROXY_PATH))
-if str(COMMON_TOOLS_PATH) not in sys.path:
-    sys.path.insert(0, str(COMMON_TOOLS_PATH))
+# Obsluga Proxy dla Claude (lokalny moduł w repo)
+ROOT_DIR = Path(__file__).parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 try:
     from proxy import start_proxy_server, get_proxy_base_url
@@ -84,6 +79,7 @@ class LLMService:
             sys.stdout = io.StringIO()
             try:
                 success, port = start_proxy_server(auth_token, port=8765)
+                proxy_log = sys.stdout.getvalue()
             finally:
                 sys.stdout = old_stdout
 
@@ -93,6 +89,9 @@ class LLMService:
                 os.environ["ANTHROPIC_BASE_URL"] = get_proxy_base_url(port)
                 time.sleep(2)
             else:
+                detail = (proxy_log or "").strip()
+                if detail:
+                    raise Exception(f"Nie udalo sie uruchomic proxy: {detail}")
                 raise Exception("Nie udalo sie uruchomic proxy")
 
         client = Anthropic(api_key=auth_token)
