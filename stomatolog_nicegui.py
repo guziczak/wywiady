@@ -2154,6 +2154,15 @@ pause
         storage_secret='wywiad_plus_secret_key',  # Wymagane dla reconnect
     )
 
+    # Opcjonalnie otworz landing + lokalny UI (np. gdy uruchamiane z instalatora)
+    if os.environ.get("WYWIAD_OPEN_LANDING") == "1":
+        try:
+            import webbrowser
+            webbrowser.open("https://guziczak.github.io/wywiady/", new=1, autoraise=True)
+            webbrowser.open(f"http://localhost:{port}", new=1, autoraise=True)
+        except Exception:
+            pass
+
 
 if __name__ in {"__main__", "__mp_main__"}:
     main()
