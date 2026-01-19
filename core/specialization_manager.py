@@ -89,6 +89,7 @@ class Specialization:
     name: str
     slug: str
     icon: str = ""
+    icon_svg: str = ""
     color_primary: str = "#1976D2"
     color_secondary: str = "#BBDEFB"
     location_label: str = "Lokalizacja"
@@ -107,6 +108,7 @@ class Specialization:
             name=data.get('name', ''),
             slug=data.get('slug', ''),
             icon=data.get('icon', ''),
+            icon_svg=data.get('icon_svg', ''),
             color_primary=data.get('color_primary', '#1976D2'),
             color_secondary=data.get('color_secondary', '#BBDEFB'),
             location_label=data.get('location_label', 'Lokalizacja'),
@@ -121,6 +123,7 @@ class Specialization:
             'name': self.name,
             'slug': self.slug,
             'icon': self.icon,
+            'icon_svg': self.icon_svg,
             'color_primary': self.color_primary,
             'color_secondary': self.color_secondary,
             'location_label': self.location_label,
