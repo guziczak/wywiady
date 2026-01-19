@@ -1003,7 +1003,7 @@ class TranscriberManager:
                     model_sizes=list(OpenVINOWhisperTranscriber.MODELS.keys()),
                     is_available=available and ffmpeg_ok,
                     is_installed=is_installed,
-                    pip_package="openvino openvino-genai librosa",
+                    pip_package="openvino openvino-genai librosa huggingface_hub tqdm",
                     unavailable_reason=reason if not is_installed else ("Brak ffmpeg" if not ffmpeg_ok else None),
                     requires_ffmpeg=True,
                     ffmpeg_installed=ffmpeg_ok
@@ -1026,6 +1026,7 @@ class TranscriberManager:
         import subprocess
         import sys
         import re
+        import importlib
 
         backends = {b.type: b for b in self.get_available_backends()}
         if backend_type not in backends:
@@ -1095,6 +1096,8 @@ class TranscriberManager:
             if returncode == 0:
                 if progress_callback:
                     progress_callback("Zainstalowano!")
+                # Odśwież cache importów po instalacji
+                importlib.invalidate_caches()
                 return True, f"Zainstalowano {info.pip_package}"
             else:
                 return False, f"Błąd instalacji (kod {returncode})"

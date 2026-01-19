@@ -10,6 +10,8 @@ webdriver-manager
 pycryptodome
 pywin32
 psutil
+huggingface_hub
+tqdm
 
 # PDF Export
 reportlab

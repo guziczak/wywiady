@@ -546,6 +546,27 @@ class WywiadApp:
         # Utwórz nowe zadanie
         model_name = self._get_selected_model_name()
         device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
+
+        # Sprawdź czy model OpenVINO jest pobrany (XML + BIN)
+        try:
+            from core.transcriber import MODELS_DIR
+            suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
+            model_path = MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-{suffix}-ov"
+            xml_path = model_path / "openvino_encoder_model.xml"
+            bin_path = model_path / "openvino_encoder_model.bin"
+            if not model_path.exists() or not xml_path.exists() or not bin_path.exists():
+                if model_path.exists():
+                    try:
+                        import shutil
+                        shutil.rmtree(model_path)
+                    except Exception:
+                        pass
+                self.model_state = ModelState.ERROR
+                self.model_error_message = f"Model '{model_name}' nie jest pobrany. Kliknij 'Pobierz'."
+                self._update_status_ui()
+                return
+        except Exception as e:
+            print(f"[LOAD] Model check error: {e}", flush=True)
         task = CancellableTask(f"load_{model_name}_{device}")
         self.current_task = task
 
@@ -576,7 +597,7 @@ class WywiadApp:
 
             # Czekaj na wynik w osobnym WĄTKU (nie blokuje event loop)
             loop = asyncio.get_event_loop()
-            success = await loop.run_in_executor(None, lambda: self._wait_for_subprocess(process, task))
+            success, error = await loop.run_in_executor(None, lambda: self._wait_for_subprocess(process, task))
 
             # Sprawdź czy to NADAL aktualny task (nie został zastąpiony przez nowy)
             if self.current_task != task:
@@ -636,8 +657,11 @@ class WywiadApp:
                             print(f"[AUTO-SWITCH] Failed: {e}", flush=True)
             else:
                 self.model_state = ModelState.ERROR
-                self.model_error_message = "Subprocess failed"
-                print(f"[LOAD] Subprocess failed", flush=True)
+                self.model_error_message = error or "Subprocess failed"
+                if error:
+                    print(f"[LOAD] Subprocess failed: {error}", flush=True)
+                else:
+                    print(f"[LOAD] Subprocess failed", flush=True)
 
         except asyncio.CancelledError:
             print(f"[LOAD] Async cancelled", flush=True)
@@ -656,31 +680,59 @@ class WywiadApp:
             self._update_status_ui()
             self.refresh_device_cards()
 
-    def _wait_for_subprocess(self, process: subprocess.Popen, task: CancellableTask) -> bool:
-        """Czeka na subprocess, sprawdzając czy nie anulowano."""
+    def _wait_for_subprocess(self, process: subprocess.Popen, task: CancellableTask) -> tuple[bool, Optional[str]]:
+        """Czeka na subprocess, sprawdzajac czy nie anulowano."""
         try:
+            result_success = None
+            result_error = None
+            last_line = None
             while process.poll() is None:
-                # Sprawdź czy anulowano
+                # Sprawdz czy anulowano
                 if task.is_cancelled():
-                    return False
+                    return False, None
                 # Czytaj output
                 line = process.stdout.readline()
                 if line:
-                    print(f"[SUBPROCESS] {line.strip()}", flush=True)
+                    line = line.strip()
+                    if line:
+                        last_line = line
+                        print(f"[SUBPROCESS] {line}", flush=True)
+                    if line.startswith("RESULT:"):
+                        import json
+                        try:
+                            result = json.loads(line[7:])
+                            result_success = result.get("success", False)
+                            result_error = result.get("error")
+                        except Exception:
+                            pass
                 time.sleep(0.1)
 
-            # Przeczytaj pozostały output
+            # Przeczytaj pozostaly output
             for line in process.stdout:
-                print(f"[SUBPROCESS] {line.strip()}", flush=True)
+                line = line.strip()
+                if not line:
+                    continue
+                last_line = line
+                print(f"[SUBPROCESS] {line}", flush=True)
                 if line.startswith("RESULT:"):
                     import json
-                    result = json.loads(line[7:])
-                    return result.get("success", False)
+                    try:
+                        result = json.loads(line[7:])
+                        result_success = result.get("success", False)
+                        result_error = result.get("error")
+                    except Exception:
+                        pass
 
-            return process.returncode == 0
+            if result_success is None:
+                result_success = process.returncode == 0
+
+            if not result_success and not result_error and last_line:
+                result_error = last_line[:200]
+
+            return bool(result_success), result_error
         except Exception as e:
             print(f"[SUBPROCESS] Wait error: {e}", flush=True)
-            return False
+            return False, str(e)
 
     def _set_device_sync(self, device_id: str):
         """Ustawia urządzenie w backendzie (synchronicznie)."""
@@ -1328,6 +1380,10 @@ class WywiadApp:
                     cancel_btn.text = "Zamknij"
                     cancel_btn.props('color=green')
                     self._notify_client(client, f"Zainstalowano {info.name}!", type='positive', timeout=5000)
+                    # Odśwież stan backendów i modeli po instalacji
+                    self.refresh_backend_buttons()
+                    self.refresh_model_cards()
+                    self.refresh_device_cards()
                 else:
                     error_message_label.text = message[:100]
                     error_card.visible = True
