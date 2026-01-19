@@ -32,6 +32,24 @@ def print_progress(prefix, current, total, width=30):
         sys.stdout.write(f"\r{prefix} {current}")
     sys.stdout.flush()
 
+def run_with_spinner(cmd, label):
+    spinner = "|/-\\"
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    idx = 0
+    while True:
+        try:
+            out, _ = proc.communicate(timeout=0.1)
+            break
+        except subprocess.TimeoutExpired:
+            sys.stdout.write(f"\r{label} {spinner[idx % len(spinner)]}")
+            sys.stdout.flush()
+            idx += 1
+    sys.stdout.write(f"\r{label} OK\n")
+    sys.stdout.flush()
+    if proc.returncode != 0:
+        details = out.strip() if out else "Brak szczegolow."
+        print_error(f"{label} nieudane:\n{details}")
+
 def check_python():
     print_step("Sprawdzanie instalacji Python w systemie...")
     try:
@@ -115,8 +133,8 @@ def main():
     venv_python = os.path.join("venv", "Scripts", "python.exe")
     try:
         # Uzyj python -m pip, zeby nie probowac nadpisac uruchomionego pip.exe
-        subprocess.check_call([venv_python, "-m", "pip", "install", "--upgrade", "pip"])
-        subprocess.check_call([venv_python, "-m", "pip", "install", "-r", "requirements.txt"])
+        run_with_spinner([venv_python, "-m", "pip", "install", "--upgrade", "pip"], "    Aktualizacja pip")
+        run_with_spinner([venv_python, "-m", "pip", "install", "-r", "requirements.txt"], "    Instalacja bibliotek")
     except Exception as e:
         print_error(f"Blad instalacji bibliotek: {e}")
 
