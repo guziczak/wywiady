@@ -21,15 +21,28 @@ def print_error(msg):
     input("Nacisnij ENTER aby zakonczyc...")
     sys.exit(1)
 
+def _human_bytes(num):
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(num)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+
 def print_progress(prefix, current, total, width=30):
     if total and total > 0:
         ratio = min(max(current / total, 0), 1)
         filled = int(width * ratio)
         bar = "#" * filled + "-" * (width - filled)
         percent = int(ratio * 100)
-        sys.stdout.write(f"\r{prefix} [{bar}] {percent}%")
+        sys.stdout.write(
+            f"\r{prefix} [{bar}] {percent}% ({_human_bytes(current)}/{_human_bytes(total)})"
+        )
     else:
-        sys.stdout.write(f"\r{prefix} {current}")
+        spinner = "|/-\\"
+        idx = getattr(print_progress, "_spin", 0)
+        print_progress._spin = (idx + 1) % len(spinner)
+        sys.stdout.write(f"\r{prefix} {spinner[idx]} {_human_bytes(current)}")
     sys.stdout.flush()
 
 def run_with_spinner(cmd, label):
