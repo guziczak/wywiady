@@ -5,13 +5,16 @@ import urllib.request
 import zipfile
 import shutil
 import time
+import json
 from pathlib import Path
 
 # Konfiguracja
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
+REPO_API_COMMIT = "https://api.github.com/repos/guziczak/wywiady/commits/main"
 APP_NAME = "AsystentMedyczny"
 MAIN_SCRIPT = "stomatolog_nicegui.py"
 ICON_REL_PATH = os.path.join("extension", "icon.png")
+STATE_FILE = ".install_state.json"
 
 def print_step(msg):
     print(f"\n[*] {msg}")
@@ -20,6 +23,34 @@ def print_error(msg):
     print(f"\n[!] BLAD: {msg}")
     input("Nacisnij ENTER aby zakonczyc...")
     sys.exit(1)
+
+def get_remote_commit():
+    try:
+        req = urllib.request.Request(
+            REPO_API_COMMIT,
+            headers={"User-Agent": f"{APP_NAME}-installer"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("sha")
+    except Exception:
+        return None
+
+def read_state(path):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def write_state(path, state):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
 
 def _human_bytes(num):
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -99,44 +130,54 @@ def main():
     os.chdir(install_dir)
 
     # 3. Pobieranie
-    print_step("Pobieranie najnowszej wersji aplikacji...")
+    state_path = os.path.join(install_dir, STATE_FILE)
+    state = read_state(state_path)
+    remote_commit = get_remote_commit()
+    skip_download = False
+    if remote_commit and state.get("commit") == remote_commit and os.path.exists(MAIN_SCRIPT):
+        print_step("Wersja jest aktualna. Pomijam pobieranie.")
+        skip_download = True
+
     zip_path = "repo.zip"
     try:
-        def _download_hook(block_num, block_size, total_size):
-            downloaded = block_num * block_size
-            print_progress("    Pobieranie", downloaded, total_size)
+        if not skip_download:
+            print_step("Pobieranie najnowszej wersji aplikacji...")
+            def _download_hook(block_num, block_size, total_size):
+                downloaded = block_num * block_size
+                print_progress("    Pobieranie", downloaded, total_size)
 
-        urllib.request.urlretrieve(REPO_URL, zip_path, reporthook=_download_hook)
-        print()  # newline after progress
+            urllib.request.urlretrieve(REPO_URL, zip_path, reporthook=_download_hook)
+            print()  # newline after progress
     except Exception as e:
         print_error(f"Nie udalo sie pobrac plikow: {e}")
 
     # 4. Rozpakowywanie
-    print_step("Rozpakowywanie...")
     try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            members = zip_ref.infolist()
-            total = len(members)
-            for i, member in enumerate(members, 1):
-                zip_ref.extract(member, ".")
-                print_progress("    Rozpakowywanie", i, total)
-            print()  # newline after progress
-        
-        # Przenoszenie z podkatalogu wywiady-main
-        extracted_folder = "wywiady-main"
-        if os.path.exists(extracted_folder):
-            for item in os.listdir(extracted_folder):
-                s = os.path.join(extracted_folder, item)
-                d = os.path.join(".", item)
-                if os.path.exists(d):
-                    if os.path.isdir(d):
-                        shutil.rmtree(d)
-                    else:
-                        os.remove(d)
-                shutil.move(s, d)
-            os.rmdir(extracted_folder)
-        
-        os.remove(zip_path)
+        if not skip_download:
+            print_step("Rozpakowywanie...")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                members = zip_ref.infolist()
+                total = len(members)
+                for i, member in enumerate(members, 1):
+                    zip_ref.extract(member, ".")
+                    print_progress("    Rozpakowywanie", i, total)
+                print()  # newline after progress
+            
+            # Przenoszenie z podkatalogu wywiady-main
+            extracted_folder = "wywiady-main"
+            if os.path.exists(extracted_folder):
+                for item in os.listdir(extracted_folder):
+                    s = os.path.join(extracted_folder, item)
+                    d = os.path.join(".", item)
+                    if os.path.exists(d):
+                        if os.path.isdir(d):
+                            shutil.rmtree(d)
+                        else:
+                            os.remove(d)
+                    shutil.move(s, d)
+                os.rmdir(extracted_folder)
+            
+            os.remove(zip_path)
     except Exception as e:
         print_error(f"Blad podczas rozpakowywania: {e}")
 
@@ -149,14 +190,16 @@ def main():
             print_error(f"Nie udalo sie stworzyc venv: {e}")
 
     # 6. Instalacja zaleznosci
-    print_step("Instalowanie bibliotek (moze to potrwac)...")
-    venv_python = os.path.join("venv", "Scripts", "python.exe")
-    try:
-        # Uzyj python -m pip, zeby nie probowac nadpisac uruchomionego pip.exe
-        run_with_spinner([venv_python, "-m", "pip", "install", "--upgrade", "pip"], "    Aktualizacja pip")
-        run_with_spinner([venv_python, "-m", "pip", "install", "-r", "requirements.txt"], "    Instalacja bibliotek")
-    except Exception as e:
-        print_error(f"Blad instalacji bibliotek: {e}")
+    need_install = (not os.path.exists("venv")) or (not skip_download)
+    if need_install:
+        print_step("Instalowanie bibliotek (moze to potrwac)...")
+        venv_python = os.path.join("venv", "Scripts", "python.exe")
+        try:
+            # Uzyj python -m pip, zeby nie probowac nadpisac uruchomionego pip.exe
+            run_with_spinner([venv_python, "-m", "pip", "install", "--upgrade", "pip"], "    Aktualizacja pip")
+            run_with_spinner([venv_python, "-m", "pip", "install", "-r", "requirements.txt"], "    Instalacja bibliotek")
+        except Exception as e:
+            print_error(f"Blad instalacji bibliotek: {e}")
 
     # 7. Tworzenie skrotu (run_app.bat i Pulpit)
     print_step("Konfiguracja skrotow...")
@@ -184,6 +227,9 @@ def main():
     $s.Save()
     """
     subprocess.run(["powershell", "-Command", ps_script], capture_output=True)
+
+    if remote_commit and not skip_download:
+        write_state(state_path, {"commit": remote_commit})
 
     print("\n========================================================")
     print("   INSTALACJA ZAKONCZONA SUKCESEM!")
