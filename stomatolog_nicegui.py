@@ -2144,10 +2144,7 @@ pause
         print(f"[APP] Port 8089 in use, switching to {port}.", flush=True)
 
     auto_open = os.environ.get("WYWIAD_AUTO_OPEN") == "1"
-    ssl_cert = os.environ.get("WYWIAD_SSL_CERT")
-    ssl_key = os.environ.get("WYWIAD_SSL_KEY")
-    use_https = bool(ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key))
-    scheme = "https" if use_https else "http"
+    scheme = "http"
 
     if os.environ.get("WYWIAD_OPEN_LANDING") == "1" or auto_open:
         def _open_pages():
@@ -2185,7 +2182,6 @@ pause
         binding_refresh_interval=0.1,
         reconnect_timeout=120.0,  # Dlugi timeout dla ladowania modeli
         storage_secret='wywiad_plus_secret_key',  # Wymagane dla reconnect
-        **({"ssl_certfile": ssl_cert, "ssl_keyfile": ssl_key} if use_https else {}),
     )
 
 

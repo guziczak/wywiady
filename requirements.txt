@@ -11,9 +11,8 @@ pycryptodome
 pywin32
 psutil
 
-# PDF Export (opcjonalne)
-jinja2
-weasyprint
+# PDF Export
+reportlab
 
 # Opcjonalne backendy transkrypcji offline (zainstaluj jeden z nich):
 # pip install faster-whisper    # Rekomendowany - najszybszy

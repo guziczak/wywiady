@@ -101,100 +101,6 @@ def run_with_spinner(cmd, label):
         details = out.strip() if out else "Brak szczegolow."
         print_error(f"{label} nieudane:\n{details}")
 
-def _run_cmd(cmd):
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            msg = (res.stdout or "") + "\n" + (res.stderr or "")
-            return False, msg.strip() or "Brak szczegolow."
-        return True, ""
-    except Exception as e:
-        return False, str(e)
-
-def _find_winget():
-    winget = shutil.which("winget")
-    if winget:
-        return winget
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if local_appdata:
-        candidate = os.path.join(local_appdata, "Microsoft", "WindowsApps", "winget.exe")
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-def _download_mkcert(install_dir):
-    try:
-        req = urllib.request.Request(
-            "https://api.github.com/repos/FiloSottile/mkcert/releases/latest",
-            headers={"User-Agent": f"{APP_NAME}-installer"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        assets = data.get("assets", [])
-        asset_url = None
-        for asset in assets:
-            name = asset.get("name", "")
-            if "windows-amd64" in name and name.endswith(".exe"):
-                asset_url = asset.get("browser_download_url")
-                break
-        if not asset_url:
-            return None
-        tools_dir = os.path.join(install_dir, "tools")
-        os.makedirs(tools_dir, exist_ok=True)
-        dst = os.path.join(tools_dir, "mkcert.exe")
-        urllib.request.urlretrieve(asset_url, dst)
-        return dst
-    except Exception:
-        return None
-
-def setup_local_https(install_dir):
-    cert_dir = os.path.join(install_dir, "certs")
-    cert_path = os.path.join(cert_dir, "localhost.pem")
-    key_path = os.path.join(cert_dir, "localhost-key.pem")
-    mkcert_exe = shutil.which("mkcert")
-    if not mkcert_exe:
-        print("    HTTPS: mkcert nie znaleziony. Proba instalacji...")
-        winget = _find_winget()
-        if winget:
-            ok, msg = _run_cmd(
-                [
-                    winget,
-                    "install",
-                    "-e",
-                    "--id",
-                    "FiloSottile.mkcert",
-                    "--silent",
-                    "--accept-package-agreements",
-                    "--accept-source-agreements",
-                ]
-            )
-            if not ok:
-                print(f"    HTTPS: winget niepowodzenie: {msg}")
-        else:
-            print("    HTTPS: winget nie znaleziony.")
-        mkcert_exe = shutil.which("mkcert")
-        if not mkcert_exe:
-            print("    HTTPS: pobieram mkcert bezposrednio...")
-            mkcert_exe = _download_mkcert(install_dir)
-        if not mkcert_exe:
-            print("    HTTPS: mkcert nadal niedostepny (pomijam).")
-            return
-    try:
-        os.makedirs(cert_dir, exist_ok=True)
-        ok, msg = _run_cmd([mkcert_exe, "-install"])
-        if not ok:
-            print(f"    HTTPS: mkcert -install nieudane: {msg}")
-            return
-        ok, msg = _run_cmd(
-            [mkcert_exe, "-cert-file", cert_path, "-key-file", key_path, "localhost", "127.0.0.1", "::1"]
-        )
-        if not ok:
-            print(f"    HTTPS: generowanie certu nieudane: {msg}")
-            return
-        print("    HTTPS: cert localhost gotowy.")
-    except Exception:
-        print("    HTTPS: nie udalo sie skonfigurowac certyfikatu (pomijam).")
-
 
 def check_python():
     print_step("Sprawdzanie instalacji Python w systemie...")
@@ -296,11 +202,7 @@ def main():
         except Exception as e:
             print_error(f"Blad instalacji bibliotek: {e}")
 
-    # 7. Opcjonalne HTTPS na localhost
-    print_step("Konfiguracja HTTPS (opcjonalnie)...")
-    setup_local_https(install_dir)
-
-    # 8. Tworzenie skrotu (run_app.bat i Pulpit)
+    # 7. Tworzenie skrotu (run_app.bat i Pulpit)
     print_step("Konfiguracja skrotow...")
     
     # run_app.bat
@@ -311,8 +213,6 @@ def main():
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_OPEN_LANDING=1\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
-        f.write("set WYWIAD_SSL_CERT=%cd%\\certs\\localhost.pem\n")
-        f.write("set WYWIAD_SSL_KEY=%cd%\\certs\\localhost-key.pem\n")
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
 

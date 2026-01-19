@@ -1,39 +1,26 @@
 """
-Generator raportów PDF.
-
-Używa Jinja2 do szablonów HTML i weasyprint/pdfkit do konwersji na PDF.
-Fallback na html do pliku gdy biblioteki PDF nie są dostępne.
+PDF report generator based on ReportLab (pure Python, no system deps).
 """
 
 import os
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional
 from dataclasses import dataclass, asdict
-import json
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 from core.models import Visit
-
-# Sprawdź dostępność bibliotek PDF
-try:
-    from weasyprint import HTML, CSS
-    WEASYPRINT_AVAILABLE = True
-except ImportError:
-    WEASYPRINT_AVAILABLE = False
-
-try:
-    from jinja2 import Environment, FileSystemLoader, select_autoescape
-    JINJA2_AVAILABLE = True
-except ImportError:
-    JINJA2_AVAILABLE = False
-
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "pdf"
 
 
 @dataclass
 class ClinicConfig:
-    """Konfiguracja gabinetu do nagłówka PDF."""
+    """Clinic header configuration."""
     name: str = "Gabinet Medyczny"
     address: str = ""
     phone: str = ""
@@ -48,262 +35,193 @@ class ClinicConfig:
 
 
 class PDFGenerator:
-    """Generator raportów PDF z wizyt."""
+    """PDF report generator for visits (ReportLab)."""
 
     def __init__(self, clinic_config: Optional[ClinicConfig] = None):
         self.clinic_config = clinic_config or ClinicConfig()
-        self._setup_jinja()
-
-    def _setup_jinja(self) -> None:
-        """Konfiguruje silnik szablonów Jinja2."""
-        if not JINJA2_AVAILABLE:
-            self.jinja_env = None
-            return
-
-        # Upewnij się że katalog szablonów istnieje
-        TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(str(TEMPLATES_DIR)),
-            autoescape=select_autoescape(['html', 'xml'])
+        self.styles = getSampleStyleSheet()
+        self.styles.add(
+            ParagraphStyle(
+                name="SectionTitle",
+                parent=self.styles["Heading2"],
+                fontSize=12,
+                textColor=colors.black,
+                spaceBefore=10,
+                spaceAfter=6,
+            )
         )
-
-        # Dodaj filtry
-        self.jinja_env.filters['format_date'] = self._format_date
-        self.jinja_env.filters['format_datetime'] = self._format_datetime
+        self.styles.add(
+            ParagraphStyle(
+                name="Small",
+                parent=self.styles["Normal"],
+                fontSize=9,
+                leading=11,
+                textColor=colors.HexColor("#555555"),
+            )
+        )
 
     @staticmethod
     def _format_date(value: datetime) -> str:
-        """Formatuje datę do polskiego formatu."""
         if not value:
             return ""
         return value.strftime("%d.%m.%Y")
 
     @staticmethod
     def _format_datetime(value: datetime) -> str:
-        """Formatuje datę i czas."""
         if not value:
             return ""
-        return value.strftime("%d.%m.%Y, godz. %H:%M")
+        return value.strftime("%d.%m.%Y, %H:%M")
 
     def generate_visit_report(
         self,
         visit: Visit,
         output_path: Optional[str] = None,
-        open_after: bool = False
+        open_after: bool = False,
     ) -> str:
-        """
-        Generuje raport PDF z wizyty.
+        visit_dict = visit.to_dict()
+        diagnoses = [d.to_dict() for d in visit.diagnoses]
+        procedures = [p.to_dict() for p in visit.procedures]
 
-        Args:
-            visit: Obiekt wizyty
-            output_path: Ścieżka do pliku wyjściowego (opcjonalna)
-            open_after: Czy otworzyć plik po wygenerowaniu
-
-        Returns:
-            Ścieżka do wygenerowanego pliku
-        """
-        # Przygotuj dane do szablonu
-        context = {
-            'clinic': self.clinic_config.to_dict(),
-            'visit': visit.to_dict(),
-            'diagnoses': [d.to_dict() for d in visit.diagnoses],
-            'procedures': [p.to_dict() for p in visit.procedures],
-            'generated_at': datetime.now(),
-            'visit_date': visit.visit_date,
-            'patient_name': visit.patient_name or "Pacjent anonimowy",
-        }
-
-        # Renderuj HTML
-        html_content = self._render_template('visit_report.html', context)
-
-        # Określ ścieżkę wyjściową
         if not output_path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"wizyta_{timestamp}.pdf"
             output_path = str(Path(tempfile.gettempdir()) / filename)
 
-        # Generuj PDF
-        if WEASYPRINT_AVAILABLE:
-            self._generate_pdf_weasyprint(html_content, output_path)
-        else:
-            # Fallback: zapisz jako HTML
-            output_path = output_path.replace('.pdf', '.html')
-            Path(output_path).write_text(html_content, encoding='utf-8')
-            print(f"[PDF] WeasyPrint niedostępny, zapisano jako HTML: {output_path}")
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=20 * mm,
+            bottomMargin=20 * mm,
+        )
 
-        # Otwórz plik
+        story = []
+        clinic = self.clinic_config.to_dict()
+
+        story.append(Paragraph(clinic.get("name", "Gabinet Medyczny"), self.styles["Heading1"]))
+        clinic_lines = [
+            clinic.get("address", ""),
+            f"Tel: {clinic.get('phone', '')}  Email: {clinic.get('email', '')}",
+        ]
+        story.append(Paragraph("<br/>".join([l for l in clinic_lines if l]), self.styles["Small"]))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("DOKUMENTACJA WIZYTY", self.styles["SectionTitle"]))
+
+        visit_date = visit.visit_date if hasattr(visit, "visit_date") else None
+        visit_date_str = self._format_datetime(visit_date) if isinstance(visit_date, datetime) else str(visit_date or "")
+        patient_name = visit.patient_name or "Pacjent anonimowy"
+        model_used = visit_dict.get("model_used", "-")
+
+        meta = (
+            f"<b>Data wizyty:</b> {visit_date_str}<br/>"
+            f"<b>Pacjent:</b> {patient_name}<br/>"
+            f"<b>Model AI:</b> {model_used}"
+        )
+        story.append(Paragraph(meta, self.styles["Normal"]))
+        story.append(Spacer(1, 8))
+
+        story.append(Paragraph("Wywiad", self.styles["SectionTitle"]))
+        transcript = visit_dict.get("transcript", "-") or "-"
+        transcript_html = transcript.replace("\n", "<br/>")
+        story.append(Paragraph(transcript_html, self.styles["Normal"]))
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("Rozpoznanie (ICD-10)", self.styles["SectionTitle"]))
+        diag_rows = [["Kod", "Lokalizacja", "Nazwa", "Opis kliniczny"]]
+        if diagnoses:
+            for d in diagnoses:
+                diag_rows.append(
+                    [
+                        d.get("icd10_code", ""),
+                        d.get("location", ""),
+                        d.get("icd10_name", ""),
+                        d.get("description", ""),
+                    ]
+                )
+        else:
+            diag_rows.append(["-", "-", "Brak diagnoz", "-"])
+
+        diag_table = Table(diag_rows, colWidths=[22 * mm, 30 * mm, 60 * mm, 60 * mm])
+        diag_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.append(diag_table)
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("Wykonane procedury", self.styles["SectionTitle"]))
+        proc_rows = [["Kod", "Lokalizacja", "Procedura", "Opis wykonania"]]
+        if procedures:
+            for p in procedures:
+                proc_rows.append(
+                    [
+                        p.get("procedure_code", ""),
+                        p.get("location", ""),
+                        p.get("procedure_name", ""),
+                        p.get("description", ""),
+                    ]
+                )
+        else:
+            proc_rows.append(["-", "-", "Brak procedur", "-"])
+
+        proc_table = Table(proc_rows, colWidths=[22 * mm, 30 * mm, 60 * mm, 60 * mm])
+        proc_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.append(proc_table)
+        story.append(Spacer(1, 12))
+
+        footer = f"Wygenerowano: {datetime.now().strftime('%d.%m.%Y %H:%M')} | System: Wywiad+ v2"
+        story.append(Paragraph(footer, self.styles["Small"]))
+
+        doc.build(story)
+
         if open_after:
             self._open_file(output_path)
 
         return output_path
 
-    def _render_template(self, template_name: str, context: Dict[str, Any]) -> str:
-        """Renderuje szablon Jinja2."""
-        if not self.jinja_env:
-            # Fallback bez Jinja2
-            return self._render_fallback(context)
-
-        try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**context)
-        except Exception as e:
-            print(f"[PDF] Błąd szablonu: {e}, używam fallback")
-            return self._render_fallback(context)
-
-    def _render_fallback(self, context: Dict[str, Any]) -> str:
-        """Prosty fallback gdy Jinja2 niedostępne."""
-        clinic = context.get('clinic', {})
-        visit = context.get('visit', {})
-        diagnoses = context.get('diagnoses', [])
-        procedures = context.get('procedures', [])
-
-        diagnoses_html = ""
-        for d in diagnoses:
-            diagnoses_html += f"""
-            <tr>
-                <td>{d.get('icd10_code', '')}</td>
-                <td>{d.get('location', '')}</td>
-                <td>{d.get('icd10_name', '')}</td>
-                <td>{d.get('description', '')}</td>
-            </tr>
-            """
-
-        procedures_html = ""
-        for p in procedures:
-            procedures_html += f"""
-            <tr>
-                <td>{p.get('procedure_code', '')}</td>
-                <td>{p.get('location', '')}</td>
-                <td>{p.get('procedure_name', '')}</td>
-                <td>{p.get('description', '')}</td>
-            </tr>
-            """
-
-        visit_date = context.get('visit_date')
-        if isinstance(visit_date, datetime):
-            visit_date_str = visit_date.strftime("%d.%m.%Y, godz. %H:%M")
-        else:
-            visit_date_str = str(visit_date) if visit_date else ""
-
-        return f"""
-        <!DOCTYPE html>
-        <html lang="pl">
-        <head>
-            <meta charset="UTF-8">
-            <title>Raport wizyty</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; font-size: 12px; }}
-                .header {{ border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 20px; }}
-                .clinic-name {{ font-size: 18px; font-weight: bold; }}
-                .clinic-info {{ color: #666; margin-top: 5px; }}
-                h1 {{ font-size: 16px; margin-top: 30px; }}
-                h2 {{ font-size: 14px; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 10px 0 20px 0; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                th {{ background-color: #f5f5f5; font-weight: bold; }}
-                .transcript {{ background: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-wrap; }}
-                .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 10px; }}
-                .meta {{ color: #666; margin-bottom: 20px; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="clinic-name">{clinic.get('name', 'Gabinet Medyczny')}</div>
-                <div class="clinic-info">
-                    {clinic.get('address', '')}<br>
-                    Tel: {clinic.get('phone', '')} | Email: {clinic.get('email', '')}
-                </div>
-            </div>
-
-            <h1>DOKUMENTACJA WIZYTY</h1>
-            <div class="meta">
-                <strong>Data wizyty:</strong> {visit_date_str}<br>
-                <strong>Pacjent:</strong> {context.get('patient_name', 'Anonimowy')}<br>
-                <strong>Model AI:</strong> {visit.get('model_used', '-')}
-            </div>
-
-            <h2>Wywiad</h2>
-            <div class="transcript">{visit.get('transcript', '-')}</div>
-
-            <h2>Rozpoznanie (ICD-10)</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width: 80px;">Kod</th>
-                        <th style="width: 100px;">Lokalizacja</th>
-                        <th>Nazwa</th>
-                        <th>Opis kliniczny</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {diagnoses_html if diagnoses_html else '<tr><td colspan="4" style="text-align: center; color: #999;">Brak diagnoz</td></tr>'}
-                </tbody>
-            </table>
-
-            <h2>Wykonane procedury</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width: 80px;">Kod</th>
-                        <th style="width: 100px;">Lokalizacja</th>
-                        <th>Procedura</th>
-                        <th>Opis wykonania</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {procedures_html if procedures_html else '<tr><td colspan="4" style="text-align: center; color: #999;">Brak procedur</td></tr>'}
-                </tbody>
-            </table>
-
-            <div class="footer">
-                Wygenerowano: {datetime.now().strftime("%d.%m.%Y %H:%M")} | System: Wywiad+ v2
-            </div>
-        </body>
-        </html>
-        """
-
-    def _generate_pdf_weasyprint(self, html_content: str, output_path: str) -> None:
-        """Generuje PDF używając WeasyPrint."""
-        html = HTML(string=html_content, base_url=str(TEMPLATES_DIR))
-
-        # Załaduj dodatkowe style jeśli istnieją
-        css_path = TEMPLATES_DIR / "styles.css"
-        stylesheets = []
-        if css_path.exists():
-            stylesheets.append(CSS(filename=str(css_path)))
-
-        html.write_pdf(output_path, stylesheets=stylesheets)
-        print(f"[PDF] Wygenerowano: {output_path}")
-
     def _open_file(self, path: str) -> None:
-        """Otwiera plik w domyślnej aplikacji."""
+        """Open file in default app."""
         import subprocess
         import platform
 
         try:
-            if platform.system() == 'Windows':
+            if platform.system() == "Windows":
                 os.startfile(path)
-            elif platform.system() == 'Darwin':
-                subprocess.run(['open', path])
+            elif platform.system() == "Darwin":
+                subprocess.run(["open", path])
             else:
-                subprocess.run(['xdg-open', path])
+                subprocess.run(["xdg-open", path])
         except Exception as e:
-            print(f"[PDF] Nie można otworzyć pliku: {e}")
+            print(f"[PDF] Nie mozna otworzyc pliku: {e}")
 
     def update_clinic_config(self, **kwargs) -> None:
-        """Aktualizuje konfigurację gabinetu."""
+        """Update clinic configuration."""
         for key, value in kwargs.items():
             if hasattr(self.clinic_config, key):
                 setattr(self.clinic_config, key, value)
 
 
-# Singleton
 _pdf_generator: Optional[PDFGenerator] = None
 
 
 def get_pdf_generator() -> PDFGenerator:
-    """Zwraca singleton PDFGenerator."""
+    """Return singleton PDFGenerator."""
     global _pdf_generator
     if _pdf_generator is None:
         _pdf_generator = PDFGenerator()
