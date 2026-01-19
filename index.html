@@ -74,48 +74,6 @@
         .instructions li {
             margin-bottom: 0.8rem;
         }
-        .app-panel {
-            margin-top: 2rem;
-            background: #111827;
-            border: 1px solid #1f2937;
-            border-radius: 12px;
-            padding: 1rem;
-        }
-        .app-panel h2 {
-            margin: 0 0 0.75rem 0;
-            font-size: 1.2rem;
-            color: #e2e8f0;
-        }
-        .app-iframe {
-            width: 100%;
-            height: 60vh;
-            border: 1px solid #0f172a;
-            border-radius: 10px;
-            background: #0b1220;
-        }
-        .app-actions {
-            margin-top: 0.75rem;
-            display: flex;
-            gap: 0.75rem;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        .secondary-btn {
-            background-color: #0ea5e9;
-            color: #0b1220;
-            border: none;
-            padding: 0.7rem 1.2rem;
-            font-size: 0.95rem;
-            font-weight: bold;
-            border-radius: 10px;
-            cursor: pointer;
-            text-decoration: none;
-        }
-        .note {
-            font-size: 0.85rem;
-            color: #94a3b8;
-            margin-top: 0.5rem;
-        }
         code {
             background: #0f172a;
             padding: 2px 5px;
@@ -150,15 +108,12 @@
             </ol>
         </div>
 
-        <div class="app-panel">
-            <h2>Twoja aplikacja (localhost)</h2>
-            <iframe class="app-iframe" src="https://localhost:8089"></iframe>
-            <div class="app-actions">
-                <a class="secondary-btn" href="https://localhost:8089" target="_blank" rel="noopener">Otworz aplikacje</a>
-            </div>
-            <div class="note">
-                Jezeli widzisz blad certyfikatu, uruchom instalator ktory skonfiguruje lokalny HTTPS (mkcert).
-            </div>
+        <div class="instructions">
+            <strong>Uruchomienie aplikacji:</strong>
+            <ol>
+                <li>Uruchom aplikacje ze skrotu na pulpicie.</li>
+                <li>Jesli chcesz otworzyc recznie, wejdz na <code>https://localhost:8089</code>.</li>
+            </ol>
         </div>
     </div>
 </body>
