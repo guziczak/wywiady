@@ -75,12 +75,12 @@ class SpecializationSwitcher:
         options = []
         for spec in self.spec_manager.get_all():
             label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
-            options.append({'label': label, 'value': spec.id})
+            options.append({'label': label, 'value': str(spec.id)})
 
         self.select = ui.select(
             options=options,
-            value=active_spec.id,
-            on_change=lambda e: self._on_select_id(e.value),
+            value=str(active_spec.id),
+            on_change=lambda e: self._on_select_id(str(e.value)),
         ).props('dense filled options-dense emit-value map-options').classes(
             'min-w-48 text-white bg-white/10'
         )
@@ -115,7 +115,7 @@ class SpecializationSwitcher:
         if self.button_label:
             self.button_label.text = spec.name
         if self.select:
-            self.select.value = spec.id
+            self.select.value = str(spec.id)
         if self.menu:
             self.menu.close()
 
@@ -133,12 +133,13 @@ class SpecializationSwitcher:
         if self.button_label:
             self.button_label.text = active_spec.name
         if self.select:
-            self.select.value = active_spec.id
+            self.select.value = str(active_spec.id)
 
     def _on_select_id(self, spec_id: str) -> None:
         """Obsługa wyboru specjalizacji po ID (dla select)."""
         try:
-            spec = next((s for s in self.spec_manager.get_all() if s.id == spec_id), None)
+            # ids are ints in config, select value is string
+            spec = next((s for s in self.spec_manager.get_all() if str(s.id) == str(spec_id)), None)
             if spec:
                 self._on_select(spec)
         except Exception:
