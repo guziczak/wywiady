@@ -32,6 +32,8 @@ try:
 except ImportError:
     Anthropic = None
 
+ANTHROPIC_AVAILABLE = Anthropic is not None
+
 # Obsluga Proxy dla Claude (lokalny moduł w repo)
 ROOT_DIR = Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -42,6 +44,8 @@ try:
     PROXY_AVAILABLE = True
 except ImportError:
     PROXY_AVAILABLE = False
+
+CLAUDE_AVAILABLE = PROXY_AVAILABLE and ANTHROPIC_AVAILABLE
 
 
 class LLMService:
@@ -69,6 +73,8 @@ class LLMService:
         """Wywoluje Claude API przez proxy."""
         if not PROXY_AVAILABLE:
             raise RuntimeError("ModuĹ‚ proxy nie jest dostÄ™pny")
+        if Anthropic is None:
+            raise RuntimeError("Brak biblioteki anthropic (pip install anthropic)")
             
         if not auth_token:
             raise ValueError("Brak tokena Claude!")
@@ -223,9 +229,9 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         claude_token = self._load_claude_token()
         preferred_model = config.get("generation_model", "Auto")
 
-        has_session_key = bool(session_key and session_key.startswith("sk-"))
+        has_session_key = bool(session_key and session_key.startswith("sk-") and CLAUDE_AVAILABLE)
         has_gemini_key = bool(gemini_key and GENAI_AVAILABLE)
-        has_oauth_token = bool(claude_token and PROXY_AVAILABLE)
+        has_oauth_token = bool(claude_token and CLAUDE_AVAILABLE)
         
         model_type = None
         model_name = "Nieznany"
@@ -348,9 +354,9 @@ Zwroc TYLKO poprawny JSON z kluczami:
         claude_token = self._load_claude_token()
         preferred_model = config.get("generation_model", "Auto")
 
-        has_session_key = bool(session_key and session_key.startswith("sk-"))
+        has_session_key = bool(session_key and session_key.startswith("sk-") and CLAUDE_AVAILABLE)
         has_gemini_key = bool(gemini_key and GENAI_AVAILABLE)
-        has_oauth_token = bool(claude_token and PROXY_AVAILABLE)
+        has_oauth_token = bool(claude_token and CLAUDE_AVAILABLE)
 
         model_type = None
         model_name = "Unknown"
@@ -457,7 +463,7 @@ Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
                 session_key = config.get("session_key", "")
                 claude_token = self._load_claude_token()
                 
-                if (session_key or claude_token) and PROXY_AVAILABLE:
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
                     response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
@@ -493,7 +499,7 @@ JSON: {{"corrected_text": "...", "needs_newline": true/false}}"""
             else:
                 session_key = config.get("session_key", "")
                 claude_token = self._load_claude_token()
-                if (session_key or claude_token) and PROXY_AVAILABLE:
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
                     response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
