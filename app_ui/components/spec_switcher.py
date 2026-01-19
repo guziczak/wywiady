@@ -81,13 +81,17 @@ class SpecializationSwitcher:
         with ui.dropdown_button(button_label, auto_close=True).props(
             'flat dense dropdown-icon="arrow_drop_down"'
         ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
-            with ui.list().classes('min-w-48'):
-                for spec in specs:
-                    is_active = spec.id == active_spec.id
-                    text = _label(spec)
-                    item = ui.item(text, on_click=lambda s=spec: self._on_select(s))
-                    if is_active:
-                        item.classes('font-bold')
+            if not specs:
+                ui.item('Brak specjalizacji').props('disabled')
+            for spec in specs:
+                is_active = spec.id == active_spec.id
+                text = _label(spec)
+                item = ui.item(text, on_click=lambda s=spec: self._on_select(s))
+                if is_active:
+                    item.classes('font-bold')
+        # Extra click handler to ensure open in desktop EXE
+        if self.dropdown:
+            self.dropdown.on('click', lambda: self.dropdown.open())
 
     def _create_expanded(self, active_spec: Specialization) -> None:
         """Rozwinięty widok - chips/tabs."""
