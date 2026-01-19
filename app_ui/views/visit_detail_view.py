@@ -69,12 +69,86 @@ class VisitDetailDialog:
                 self._info_row('Model AI', self.visit.model_used or '-')
                 self._info_row('ID', self.visit.id[:8] + '...')
 
+        # Patient details
+        patient_details = [
+            ('PESEL / identyfikator', self.visit.patient_identifier),
+            ('Data urodzenia', self.visit.patient_birth_date),
+            ('Plec', self.visit.patient_sex),
+            ('Adres', self.visit.patient_address),
+            ('Telefon', self.visit.patient_phone),
+            ('Email', self.visit.patient_email),
+        ]
+        if any(value for _, value in patient_details):
+            ui.label('Dane pacjenta').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full bg-gray-50'):
+                with ui.grid(columns=2).classes('w-full gap-4'):
+                    for label, value in patient_details:
+                        if value:
+                            self._info_row(label, value)
+
+        # Subjective summary (S)
+        if self.visit.subjective:
+            ui.label('Wywiad (S)').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.subjective).classes('whitespace-pre-wrap text-sm')
+
         # Transcript
         ui.label('Wywiad').classes('text-lg font-bold mt-4')
         with ui.card().classes('w-full'):
             ui.label(self.visit.transcript or 'Brak transkrypcji').classes(
                 'whitespace-pre-wrap text-sm'
             )
+
+        # Objective / Assessment / Plan
+        if self.visit.objective:
+            ui.label('Badanie przedmiotowe (O)').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.objective).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.assessment:
+            ui.label('Ocena / Rozpoznanie opisowe (A)').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.assessment).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.plan:
+            ui.label('Plan (P)').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.plan).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.recommendations:
+            ui.label('Zalecenia').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.recommendations).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.medications:
+            ui.label('Leki (z dawkowaniem)').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.medications).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.tests_ordered:
+            ui.label('Zlecone badania / konsultacje').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.tests_ordered).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.tests_results:
+            ui.label('Wyniki badan / konsultacji').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.tests_results).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.referrals:
+            ui.label('Skierowania').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.referrals).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.certificates:
+            ui.label('Zaswiadczenia / Niezdolnosc do pracy').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.certificates).classes('whitespace-pre-wrap text-sm')
+
+        if self.visit.additional_notes:
+            ui.label('Dodatkowe uwagi').classes('text-lg font-bold mt-4')
+            with ui.card().classes('w-full'):
+                ui.label(self.visit.additional_notes).classes('whitespace-pre-wrap text-sm')
 
         # Diagnoses
         ui.label('Diagnozy (ICD-10)').classes('text-lg font-bold mt-4')

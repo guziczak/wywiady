@@ -30,6 +30,8 @@ class ClinicConfig:
     email: str = ""
     logo_path: Optional[str] = None
     doctor_name: str = ""
+    doctor_title: str = ""
+    doctor_pwz: str = ""
     nip: str = ""
     regon: str = ""
 
@@ -87,6 +89,15 @@ class PDFGenerator:
         )
         self.styles.add(
             ParagraphStyle(
+                name="FieldLabel",
+                parent=self.styles["Normal"],
+                fontSize=9,
+                leading=11,
+                fontName=self.bold_font,
+            )
+        )
+        self.styles.add(
+            ParagraphStyle(
                 name="TableCell",
                 parent=self.styles["Normal"],
                 fontSize=8.5,
@@ -124,12 +135,34 @@ class PDFGenerator:
             return ""
         return str(value)
 
+    def _sync_clinic_config(self) -> None:
+        """Sync clinic config from config.json if available."""
+        try:
+            from core.config_manager import ConfigManager
+
+            config = ConfigManager()
+            self.update_clinic_config(
+                name=config.get("clinic_name", self.clinic_config.name),
+                address=config.get("clinic_address", self.clinic_config.address),
+                phone=config.get("clinic_phone", self.clinic_config.phone),
+                email=config.get("clinic_email", self.clinic_config.email),
+                nip=config.get("clinic_nip", self.clinic_config.nip),
+                regon=config.get("clinic_regon", self.clinic_config.regon),
+                doctor_name=config.get("doctor_name", self.clinic_config.doctor_name),
+                doctor_title=config.get("doctor_title", self.clinic_config.doctor_title),
+                doctor_pwz=config.get("doctor_pwz", self.clinic_config.doctor_pwz),
+            )
+        except Exception:
+            # Nie blokuj generowania PDF
+            return
+
     def generate_visit_report(
         self,
         visit: Visit,
         output_path: Optional[str] = None,
         open_after: bool = False,
     ) -> str:
+        self._sync_clinic_config()
         visit_dict = visit.to_dict()
         diagnoses = [d.to_dict() for d in visit.diagnoses]
         procedures = [p.to_dict() for p in visit.procedures]
@@ -151,36 +184,82 @@ class PDFGenerator:
         story = []
         clinic = self.clinic_config.to_dict()
 
-        clinic_name = xml_escape(self._safe_text(clinic.get("name", "Gabinet Medyczny")))
+        def fmt(value, fallback: str = "Brak danych") -> str:
+            text = self._safe_text(value).strip()
+            return text if text else fallback
+
+        def add_text_section(title: str, content: str, always_show: bool = True) -> None:
+            if not always_show and not (content or "").strip():
+                return
+            story.append(Paragraph(title, self.styles["SectionTitle"]))
+            text = fmt(content) if always_show else self._safe_text(content)
+            story.append(Paragraph(xml_escape(text).replace("\n", "<br/>"), self.styles["Normal"]))
+            story.append(Spacer(1, 8))
+
+        clinic_name = xml_escape(self._safe_text(clinic.get("name", "Gabinet Medyczny")) or "Gabinet Medyczny")
         story.append(Paragraph(clinic_name, self.styles["Heading1"]))
-        clinic_lines = [
-            xml_escape(self._safe_text(clinic.get("address", ""))),
-            xml_escape(f"Tel: {clinic.get('phone', '')}  Email: {clinic.get('email', '')}"),
-        ]
-        clinic_lines = [l for l in clinic_lines if l.strip()]
+        clinic_lines = []
+        if clinic.get("address"):
+            clinic_lines.append(xml_escape(self._safe_text(clinic.get("address", ""))))
+        contact_bits = []
+        if clinic.get("phone"):
+            contact_bits.append(f"Tel: {clinic.get('phone')}")
+        if clinic.get("email"):
+            contact_bits.append(f"Email: {clinic.get('email')}")
+        if contact_bits:
+            clinic_lines.append(xml_escape(" | ".join(contact_bits)))
+        id_bits = []
+        if clinic.get("nip"):
+            id_bits.append(f"NIP: {clinic.get('nip')}")
+        if clinic.get("regon"):
+            id_bits.append(f"REGON: {clinic.get('regon')}")
+        if id_bits:
+            clinic_lines.append(xml_escape(" | ".join(id_bits)))
         if clinic_lines:
             story.append(Paragraph("<br/>".join(clinic_lines), self.styles["Small"]))
         story.append(Spacer(1, 6))
-        story.append(Paragraph("DOKUMENTACJA WIZYTY", self.styles["SectionTitle"]))
+        story.append(Paragraph("DOKUMENTACJA WIZYTY AMBULATORYJNEJ", self.styles["SectionTitle"]))
 
         visit_date = visit.visit_date if hasattr(visit, "visit_date") else None
         visit_date_str = self._format_datetime(visit_date) if isinstance(visit_date, datetime) else str(visit_date or "")
-        patient_name = xml_escape(self._safe_text(visit.patient_name or "Pacjent anonimowy"))
-        model_used = xml_escape(self._safe_text(visit_dict.get("model_used", "-")))
+        patient_name = self._safe_text(visit.patient_name or "Pacjent anonimowy")
+        model_used = self._safe_text(visit_dict.get("model_used", "-"))
 
-        meta = (
-            f"<b>Data wizyty:</b> {xml_escape(self._safe_text(visit_date_str))}<br/>"
-            f"<b>Pacjent:</b> {patient_name}<br/>"
-            f"<b>Model AI:</b> {model_used}"
-        )
-        story.append(Paragraph(meta, self.styles["Normal"]))
+        meta_lines = [
+            f"<b>Data wizyty:</b> {xml_escape(fmt(visit_date_str))}",
+            f"<b>Pacjent:</b> {xml_escape(fmt(patient_name, 'Pacjent anonimowy'))}",
+            f"<b>PESEL / identyfikator:</b> {xml_escape(fmt(getattr(visit, 'patient_identifier', '')))}",
+            f"<b>Data urodzenia:</b> {xml_escape(fmt(getattr(visit, 'patient_birth_date', '')))}",
+            f"<b>Plec:</b> {xml_escape(fmt(getattr(visit, 'patient_sex', '')))}",
+            f"<b>Adres:</b> {xml_escape(fmt(getattr(visit, 'patient_address', '')))}",
+            f"<b>Telefon:</b> {xml_escape(fmt(getattr(visit, 'patient_phone', '')))}",
+            f"<b>Email:</b> {xml_escape(fmt(getattr(visit, 'patient_email', '')))}",
+            f"<b>Model AI:</b> {xml_escape(fmt(model_used))}",
+        ]
+        story.append(Paragraph("<br/>".join(meta_lines), self.styles["Normal"]))
         story.append(Spacer(1, 8))
 
-        story.append(Paragraph("Wywiad", self.styles["SectionTitle"]))
-        transcript = visit_dict.get("transcript", "-") or "-"
-        transcript_html = xml_escape(self._safe_text(transcript)).replace("\n", "<br/>")
-        story.append(Paragraph(transcript_html, self.styles["Normal"]))
-        story.append(Spacer(1, 10))
+        doctor_title = self._safe_text(clinic.get("doctor_title", "")).strip()
+        doctor_name = self._safe_text(clinic.get("doctor_name", "")).strip()
+        doctor_display = " ".join([doctor_title, doctor_name]).strip()
+        doctor_lines = [
+            f"<b>Lekarz:</b> {xml_escape(fmt(doctor_display))}",
+            f"<b>PWZ:</b> {xml_escape(fmt(clinic.get('doctor_pwz', '')))}",
+        ]
+        story.append(Paragraph("Dane lekarza", self.styles["SectionTitle"]))
+        story.append(Paragraph("<br/>".join(doctor_lines), self.styles["Normal"]))
+        story.append(Spacer(1, 8))
+
+        transcript = visit_dict.get("transcript", "") or ""
+        subjective_text = self._safe_text(getattr(visit, "subjective", "")).strip()
+        if subjective_text:
+            add_text_section("Wywiad (S)", subjective_text, always_show=True)
+            add_text_section("Transkrypcja", transcript, always_show=False)
+        else:
+            add_text_section("Wywiad (S)", transcript or "", always_show=True)
+
+        add_text_section("Badanie przedmiotowe (O)", getattr(visit, "objective", ""), always_show=True)
+        add_text_section("Ocena / Rozpoznanie opisowe (A)", getattr(visit, "assessment", ""), always_show=True)
 
         story.append(Paragraph("Rozpoznanie (ICD-10)", self.styles["SectionTitle"]))
         diag_rows = [
@@ -236,6 +315,14 @@ class PDFGenerator:
         story.append(diag_table)
         story.append(Spacer(1, 10))
 
+        add_text_section("Plan (P)", getattr(visit, "plan", ""), always_show=True)
+        add_text_section("Zalecenia", getattr(visit, "recommendations", ""), always_show=True)
+        add_text_section("Leki (z dawkowaniem)", getattr(visit, "medications", ""), always_show=True)
+        add_text_section("Zlecone badania / konsultacje", getattr(visit, "tests_ordered", ""), always_show=True)
+        add_text_section("Wyniki badan / konsultacji", getattr(visit, "tests_results", ""), always_show=True)
+        add_text_section("Skierowania", getattr(visit, "referrals", ""), always_show=True)
+        add_text_section("Zaswiadczenia / Niezdolnosc do pracy", getattr(visit, "certificates", ""), always_show=True)
+
         story.append(Paragraph("Wykonane procedury", self.styles["SectionTitle"]))
         proc_rows = [
             [
@@ -289,6 +376,16 @@ class PDFGenerator:
         )
         story.append(proc_table)
         story.append(Spacer(1, 12))
+
+        add_text_section("Dodatkowe uwagi", getattr(visit, "additional_notes", ""), always_show=True)
+
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Podpis osoby udzielajacej swiadczen:", self.styles["Small"]))
+        story.append(Paragraph("........................................................", self.styles["Small"]))
+        if doctor_display:
+            story.append(Paragraph(xml_escape(doctor_display), self.styles["Small"]))
+        if clinic.get("doctor_pwz"):
+            story.append(Paragraph(f"PWZ: {xml_escape(self._safe_text(clinic.get('doctor_pwz')))}", self.styles["Small"]))
 
         footer = f"Wygenerowano: {datetime.now().strftime('%d.%m.%Y %H:%M')} | System: Wywiad+ v2"
         story.append(Paragraph(footer, self.styles["Small"]))

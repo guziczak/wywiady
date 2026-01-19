@@ -77,9 +77,26 @@ class VisitService:
         procedures: List[Dict],
         model_used: str = "",
         patient_name: str = "",
+        patient_identifier: str = "",
+        patient_birth_date: str = "",
+        patient_sex: str = "",
+        patient_address: str = "",
+        patient_phone: str = "",
+        patient_email: str = "",
         patient_id: Optional[int] = None,
         status: VisitStatus = VisitStatus.DRAFT,
-        visit_date: Optional[datetime] = None
+        visit_date: Optional[datetime] = None,
+        subjective: str = "",
+        objective: str = "",
+        assessment: str = "",
+        plan: str = "",
+        recommendations: str = "",
+        medications: str = "",
+        tests_ordered: str = "",
+        tests_results: str = "",
+        referrals: str = "",
+        certificates: str = "",
+        additional_notes: str = ""
     ) -> Visit:
         """
         Zapisuje wizytę z ręcznie podanymi danymi.
@@ -101,9 +118,26 @@ class VisitService:
             transcript=transcript,
             model_used=model_used,
             patient_name=patient_name,
+            patient_identifier=patient_identifier,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
+            patient_address=patient_address,
+            patient_phone=patient_phone,
+            patient_email=patient_email,
             patient_id=patient_id,
             status=status,
-            visit_date=visit_date or datetime.now()
+            visit_date=visit_date or datetime.now(),
+            subjective=subjective,
+            objective=objective,
+            assessment=assessment,
+            plan=plan,
+            recommendations=recommendations,
+            medications=medications,
+            tests_ordered=tests_ordered,
+            tests_results=tests_results,
+            referrals=referrals,
+            certificates=certificates,
+            additional_notes=additional_notes
         )
 
         # Dodaj diagnozy

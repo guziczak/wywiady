@@ -35,8 +35,25 @@ class VisitSaveDialog:
         # Stan formularza
         self.selected_patient_id: Optional[int] = None
         self.patient_name = ""
+        self.patient_identifier = ""
+        self.patient_birth_date = ""
+        self.patient_sex = ""
+        self.patient_address = ""
+        self.patient_phone = ""
+        self.patient_email = ""
         self.visit_date = datetime.now()
         self.save_as_completed = True
+        self.subjective = ""
+        self.objective = ""
+        self.assessment = ""
+        self.plan = ""
+        self.recommendations = ""
+        self.medications = ""
+        self.tests_ordered = ""
+        self.tests_results = ""
+        self.referrals = ""
+        self.certificates = ""
+        self.additional_notes = ""
 
         # Komponenty
         self.patient_select = None
@@ -84,6 +101,38 @@ class VisitSaveDialog:
             on_change=lambda e: setattr(self, 'patient_name', e.value)
         ).props('outlined dense').classes('w-full')
 
+        # Dane pacjenta (opcjonalnie)
+        with ui.expansion('Dane pacjenta (opcjonalnie)', icon='badge').classes('w-full mt-2'):
+            with ui.column().classes('w-full gap-3 p-2'):
+                ui.input(
+                    'PESEL / identyfikator',
+                    value=self.patient_identifier
+                ).classes('w-full').on('change', lambda e: setattr(self, 'patient_identifier', e.value))
+                with ui.row().classes('w-full gap-2'):
+                    ui.input(
+                        'Data urodzenia',
+                        placeholder='YYYY-MM-DD',
+                        value=self.patient_birth_date
+                    ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_birth_date', e.value))
+                    ui.select(
+                        'Plec',
+                        options=['', 'K', 'M', 'Inna'],
+                        value=self.patient_sex
+                    ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_sex', e.value))
+                ui.input(
+                    'Adres',
+                    value=self.patient_address
+                ).classes('w-full').on('change', lambda e: setattr(self, 'patient_address', e.value))
+                with ui.row().classes('w-full gap-2'):
+                    ui.input(
+                        'Telefon',
+                        value=self.patient_phone
+                    ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_phone', e.value))
+                    ui.input(
+                        'Email',
+                        value=self.patient_email
+                    ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_email', e.value))
+
         # Data wizyty
         ui.label('Data wizyty').classes('font-bold mt-4')
         with ui.input(
@@ -106,6 +155,59 @@ class VisitSaveDialog:
             value=self.save_as_completed,
             on_change=lambda e: setattr(self, 'save_as_completed', e.value)
         ).classes('w-full')
+
+        # Dane medyczne (SOAP)
+        with ui.expansion('Dane medyczne (SOAP)', icon='assignment').classes('w-full mt-4'):
+            with ui.column().classes('w-full gap-3 p-2'):
+                ui.textarea(
+                    'Wywiad (S)',
+                    value=self.subjective,
+                    placeholder='Podsumowanie wywiadu (opcjonalnie)'
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'subjective', e.value))
+                ui.textarea(
+                    'Badanie przedmiotowe (O)',
+                    value=self.objective
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'objective', e.value))
+                ui.textarea(
+                    'Ocena / Rozpoznanie opisowe (A)',
+                    value=self.assessment
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'assessment', e.value))
+                ui.textarea(
+                    'Plan (P)',
+                    value=self.plan
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'plan', e.value))
+
+        # Zalecenia i dokumenty
+        with ui.expansion('Zalecenia i dokumenty', icon='description').classes('w-full mt-2'):
+            with ui.column().classes('w-full gap-3 p-2'):
+                ui.textarea(
+                    'Zalecenia',
+                    value=self.recommendations
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'recommendations', e.value))
+                ui.textarea(
+                    'Leki (z dawkowaniem)',
+                    value=self.medications
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'medications', e.value))
+                ui.textarea(
+                    'Zlecone badania / konsultacje',
+                    value=self.tests_ordered
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'tests_ordered', e.value))
+                ui.textarea(
+                    'Wyniki badan / konsultacji',
+                    value=self.tests_results
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'tests_results', e.value))
+                ui.textarea(
+                    'Skierowania',
+                    value=self.referrals
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'referrals', e.value))
+                ui.textarea(
+                    'Zaswiadczenia / Niezdolnosc do pracy',
+                    value=self.certificates
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'certificates', e.value))
+                ui.textarea(
+                    'Dodatkowe uwagi',
+                    value=self.additional_notes
+                ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'additional_notes', e.value))
 
         # Podsumowanie
         ui.separator().classes('mt-4')
@@ -182,9 +284,26 @@ class VisitSaveDialog:
                 procedures=self.procedures,
                 model_used=self.model_used,
                 patient_name=patient_name,
+                patient_identifier=self.patient_identifier.strip(),
+                patient_birth_date=self.patient_birth_date.strip(),
+                patient_sex=self.patient_sex.strip(),
+                patient_address=self.patient_address.strip(),
+                patient_phone=self.patient_phone.strip(),
+                patient_email=self.patient_email.strip(),
                 patient_id=patient_id,
                 status=status,
-                visit_date=self.visit_date
+                visit_date=self.visit_date,
+                subjective=self.subjective.strip(),
+                objective=self.objective.strip(),
+                assessment=self.assessment.strip(),
+                plan=self.plan.strip(),
+                recommendations=self.recommendations.strip(),
+                medications=self.medications.strip(),
+                tests_ordered=self.tests_ordered.strip(),
+                tests_results=self.tests_results.strip(),
+                referrals=self.referrals.strip(),
+                certificates=self.certificates.strip(),
+                additional_notes=self.additional_notes.strip()
             )
 
             ui.notify('Wizyta zapisana!', type='positive')
