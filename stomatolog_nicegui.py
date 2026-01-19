@@ -2111,7 +2111,11 @@ pause
     def cleanup():
         print("[APP] Shutting down...", flush=True)
         # Force kill any child processes if needed
-        import psutil
+        try:
+            import psutil
+        except ImportError:
+            print("[APP] psutil missing; skipping child process cleanup.", flush=True)
+            return
         try:
             parent = psutil.Process(os.getpid())
             children = parent.children(recursive=True)
@@ -2123,9 +2127,25 @@ pause
 
     app.on_shutdown(cleanup)
 
+    def _find_available_port(start=8089, end=8100):
+        import socket
+        for port in range(start, end + 1):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.bind(("0.0.0.0", port))
+                    return port
+                except OSError:
+                    continue
+        return start
+
+    port = _find_available_port(8089, 8100)
+    if port != 8089:
+        print(f"[APP] Port 8089 in use, switching to {port}.", flush=True)
+
     ui.run(
         title='Wywiad+ v2',
-        port=8089,
+        port=port,
         reload=False,
         show=False,
         native=False,

@@ -9,6 +9,7 @@ selenium
 webdriver-manager
 pycryptodome
 pywin32
+psutil
 
 # PDF Export (opcjonalne)
 jinja2
