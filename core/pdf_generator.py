@@ -15,6 +15,8 @@ from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from xml.sax.saxutils import escape as xml_escape
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 from core.models import Visit
 
@@ -41,6 +43,29 @@ class PDFGenerator:
     def __init__(self, clinic_config: Optional[ClinicConfig] = None):
         self.clinic_config = clinic_config or ClinicConfig()
         self.styles = getSampleStyleSheet()
+
+        # Register Unicode fonts (Polish diacritics)
+        fonts_dir = Path(__file__).parent.parent / "assets" / "fonts"
+        regular_path = fonts_dir / "DejaVuSans.ttf"
+        bold_path = fonts_dir / "DejaVuSans-Bold.ttf"
+        self.base_font = "Helvetica"
+        self.bold_font = "Helvetica-Bold"
+        try:
+            if regular_path.exists():
+                pdfmetrics.registerFont(TTFont("DejaVuSans", str(regular_path)))
+                self.base_font = "DejaVuSans"
+            if bold_path.exists():
+                pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(bold_path)))
+                self.bold_font = "DejaVuSans-Bold"
+        except Exception:
+            # Fallback to built-in fonts
+            self.base_font = "Helvetica"
+            self.bold_font = "Helvetica-Bold"
+
+        # Apply fonts to base styles
+        self.styles["Normal"].fontName = self.base_font
+        self.styles["Heading1"].fontName = self.bold_font
+        self.styles["Heading2"].fontName = self.bold_font
         self.styles.add(
             ParagraphStyle(
                 name="SectionTitle",
@@ -77,6 +102,7 @@ class PDFGenerator:
                 leading=10,
                 textColor=colors.black,
                 spaceAfter=2,
+                fontName=self.bold_font,
             )
         )
 
@@ -125,22 +151,25 @@ class PDFGenerator:
         story = []
         clinic = self.clinic_config.to_dict()
 
-        story.append(Paragraph(clinic.get("name", "Gabinet Medyczny"), self.styles["Heading1"]))
+        clinic_name = xml_escape(self._safe_text(clinic.get("name", "Gabinet Medyczny")))
+        story.append(Paragraph(clinic_name, self.styles["Heading1"]))
         clinic_lines = [
-            clinic.get("address", ""),
-            f"Tel: {clinic.get('phone', '')}  Email: {clinic.get('email', '')}",
+            xml_escape(self._safe_text(clinic.get("address", ""))),
+            xml_escape(f"Tel: {clinic.get('phone', '')}  Email: {clinic.get('email', '')}"),
         ]
-        story.append(Paragraph("<br/>".join([l for l in clinic_lines if l]), self.styles["Small"]))
+        clinic_lines = [l for l in clinic_lines if l.strip()]
+        if clinic_lines:
+            story.append(Paragraph("<br/>".join(clinic_lines), self.styles["Small"]))
         story.append(Spacer(1, 6))
         story.append(Paragraph("DOKUMENTACJA WIZYTY", self.styles["SectionTitle"]))
 
         visit_date = visit.visit_date if hasattr(visit, "visit_date") else None
         visit_date_str = self._format_datetime(visit_date) if isinstance(visit_date, datetime) else str(visit_date or "")
-        patient_name = visit.patient_name or "Pacjent anonimowy"
-        model_used = visit_dict.get("model_used", "-")
+        patient_name = xml_escape(self._safe_text(visit.patient_name or "Pacjent anonimowy"))
+        model_used = xml_escape(self._safe_text(visit_dict.get("model_used", "-")))
 
         meta = (
-            f"<b>Data wizyty:</b> {visit_date_str}<br/>"
+            f"<b>Data wizyty:</b> {xml_escape(self._safe_text(visit_date_str))}<br/>"
             f"<b>Pacjent:</b> {patient_name}<br/>"
             f"<b>Model AI:</b> {model_used}"
         )
@@ -194,7 +223,8 @@ class PDFGenerator:
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 0), (-1, 0), self.bold_font),
+                    ("FONTNAME", (0, 1), (-1, -1), self.base_font),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("LEFTPADDING", (0, 0), (-1, -1), 4),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 4),
@@ -247,7 +277,8 @@ class PDFGenerator:
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 0), (-1, 0), self.bold_font),
+                    ("FONTNAME", (0, 1), (-1, -1), self.base_font),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("LEFTPADDING", (0, 0), (-1, -1), 4),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 4),
