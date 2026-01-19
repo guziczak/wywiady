@@ -32,9 +32,10 @@ def _human_bytes(num):
 def _write_progress(line):
     last_len = getattr(_write_progress, "_last_len", 0)
     pad = " " * max(0, last_len - len(line))
-    sys.stdout.write("\r" + line + pad)
+    # Write + clear tail + rewrite to keep cursor at end
+    sys.stdout.write("\r" + line + pad + "\r" + line)
     sys.stdout.flush()
-    _write_progress._last_len = len(line)
+    _write_progress._last_len = max(len(line), last_len)
 
 def print_progress(prefix, current, total, width=30):
     if total and total > 0:
