@@ -5,11 +5,15 @@ Pozwala użytkownikowi zapisać wizytę z opcją wyboru/utworzenia pacjenta.
 """
 
 from datetime import datetime
+import asyncio
+import re
 from typing import Optional, Callable, List, Dict, Any
 from nicegui import ui
 
 from core.models import Visit, Patient, VisitStatus
 from core.services.visit_service import get_visit_service
+from core.llm_service import LLMService
+from core.config_manager import ConfigManager
 
 
 class VisitSaveDialog:
@@ -30,6 +34,8 @@ class VisitSaveDialog:
         self.on_save = on_save
 
         self.visit_service = get_visit_service()
+        self.llm_service = LLMService()
+        self.config_manager = ConfigManager()
         self.dialog = None
 
         # Stan formularza
@@ -58,6 +64,26 @@ class VisitSaveDialog:
         # Komponenty
         self.patient_select = None
         self.patient_name_input = None
+        self.patient_identifier_input = None
+        self.patient_birth_date_input = None
+        self.patient_sex_input = None
+        self.patient_address_input = None
+        self.patient_phone_input = None
+        self.patient_email_input = None
+        self.subjective_input = None
+        self.objective_input = None
+        self.assessment_input = None
+        self.plan_input = None
+        self.recommendations_input = None
+        self.medications_input = None
+        self.tests_ordered_input = None
+        self.tests_results_input = None
+        self.referrals_input = None
+        self.certificates_input = None
+        self.additional_notes_input = None
+        self.soap_prefill_btn = None
+        self.soap_spinner = None
+        self.soap_model_label = None
 
     def open(self) -> None:
         """Otwiera dialog."""
@@ -104,31 +130,31 @@ class VisitSaveDialog:
         # Dane pacjenta (opcjonalnie)
         with ui.expansion('Dane pacjenta (opcjonalnie)', icon='badge').classes('w-full mt-2'):
             with ui.column().classes('w-full gap-3 p-2'):
-                ui.input(
+                self.patient_identifier_input = ui.input(
                     'PESEL / identyfikator',
                     value=self.patient_identifier
                 ).classes('w-full').on('change', lambda e: setattr(self, 'patient_identifier', e.value))
                 with ui.row().classes('w-full gap-2'):
-                    ui.input(
+                    self.patient_birth_date_input = ui.input(
                         'Data urodzenia',
                         placeholder='YYYY-MM-DD',
                         value=self.patient_birth_date
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_birth_date', e.value))
-                    ui.select(
+                    self.patient_sex_input = ui.select(
                         'Plec',
                         options=['', 'K', 'M', 'Inna'],
                         value=self.patient_sex
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_sex', e.value))
-                ui.input(
+                self.patient_address_input = ui.input(
                     'Adres',
                     value=self.patient_address
                 ).classes('w-full').on('change', lambda e: setattr(self, 'patient_address', e.value))
                 with ui.row().classes('w-full gap-2'):
-                    ui.input(
+                    self.patient_phone_input = ui.input(
                         'Telefon',
                         value=self.patient_phone
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_phone', e.value))
-                    ui.input(
+                    self.patient_email_input = ui.input(
                         'Email',
                         value=self.patient_email
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_email', e.value))
@@ -159,20 +185,30 @@ class VisitSaveDialog:
         # Dane medyczne (SOAP)
         with ui.expansion('Dane medyczne (SOAP)', icon='assignment').classes('w-full mt-4'):
             with ui.column().classes('w-full gap-3 p-2'):
-                ui.textarea(
+                with ui.row().classes('w-full items-center gap-2'):
+                    self.soap_prefill_btn = ui.button(
+                        'Wypelnij z AI',
+                        icon='auto_fix_high',
+                        on_click=self._prefill_soap_clicked
+                    ).props('flat color=primary')
+                    self.soap_spinner = ui.spinner('dots', size='sm')
+                    self.soap_spinner.visible = False
+                    self.soap_model_label = ui.label('')
+
+                self.subjective_input = ui.textarea(
                     'Wywiad (S)',
                     value=self.subjective,
                     placeholder='Podsumowanie wywiadu (opcjonalnie)'
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'subjective', e.value))
-                ui.textarea(
+                self.objective_input = ui.textarea(
                     'Badanie przedmiotowe (O)',
                     value=self.objective
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'objective', e.value))
-                ui.textarea(
+                self.assessment_input = ui.textarea(
                     'Ocena / Rozpoznanie opisowe (A)',
                     value=self.assessment
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'assessment', e.value))
-                ui.textarea(
+                self.plan_input = ui.textarea(
                     'Plan (P)',
                     value=self.plan
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'plan', e.value))
@@ -180,31 +216,31 @@ class VisitSaveDialog:
         # Zalecenia i dokumenty
         with ui.expansion('Zalecenia i dokumenty', icon='description').classes('w-full mt-2'):
             with ui.column().classes('w-full gap-3 p-2'):
-                ui.textarea(
+                self.recommendations_input = ui.textarea(
                     'Zalecenia',
                     value=self.recommendations
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'recommendations', e.value))
-                ui.textarea(
+                self.medications_input = ui.textarea(
                     'Leki (z dawkowaniem)',
                     value=self.medications
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'medications', e.value))
-                ui.textarea(
+                self.tests_ordered_input = ui.textarea(
                     'Zlecone badania / konsultacje',
                     value=self.tests_ordered
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'tests_ordered', e.value))
-                ui.textarea(
+                self.tests_results_input = ui.textarea(
                     'Wyniki badan / konsultacji',
                     value=self.tests_results
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'tests_results', e.value))
-                ui.textarea(
+                self.referrals_input = ui.textarea(
                     'Skierowania',
                     value=self.referrals
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'referrals', e.value))
-                ui.textarea(
+                self.certificates_input = ui.textarea(
                     'Zaswiadczenia / Niezdolnosc do pracy',
                     value=self.certificates
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'certificates', e.value))
-                ui.textarea(
+                self.additional_notes_input = ui.textarea(
                     'Dodatkowe uwagi',
                     value=self.additional_notes
                 ).classes('w-full').props('outlined').on('change', lambda e: setattr(self, 'additional_notes', e.value))
@@ -258,11 +294,147 @@ class VisitSaveDialog:
             input_elem.value = self.visit_date.strftime('%d.%m.%Y %H:%M')
         menu.close()
 
+    def _set_soap_loading(self, loading: bool) -> None:
+        if self.soap_prefill_btn:
+            self.soap_prefill_btn.disabled = loading
+        if self.soap_spinner:
+            self.soap_spinner.visible = loading
+            self.soap_spinner.update()
+        if self.soap_model_label and not loading:
+            self.soap_model_label.update()
+
+    def _apply_soap_result(self, data: Dict[str, Any], model_used: str = "") -> None:
+        def _set(field: str, input_attr: str):
+            value = (data.get(field) or "").strip()
+            setattr(self, field, value)
+            input_elem = getattr(self, input_attr, None)
+            if input_elem is not None:
+                input_elem.value = value
+                input_elem.update()
+
+        _set("subjective", "subjective_input")
+        _set("objective", "objective_input")
+        _set("assessment", "assessment_input")
+        _set("plan", "plan_input")
+        _set("recommendations", "recommendations_input")
+        _set("medications", "medications_input")
+        _set("tests_ordered", "tests_ordered_input")
+        _set("tests_results", "tests_results_input")
+        _set("referrals", "referrals_input")
+        _set("certificates", "certificates_input")
+        _set("additional_notes", "additional_notes_input")
+
+        if self.soap_model_label is not None:
+            self.soap_model_label.text = f"Model: {model_used}" if model_used else ""
+            self.soap_model_label.update()
+
+    def _prefill_soap_clicked(self) -> None:
+        asyncio.create_task(self._prefill_soap())
+
+    async def _prefill_soap(self) -> None:
+        if not self.transcript.strip():
+            ui.notify('Brak transkrypcji do analizy', type='warning')
+            return
+
+        self._set_soap_loading(True)
+        try:
+            result, used_model = await self.llm_service.generate_soap(
+                transcript=self.transcript,
+                config=self.config_manager,
+                diagnoses=self.diagnoses,
+                procedures=self.procedures,
+            )
+            if not isinstance(result, dict):
+                ui.notify('Nieudane parsowanie wyniku AI', type='negative')
+                return
+            self._apply_soap_result(result, used_model)
+            ui.notify('SOAP uzupelniony przez AI', type='positive')
+        except Exception as e:
+            ui.notify(f'Blad AI: {e}', type='negative')
+        finally:
+            self._set_soap_loading(False)
+
+    def _normalize_birth_date(self, value: str) -> Optional[str]:
+        raw = value.strip()
+        if not raw:
+            return ""
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+            try:
+                return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return None
+
+    def _normalize_phone(self, value: str) -> str:
+        raw = value.strip()
+        if not raw:
+            return ""
+        return re.sub(r"\D", "", raw)
+
+    def _is_valid_pesel(self, pesel: str) -> bool:
+        if not pesel.isdigit() or len(pesel) != 11:
+            return False
+        weights = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3]
+        checksum = sum(int(pesel[i]) * weights[i] for i in range(10))
+        control = (10 - (checksum % 10)) % 10
+        return control == int(pesel[-1])
+
+    def _validate_patient_fields(self) -> bool:
+        ident = (self.patient_identifier or "").strip()
+        if ident:
+            if ident.isdigit():
+                if len(ident) != 11:
+                    ui.notify('PESEL powinien miec 11 cyfr', type='warning')
+                    return False
+                if not self._is_valid_pesel(ident):
+                    ui.notify('Nieprawidlowy PESEL (suma kontrolna)', type='warning')
+                    return False
+            self.patient_identifier = ident
+            if self.patient_identifier_input:
+                self.patient_identifier_input.value = ident
+                self.patient_identifier_input.update()
+
+        birth = (self.patient_birth_date or "").strip()
+        if birth:
+            normalized = self._normalize_birth_date(birth)
+            if normalized is None:
+                ui.notify('Nieprawidlowa data urodzenia (YYYY-MM-DD lub DD.MM.YYYY)', type='warning')
+                return False
+            self.patient_birth_date = normalized
+            if self.patient_birth_date_input:
+                self.patient_birth_date_input.value = normalized
+                self.patient_birth_date_input.update()
+
+        phone = (self.patient_phone or "").strip()
+        if phone:
+            normalized_phone = self._normalize_phone(phone)
+            if normalized_phone and (len(normalized_phone) < 7 or len(normalized_phone) > 15):
+                ui.notify('Nieprawidlowy numer telefonu', type='warning')
+                return False
+            self.patient_phone = normalized_phone
+            if self.patient_phone_input:
+                self.patient_phone_input.value = normalized_phone
+                self.patient_phone_input.update()
+
+        email = (self.patient_email or "").strip()
+        if email:
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+                ui.notify('Nieprawidlowy email', type='warning')
+                return False
+            self.patient_email = email
+            if self.patient_email_input:
+                self.patient_email_input.value = email
+                self.patient_email_input.update()
+
+        return True
+
     def _save_visit(self) -> None:
         """Zapisuje wizytę."""
         # Walidacja
         if not self.selected_patient_id and not self.patient_name.strip():
             ui.notify('Podaj nazwę pacjenta', type='warning')
+            return
+        if not self._validate_patient_fields():
             return
 
         try:

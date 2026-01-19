@@ -26,6 +26,12 @@ from pathlib import Path
 from typing import Optional, Callable
 import multiprocessing
 
+try:
+    from core.log_utils import log
+except Exception:
+    def log(message: str):
+        print(message, flush=True)
+
 
 # === STATE MANAGEMENT ===
 
@@ -1931,7 +1937,20 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 
-    print("[STARTUP] Starting app...", flush=True)
+    log("[STARTUP] Starting app...")
+
+    try:
+        build_info_path = Path(__file__).parent / "build_info.json"
+        if build_info_path.exists():
+            build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+            commit = build_info.get("commit", "unknown")
+            downloaded_at = build_info.get("downloaded_at", "")
+            source = build_info.get("source", "")
+            log(f"[VERSION] commit={commit} downloaded_at={downloaded_at} source={source}")
+        else:
+            log("[VERSION] build_info.json not found")
+    except Exception as e:
+        log(f"[VERSION] Error reading build info: {e}")
 
     # === DATABASE MIGRATIONS ===
     try:

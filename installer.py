@@ -7,6 +7,7 @@ import shutil
 import time
 import json
 from pathlib import Path
+from datetime import datetime
 
 # Konfiguracja
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
@@ -49,6 +50,13 @@ def write_state(path, state):
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(state, f)
+    except Exception:
+        pass
+
+def write_build_info(path, info):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(info, f, indent=2)
     except Exception:
         pass
 
@@ -134,6 +142,10 @@ def main():
     state_path = os.path.join(install_dir, STATE_FILE)
     state = read_state(state_path)
     remote_commit = get_remote_commit()
+    if remote_commit:
+        print_step(f"Wersja zdalna: {remote_commit[:7]}")
+    else:
+        print_step("Nie udalo sie pobrac wersji zdalnej (API)")
     skip_download = False
     if remote_commit and state.get("commit") == remote_commit and os.path.exists(MAIN_SCRIPT):
         print_step("Wersja jest aktualna. Pomijam pobieranie.")
@@ -179,6 +191,21 @@ def main():
                 os.rmdir(extracted_folder)
             
             os.remove(zip_path)
+            # Sprawdz fonty PDF (polskie znaki)
+            fonts_dir = os.path.join(install_dir, "assets", "fonts")
+            os.makedirs(fonts_dir, exist_ok=True)
+            font_urls = {
+                "DejaVuSans.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans.ttf",
+                "DejaVuSans-Bold.ttf": "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/version-2.37/ttf/DejaVuSans-Bold.ttf",
+            }
+            for fname, url in font_urls.items():
+                fpath = os.path.join(fonts_dir, fname)
+                if not os.path.exists(fpath):
+                    print(f"    [WARN] Brak czcionki {fname} - pobieram...")
+                    try:
+                        urllib.request.urlretrieve(url, fpath)
+                    except Exception:
+                        print(f"    [WARN] Nie udalo sie pobrac {fname}.")
     except Exception as e:
         print_error(f"Blad podczas rozpakowywania: {e}")
 
@@ -233,9 +260,18 @@ def main():
     if remote_commit and not skip_download:
         write_state(state_path, {"commit": remote_commit})
 
+    version_commit = remote_commit or state.get("commit") or "unknown"
+    build_info_path = os.path.join(install_dir, "build_info.json")
+    write_build_info(build_info_path, {
+        "commit": version_commit,
+        "downloaded_at": datetime.utcnow().isoformat() + "Z",
+        "source": "github/main",
+    })
+
     print("\n========================================================")
     print("   INSTALACJA ZAKONCZONA SUKCESEM!")
     print("========================================================")
+    print(f"Wersja: {version_commit[:7] if version_commit else 'unknown'}")
     print(f"Skrot utworzony na pulpicie: {shortcut_path}")
     print("Uruchamianie aplikacji za 3 sekundy...")
     time.sleep(3)

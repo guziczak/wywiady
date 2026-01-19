@@ -19,6 +19,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from core.models import Visit
+from core.log_utils import log
 
 
 @dataclass
@@ -47,7 +48,7 @@ class PDFGenerator:
         self.styles = getSampleStyleSheet()
 
         # Register Unicode fonts (Polish diacritics)
-        fonts_dir = Path(__file__).parent.parent / "assets" / "fonts"
+        fonts_dir = (Path(__file__).parent.parent / "assets" / "fonts").resolve()
         regular_path = fonts_dir / "DejaVuSans.ttf"
         bold_path = fonts_dir / "DejaVuSans-Bold.ttf"
         self.base_font = "Helvetica"
@@ -56,13 +57,21 @@ class PDFGenerator:
             if regular_path.exists():
                 pdfmetrics.registerFont(TTFont("DejaVuSans", str(regular_path)))
                 self.base_font = "DejaVuSans"
+            else:
+                log(f"[PDF] Missing font: {regular_path}")
             if bold_path.exists():
                 pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(bold_path)))
                 self.bold_font = "DejaVuSans-Bold"
+            else:
+                if self.base_font == "DejaVuSans":
+                    # Fallback to regular to keep Polish glyphs
+                    self.bold_font = self.base_font
+                log(f"[PDF] Missing bold font: {bold_path}")
         except Exception:
             # Fallback to built-in fonts
             self.base_font = "Helvetica"
             self.bold_font = "Helvetica-Bold"
+        log(f"[PDF] Using fonts: base={self.base_font}, bold={self.bold_font}")
 
         # Apply fonts to base styles
         self.styles["Normal"].fontName = self.base_font
@@ -75,6 +84,15 @@ class PDFGenerator:
                 fontSize=12,
                 textColor=colors.black,
                 spaceBefore=10,
+                spaceAfter=6,
+            )
+        )
+        self.styles.add(
+            ParagraphStyle(
+                name="DocTitle",
+                parent=self.styles["Heading1"],
+                fontSize=14,
+                alignment=1,
                 spaceAfter=6,
             )
         )
@@ -196,59 +214,117 @@ class PDFGenerator:
             story.append(Paragraph(xml_escape(text).replace("\n", "<br/>"), self.styles["Normal"]))
             story.append(Spacer(1, 8))
 
-        clinic_name = xml_escape(self._safe_text(clinic.get("name", "Gabinet Medyczny")) or "Gabinet Medyczny")
-        story.append(Paragraph(clinic_name, self.styles["Heading1"]))
-        clinic_lines = []
-        if clinic.get("address"):
-            clinic_lines.append(xml_escape(self._safe_text(clinic.get("address", ""))))
+        def add_kv_table(title: str, rows: list) -> None:
+            story.append(Paragraph(title, self.styles["SectionTitle"]))
+            table_rows = []
+            for label, value in rows:
+                table_rows.append(
+                    [
+                        Paragraph(xml_escape(self._safe_text(label)), self.styles["FieldLabel"]),
+                        Paragraph(xml_escape(fmt(value)), self.styles["Normal"]),
+                    ]
+                )
+            table = Table(table_rows, colWidths=[doc.width * 0.3, doc.width * 0.7])
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ]
+                )
+            )
+            story.append(table)
+            story.append(Spacer(1, 8))
+
+        clinic_name = self._safe_text(clinic.get("name", "Gabinet Medyczny")) or "Gabinet Medyczny"
+        clinic_address = self._safe_text(clinic.get("address", ""))
+        clinic_phone = self._safe_text(clinic.get("phone", ""))
+        clinic_email = self._safe_text(clinic.get("email", ""))
+        clinic_nip = self._safe_text(clinic.get("nip", ""))
+        clinic_regon = self._safe_text(clinic.get("regon", ""))
+
+        clinic_lines = [clinic_name]
+        if clinic_address:
+            clinic_lines.append(clinic_address)
         contact_bits = []
-        if clinic.get("phone"):
-            contact_bits.append(f"Tel: {clinic.get('phone')}")
-        if clinic.get("email"):
-            contact_bits.append(f"Email: {clinic.get('email')}")
+        if clinic_phone:
+            contact_bits.append(f"Tel: {clinic_phone}")
+        if clinic_email:
+            contact_bits.append(f"Email: {clinic_email}")
         if contact_bits:
-            clinic_lines.append(xml_escape(" | ".join(contact_bits)))
+            clinic_lines.append(" | ".join(contact_bits))
         id_bits = []
-        if clinic.get("nip"):
-            id_bits.append(f"NIP: {clinic.get('nip')}")
-        if clinic.get("regon"):
-            id_bits.append(f"REGON: {clinic.get('regon')}")
+        if clinic_nip:
+            id_bits.append(f"NIP: {clinic_nip}")
+        if clinic_regon:
+            id_bits.append(f"REGON: {clinic_regon}")
         if id_bits:
-            clinic_lines.append(xml_escape(" | ".join(id_bits)))
-        if clinic_lines:
-            story.append(Paragraph("<br/>".join(clinic_lines), self.styles["Small"]))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph("DOKUMENTACJA WIZYTY AMBULATORYJNEJ", self.styles["SectionTitle"]))
+            clinic_lines.append(" | ".join(id_bits))
+
+        left_block = "<br/>".join([xml_escape(line) for line in clinic_lines if line.strip()])
+        right_block = "MIEJSCE NA PIECZATKE<br/><br/><br/><br/>"
+
+        header_table = Table(
+            [[Paragraph(left_block, self.styles["Small"]), Paragraph(right_block, self.styles["Small"])]],
+            colWidths=[doc.width * 0.65, doc.width * 0.35],
+        )
+        header_table.setStyle(
+            TableStyle(
+                [
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        story.append(header_table)
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("DOKUMENTACJA WIZYTY AMBULATORYJNEJ", self.styles["DocTitle"]))
 
         visit_date = visit.visit_date if hasattr(visit, "visit_date") else None
         visit_date_str = self._format_datetime(visit_date) if isinstance(visit_date, datetime) else str(visit_date or "")
         patient_name = self._safe_text(visit.patient_name or "Pacjent anonimowy")
         model_used = self._safe_text(visit_dict.get("model_used", "-"))
 
-        meta_lines = [
-            f"<b>Data wizyty:</b> {xml_escape(fmt(visit_date_str))}",
-            f"<b>Pacjent:</b> {xml_escape(fmt(patient_name, 'Pacjent anonimowy'))}",
-            f"<b>PESEL / identyfikator:</b> {xml_escape(fmt(getattr(visit, 'patient_identifier', '')))}",
-            f"<b>Data urodzenia:</b> {xml_escape(fmt(getattr(visit, 'patient_birth_date', '')))}",
-            f"<b>Plec:</b> {xml_escape(fmt(getattr(visit, 'patient_sex', '')))}",
-            f"<b>Adres:</b> {xml_escape(fmt(getattr(visit, 'patient_address', '')))}",
-            f"<b>Telefon:</b> {xml_escape(fmt(getattr(visit, 'patient_phone', '')))}",
-            f"<b>Email:</b> {xml_escape(fmt(getattr(visit, 'patient_email', '')))}",
-            f"<b>Model AI:</b> {xml_escape(fmt(model_used))}",
-        ]
-        story.append(Paragraph("<br/>".join(meta_lines), self.styles["Normal"]))
-        story.append(Spacer(1, 8))
+        add_kv_table(
+            "Dane wizyty",
+            [
+                ("Data wizyty", visit_date_str),
+                ("Model AI", model_used),
+                ("Status", str(getattr(visit, "status", ""))),
+            ],
+        )
+
+        add_kv_table(
+            "Dane pacjenta",
+            [
+                ("Pacjent", patient_name),
+                ("PESEL / identyfikator", getattr(visit, "patient_identifier", "")),
+                ("Data urodzenia", getattr(visit, "patient_birth_date", "")),
+                ("Plec", getattr(visit, "patient_sex", "")),
+                ("Adres", getattr(visit, "patient_address", "")),
+                ("Telefon", getattr(visit, "patient_phone", "")),
+                ("Email", getattr(visit, "patient_email", "")),
+            ],
+        )
 
         doctor_title = self._safe_text(clinic.get("doctor_title", "")).strip()
         doctor_name = self._safe_text(clinic.get("doctor_name", "")).strip()
         doctor_display = " ".join([doctor_title, doctor_name]).strip()
-        doctor_lines = [
-            f"<b>Lekarz:</b> {xml_escape(fmt(doctor_display))}",
-            f"<b>PWZ:</b> {xml_escape(fmt(clinic.get('doctor_pwz', '')))}",
-        ]
-        story.append(Paragraph("Dane lekarza", self.styles["SectionTitle"]))
-        story.append(Paragraph("<br/>".join(doctor_lines), self.styles["Normal"]))
-        story.append(Spacer(1, 8))
+        add_kv_table(
+            "Dane lekarza",
+            [
+                ("Lekarz", doctor_display),
+                ("PWZ", clinic.get("doctor_pwz", "")),
+            ],
+        )
 
         transcript = visit_dict.get("transcript", "") or ""
         subjective_text = self._safe_text(getattr(visit, "subjective", "")).strip()
