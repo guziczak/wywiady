@@ -28,9 +28,7 @@ class SpecializationSwitcher:
         self.menu = None
         self.button_icon = None
         self.button_label = None
-        self.select = None
-        self._label_to_id = {}
-        self._id_to_label = {}
+        self.dropdown = None
 
     @staticmethod
     @lru_cache(maxsize=64)
@@ -73,27 +71,23 @@ class SpecializationSwitcher:
             self._create_expanded(active_spec)
 
     def _create_compact(self, active_spec: Specialization) -> None:
-        """Kompaktowy widok - dropdown select (stabilniejszy w EXE)."""
-        options = []
-        self._label_to_id = {}
-        self._id_to_label = {}
-        for spec in self.spec_manager.get_all():
-            label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
-            options.append(label)
-            self._label_to_id[label] = spec.id
-            self._id_to_label[str(spec.id)] = label
+        """Kompaktowy widok - dropdown button (stabilny w EXE)."""
+        def _label(spec: Specialization) -> str:
+            return f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
 
-        current_value = self._id_to_label.get(str(active_spec.id))
-        if current_value is None:
-            current_value = options[0] if options else None
+        specs = self.spec_manager.get_all()
+        button_label = _label(active_spec) if active_spec else "Specjalizacja"
 
-        self.select = ui.select(
-            options=options,
-            value=current_value,
-            on_change=lambda e: self._on_select_id(str(e.value)),
-        ).props('dense filled options-dense').classes(
-            'min-w-48 text-white bg-white/10'
-        )
+        with ui.dropdown_button(button_label, auto_close=True).props(
+            'flat dense dropdown-icon="arrow_drop_down"'
+        ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
+            with ui.list().classes('min-w-48'):
+                for spec in specs:
+                    is_active = spec.id == active_spec.id
+                    text = _label(spec)
+                    item = ui.item(text, on_click=lambda s=spec: self._on_select(s))
+                    if is_active:
+                        item.classes('font-bold')
 
     def _create_expanded(self, active_spec: Specialization) -> None:
         """Rozwinięty widok - chips/tabs."""
@@ -124,8 +118,9 @@ class SpecializationSwitcher:
             self.button_icon.set_content(self._get_icon_html(spec, 18))
         if self.button_label:
             self.button_label.text = spec.name
-        if self.select:
-            self.select.value = self._id_to_label.get(str(spec.id), self.select.value)
+        if self.dropdown:
+            label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
+            self.dropdown.text = label
         if self.menu:
             self.menu.close()
 
@@ -142,15 +137,13 @@ class SpecializationSwitcher:
             self.button_icon.set_content(self._get_icon_html(active_spec, 18))
         if self.button_label:
             self.button_label.text = active_spec.name
-        if self.select:
-            self.select.value = self._id_to_label.get(str(active_spec.id), self.select.value)
+        if self.dropdown:
+            label = f"{active_spec.icon} {active_spec.name}".strip() if getattr(active_spec, 'icon', None) else active_spec.name
+            self.dropdown.text = label
 
     def _on_select_id(self, spec_id: str) -> None:
-        """Obsługa wyboru specjalizacji po labelu/ID (dla select)."""
+        """Backward compat (nieużywane w dropdown button)."""
         try:
-            # select zwraca label, mapuj na ID
-            if spec_id in self._label_to_id:
-                spec_id = self._label_to_id.get(spec_id)
             spec = next((s for s in self.spec_manager.get_all() if str(s.id) == str(spec_id)), None)
             if spec:
                 self._on_select(spec)
