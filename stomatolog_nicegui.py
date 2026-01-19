@@ -2045,6 +2045,31 @@ def main():
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGTERM, handle_sigint)
 
+    # Windows: dodatkowy handler dla CTRL+C/CTRL+BREAK (czasem SIGINT nie dochodzi)
+    def install_windows_ctrl_handler():
+        if sys.platform != 'win32':
+            return
+        try:
+            import os
+            import ctypes
+            from ctypes import wintypes
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+            def _handler(ctrl_type):
+                print("\n[APP] Console event received. Exiting...", flush=True)
+                os._exit(0)
+                return True
+
+            # Keep reference to avoid GC
+            global _WIN_CTRL_HANDLER
+            _WIN_CTRL_HANDLER = _handler
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler, True)
+            print("[APP] Windows console handler installed", flush=True)
+        except Exception as e:
+            print(f"[APP] Windows console handler install failed: {e}", flush=True)
+
+    install_windows_ctrl_handler()
+
 
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
