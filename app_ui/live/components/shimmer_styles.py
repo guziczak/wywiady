@@ -61,6 +61,15 @@ SHIMMER_CSS = """
     transition: all 0.3s ease;
 }
 
+/* Klikalne zdania */
+.transcript-word[data-sentence] {
+    cursor: pointer;
+}
+
+.transcript-word[data-sentence]:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
 /* Provisional - szary, italic */
 .transcript-word.provisional {
     color: #6b7280; /* gray-500 - trochę ciemniejszy niż 400 */
