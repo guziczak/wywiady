@@ -68,15 +68,30 @@ class StreamingTranscriber:
     Wspiera backendy: faster-whisper (domyślny) oraz OpenVINO.
     """
 
-    def __init__(self, model_size="small", device="auto", compute_type="int8", use_openvino=False):
+    def __init__(
+        self,
+        model_size="small",
+        device="auto",
+        compute_type="int8",
+        use_openvino=False,
+        enable_medium: bool = True,
+        enable_large: bool = True,
+        improved_interval: float = 5.0,
+        silence_threshold: float = 2.0
+    ):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.use_openvino = use_openvino
+        self.enable_medium = enable_medium
+        self.enable_large = enable_large
         
         self.model_tiny = None
         self.model_medium = None
         self.model_large = None
+        self.model_tiny_error = None
+        self.model_medium_error = None
+        self.model_large_error = None
         self.is_running = False
         self.audio_queue = queue.Queue()
 
@@ -106,12 +121,35 @@ class StreamingTranscriber:
 
         # Timing
         self.last_improved_time = 0
-        self.improved_interval = 5.0
+        self.improved_interval = improved_interval
 
         # Detekcja ciszy
         self.silence_timer = None
-        self.silence_threshold = 2.0
+        self.silence_threshold = silence_threshold
         self._silence_lock = threading.Lock()
+
+    def update_pipeline_config(
+        self,
+        enable_medium: bool | None = None,
+        enable_large: bool | None = None,
+        improved_interval: float | None = None,
+        silence_threshold: float | None = None
+    ):
+        """Aktualizuje ustawienia pipeline (bez restartu)."""
+        if enable_medium is not None:
+            self.enable_medium = bool(enable_medium)
+        if enable_large is not None:
+            self.enable_large = bool(enable_large)
+        if improved_interval is not None:
+            try:
+                self.improved_interval = max(1.0, float(improved_interval))
+            except Exception:
+                pass
+        if silence_threshold is not None:
+            try:
+                self.silence_threshold = max(0.5, float(silence_threshold))
+            except Exception:
+                pass
 
     def load_model(self):
         """Ładuje model tiny (warstwa 1 - provisional)."""
@@ -132,17 +170,20 @@ class StreamingTranscriber:
                     download_root=str(MODELS_DIR)
                 )
             print("[STREAM] Tiny model loaded!", flush=True)
+            self.model_tiny_error = None
         except Exception as e:
             print(f"[STREAM] Tiny model load error: {e}", flush=True)
+            self.model_tiny_error = str(e)
             # Fallback dla faster-whisper na CPU, dla OpenVINO rzucamy błąd
             if not self.use_openvino and self.device == "cuda":
                 print("[STREAM] Fallback to CPU...", flush=True)
                 self.model_tiny = WhisperModel("tiny", device="cpu", compute_type="int8", download_root=str(MODELS_DIR))
+                self.model_tiny_error = None
 
     def load_cascade_models(self, model_path=None):
         """Ładuje modele medium i large dla warstw 2 i 3."""
         # Medium
-        if not self.model_medium:
+        if self.enable_medium and not self.model_medium:
             print(f"[STREAM] Loading medium model (OpenVINO={self.use_openvino})...", flush=True)
             try:
                 if self.use_openvino:
@@ -157,12 +198,14 @@ class StreamingTranscriber:
                         download_root=str(MODELS_DIR)
                     )
                 print("[STREAM] Medium model loaded!", flush=True)
+                self.model_medium_error = None
             except Exception as e:
                 print(f"[STREAM] Medium model error: {e}", flush=True)
                 self.model_medium = None
+                self.model_medium_error = str(e)
 
         # Large
-        if not self.model_large:
+        if self.enable_large and not self.model_large:
             print(f"[STREAM] Loading large model (OpenVINO={self.use_openvino})...", flush=True)
             try:
                 if self.use_openvino:
@@ -177,9 +220,11 @@ class StreamingTranscriber:
                         download_root=str(MODELS_DIR)
                     )
                 print("[STREAM] Large model loaded!", flush=True)
+                self.model_large_error = None
             except Exception as e:
                 print(f"[STREAM] Large model error: {e}", flush=True)
                 self.model_large = None
+                self.model_large_error = str(e)
 
     def start(self, callback_provisional, callback_improved=None, callback_final=None, external_backend=None):
         """
@@ -369,6 +414,9 @@ class StreamingTranscriber:
 
     def _do_improved_transcription(self):
         """Warstwa 2: Re-transkrypcja z większym kontekstem (small model)."""
+        if not self.enable_medium:
+            return
+
         # Bierzemy audio od ostatniego improved do teraz
         if self.full_audio_samples <= self.last_improved_samples:
             return
@@ -455,10 +503,10 @@ class StreamingTranscriber:
                 backend_name = "OpenVINOShim" if self.use_openvino else "Faster-Whisper"
                 print(f"[STREAM] Final ({backend_name}): {duration:.1f}s audio", flush=True)
                 # Użyj large model jeśli dostępny, inaczej medium, inaczej tiny
-                if self.model_large:
+                if self.enable_large and self.model_large:
                     model = self.model_large
                     beam = 5
-                elif self.model_medium:
+                elif self.enable_medium and self.model_medium:
                     model = self.model_medium
                     beam = 4
                 else:

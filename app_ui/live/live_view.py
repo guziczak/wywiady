@@ -12,6 +12,7 @@ from app_ui.live.live_state import LiveState, SessionStatus
 from app_ui.live.live_ai_controller import AIController
 from app_ui.live.components.transcript_panel import TranscriptPanel
 from app_ui.live.components.prompter_panel import PrompterPanel
+from app_ui.live.components.pipeline_panel import PipelinePanel
 
 # Streaming transcriber (opcjonalny)
 try:
@@ -95,12 +96,28 @@ class LiveInterviewView:
                     if self.app.transcriber_manager.get_current_type() == TranscriberType.OPENVINO_WHISPER:
                         use_openvino = True
 
+                # 4. Pipeline config (live)
+                enable_medium = bool(self.app.config.get("live_enable_medium", True))
+                enable_large = bool(self.app.config.get("live_enable_large", True))
+                try:
+                    improved_interval = float(self.app.config.get("live_improved_interval", 5.0))
+                except Exception:
+                    improved_interval = 5.0
+                try:
+                    silence_threshold = float(self.app.config.get("live_silence_threshold", 2.0))
+                except Exception:
+                    silence_threshold = 2.0
+
                 print(f"[LIVE] Initializing StreamingTranscriber with device={selected_device} (OpenVINO={use_openvino})", flush=True)
                 
                 self.transcriber = StreamingTranscriber(
                     model_size="tiny", 
                     use_openvino=use_openvino,
-                    device=selected_device
+                    device=selected_device,
+                    enable_medium=enable_medium,
+                    enable_large=enable_large,
+                    improved_interval=improved_interval,
+                    silence_threshold=silence_threshold
                 )
                 
                 # Asynchroniczne ładowanie modeli (non-blocking UI)
@@ -122,6 +139,8 @@ class LiveInterviewView:
 
         # Model status refs
         self._model_status_container = None
+        self.pipeline_panel: Optional[PipelinePanel] = None
+        self._pipeline_loading: bool = False
 
     def create_ui(self):
         """Buduje interfejs użytkownika."""
@@ -185,60 +204,161 @@ class LiveInterviewView:
             return
             
         print("[LIVE] Starting async model preload...", flush=True)
+        self._pipeline_loading = True
+        self._update_model_status()
         try:
             # Load Tiny (Real-time)
             await asyncio.to_thread(self.transcriber.load_model)
             
-            # Load Cascade (Medium/Large)
-            await asyncio.to_thread(self.transcriber.load_cascade_models)
+            # Load Cascade (Medium/Large) jeśli włączone
+            if getattr(self.transcriber, 'enable_medium', True) or getattr(self.transcriber, 'enable_large', True):
+                await asyncio.to_thread(self.transcriber.load_cascade_models)
             
             print("[LIVE] Async model preload finished.", flush=True)
             self._update_model_status()
         except Exception as e:
             print(f"[LIVE] Model preload error: {e}", flush=True)
+        finally:
+            self._pipeline_loading = False
+            self._update_model_status()
 
     def _create_model_info_bar(self):
-        """Tworzy pasek informacyjny o modelach."""
-        with ui.row().classes('w-full max-w-6xl mx-auto px-4 py-1 items-center gap-4 text-xs text-gray-500'):
-            ui.label("Status Modeli:").classes('font-bold')
-            self._model_status_container = ui.row().classes('items-center gap-3')
-            self._update_model_status() # Initial update
+        """Tworzy pasek informacyjny o pipeline modeli."""
+        self.pipeline_panel = PipelinePanel(
+            get_config=self._get_pipeline_config,
+            on_apply=self._apply_pipeline_config
+        )
+        self.pipeline_panel.create()
+        self._update_model_status()  # Initial update
 
     def _update_model_status(self):
-        """Aktualizuje status modeli w UI."""
-        if not self._model_status_container:
+        """Aktualizuje status pipeline modeli w UI."""
+        if not self.pipeline_panel:
             return
-            
-        try:
-            loaded = []
-            if self.transcriber:
-                # Check directly loaded model attributes
-                if getattr(self.transcriber, 'model_tiny', None):
-                    loaded.append('tiny')
-                if getattr(self.transcriber, 'model_medium', None):
-                    loaded.append('medium')
-                if getattr(self.transcriber, 'model_large', None):
-                    loaded.append('large')
-            
-            self._model_status_container.clear()
-            with self._model_status_container:
-                # Helper do badge'a
-                def model_badge(name, label):
-                    is_loaded = name in loaded
-                    color = 'green-100' if is_loaded else 'gray-100'
-                    text_color = 'green-700' if is_loaded else 'gray-400'
-                    icon = 'check_circle' if is_loaded else 'hourglass_empty'
-                    
-                    with ui.row().classes(f'bg-{color} px-2 py-0.5 rounded-full items-center gap-1'):
-                        ui.icon(icon).classes(f'text-{text_color} text-[10px]')
-                        ui.label(label).classes(f'text-{text_color} font-medium')
 
-                model_badge('tiny', 'Tiny (Szybki)')
-                model_badge('medium', 'Medium (Dokładny)')
-                model_badge('large', 'Large (Finalny)')
-                
+        cfg = self._get_pipeline_config()
+        backend = "OpenVINO" if (self.transcriber and getattr(self.transcriber, 'use_openvino', False)) else "faster-whisper"
+        device = getattr(self.transcriber, 'device', 'auto') if self.transcriber else 'auto'
+
+        def stage_state(enabled: bool, model_obj, error_msg: str | None, ready_detail: str):
+            if self.transcriber_error:
+                return "error", self.transcriber_error
+            if not enabled:
+                detail = "Wyłączony"
+                if model_obj:
+                    detail = "Wyłączony (model w pamięci)"
+                return "disabled", detail
+            if error_msg:
+                return "error", "Błąd ładowania"
+            if model_obj:
+                return "ready", ready_detail
+            if self._pipeline_loading:
+                return "loading", "Ładowanie w tle..."
+            return "idle", "Oczekuje"
+
+        tiny_state, tiny_detail = stage_state(
+            True,
+            getattr(self.transcriber, 'model_tiny', None) if self.transcriber else None,
+            getattr(self.transcriber, 'model_tiny_error', None) if self.transcriber else None,
+            f"{backend} • {device}"
+        )
+        medium_state, medium_detail = stage_state(
+            cfg["enable_medium"],
+            getattr(self.transcriber, 'model_medium', None) if self.transcriber else None,
+            getattr(self.transcriber, 'model_medium_error', None) if self.transcriber else None,
+            f"{backend} • {device}"
+        )
+        large_state, large_detail = stage_state(
+            cfg["enable_large"],
+            getattr(self.transcriber, 'model_large', None) if self.transcriber else None,
+            getattr(self.transcriber, 'model_large_error', None) if self.transcriber else None,
+            f"{backend} • {device}"
+        )
+
+        summary = f"Backend: {backend} • Urządzenie: {device} • Cisza: {cfg['silence_threshold']:.1f}s • Improved: co {cfg['improved_interval']:.0f}s"
+
+        self.pipeline_panel.update({
+            "summary": summary,
+            "stages": {
+                "tiny": {"state": tiny_state, "detail": tiny_detail},
+                "medium": {"state": medium_state, "detail": medium_detail},
+                "large": {"state": large_state, "detail": large_detail},
+            },
+            "config": cfg,
+        })
+
+    def _get_pipeline_config(self) -> dict:
+        """Zwraca aktualne ustawienia pipeline z configu."""
+        cfg = self.app.config
+        try:
+            improved_interval = float(cfg.get("live_improved_interval", 5.0))
         except Exception:
-            pass
+            improved_interval = 5.0
+        try:
+            silence_threshold = float(cfg.get("live_silence_threshold", 2.0))
+        except Exception:
+            silence_threshold = 2.0
+
+        return {
+            "enable_medium": bool(cfg.get("live_enable_medium", True)),
+            "enable_large": bool(cfg.get("live_enable_large", True)),
+            "improved_interval": improved_interval,
+            "silence_threshold": silence_threshold,
+        }
+
+    async def _load_cascade_async(self):
+        """Ładuje modele medium/large w tle po zmianie ustawień."""
+        if not self.transcriber or self._pipeline_loading:
+            return
+        self._pipeline_loading = True
+        self._update_model_status()
+        try:
+            # Upewnij się, że tiny jest załadowany
+            if not getattr(self.transcriber, 'model_tiny', None):
+                await asyncio.to_thread(self.transcriber.load_model)
+            await asyncio.to_thread(self.transcriber.load_cascade_models)
+        except Exception as e:
+            print(f"[LIVE] Cascade load error: {e}", flush=True)
+        finally:
+            self._pipeline_loading = False
+            self._update_model_status()
+
+    def _apply_pipeline_config(self, cfg: dict):
+        """Zapisuje i aplikuje ustawienia pipeline."""
+        updates = {
+            "live_enable_medium": bool(cfg.get("enable_medium", True)),
+            "live_enable_large": bool(cfg.get("enable_large", True)),
+            "live_improved_interval": float(cfg.get("improved_interval", 5.0)),
+            "live_silence_threshold": float(cfg.get("silence_threshold", 2.0)),
+        }
+
+        if hasattr(self.app, 'config_manager') and self.app.config_manager:
+            self.app.config_manager.update(**updates)
+        else:
+            for key, value in updates.items():
+                try:
+                    self.app.config[key] = value
+                except Exception:
+                    pass
+
+        if self.transcriber:
+            self.transcriber.update_pipeline_config(
+                enable_medium=updates["live_enable_medium"],
+                enable_large=updates["live_enable_large"],
+                improved_interval=updates["live_improved_interval"],
+                silence_threshold=updates["live_silence_threshold"]
+            )
+
+            # Jeśli włączono etap(y) i model nie jest w pamięci, doładuj
+            needs_cascade = (
+                updates["live_enable_medium"] and not getattr(self.transcriber, 'model_medium', None)
+            ) or (
+                updates["live_enable_large"] and not getattr(self.transcriber, 'model_large', None)
+            )
+            if needs_cascade:
+                asyncio.create_task(self._load_cascade_async())
+
+        self._update_model_status()
 
     # === SESSION CONTROL ===
 

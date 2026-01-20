@@ -15,6 +15,11 @@ class AppConfig:
     transcriber_model: str = "small"
     selected_device: str = "auto"
     generation_model: str = "Auto"  # Auto, Claude, Gemini
+    # Live pipeline (transkrypcja)
+    live_enable_medium: bool = True
+    live_enable_large: bool = True
+    live_improved_interval: float = 5.0
+    live_silence_threshold: float = 2.0
     # Dane gabinetu / lekarza
     clinic_name: str = "Gabinet Medyczny"
     clinic_address: str = ""
@@ -52,6 +57,16 @@ class ConfigManager:
         """Zapisuje obecny stan konfiguracji do pliku."""
         try:
             data = asdict(self._config)
+            # Zachowaj nieznane klucze (np. active_specialization) z istniejÄ…cego pliku
+            if self.config_path.exists():
+                try:
+                    existing = json.loads(self.config_path.read_text(encoding='utf-8'))
+                    if isinstance(existing, dict):
+                        for key, value in existing.items():
+                            if key not in data:
+                                data[key] = value
+                except Exception:
+                    pass
             self.config_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
             print("[CONFIG] Zapisano ustawienia.", flush=True)
         except Exception as e:

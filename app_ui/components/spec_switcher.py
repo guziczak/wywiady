@@ -29,6 +29,7 @@ class SpecializationSwitcher:
         self.button_icon = None
         self.button_label = None
         self.dropdown = None
+        self.item_checks = {}
 
     @staticmethod
     @lru_cache(maxsize=64)
@@ -83,33 +84,31 @@ class SpecializationSwitcher:
 
     def _create_compact(self, active_spec: Specialization) -> None:
         """Kompaktowy widok - dropdown button."""
-        def _label(spec: Specialization) -> str:
-            return spec.name
-
         specs = self.spec_manager.get_all()
-        button_label = _label(active_spec) if active_spec else "Specjalizacja"
+        button_label = active_spec.name if active_spec else "Specjalizacja"
 
-        with ui.dropdown_button(auto_close=True).props(
-            'flat dense dropdown-icon="arrow_drop_down" menu-class="bg-white text-gray-900"'
-        ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
+        # Button + Menu (bardziej stabilne etykiety w trybie kompaktowym)
+        with ui.button().props('flat dense').classes('text-white bg-white/10 hover:bg-white/20') as self.button:
             with ui.row().classes('items-center gap-2'):
                 self.button_icon = ui.html(self._get_icon_html(active_spec, 20), sanitize=False)
-                self.button_label = ui.label(button_label).classes('text-white')
+                self.button_label = ui.label(button_label).classes('text-white max-w-[160px] truncate')
+                ui.icon('arrow_drop_down').classes('text-white/70')
 
-            if not specs:
-                ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
-            else:
-                for spec in specs:
-                    is_active = spec.id == active_spec.id
-                    with ui.item(on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.html(self._get_icon_html(spec, 18), sanitize=False)
-                            ui.label(spec.name)
-                            if is_active:
-                                ui.icon('check', size='sm').classes('ml-auto text-green-600')
-        # Ensure menu opens reliably in desktop EXE
-        if self.dropdown:
-            self.dropdown.on('click', lambda: self.dropdown.open())
+            with ui.menu().props('auto-close').classes('bg-white text-gray-900') as self.menu:
+                if not specs:
+                    ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
+                else:
+                    for spec in specs:
+                        is_active = spec.id == active_spec.id
+                        with ui.item(on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900'):
+                            with ui.row().classes('items-center gap-2 w-full'):
+                                ui.html(self._get_icon_html(spec, 18), sanitize=False)
+                                ui.label(spec.name)
+                                check = ui.icon('check', size='sm').classes('ml-auto text-green-600')
+                                check.set_visibility(is_active)
+                                self.item_checks[spec.id] = check
+        if self.menu and self.button:
+            self.button.on('click', lambda: self.menu.open())
 
     def _create_expanded(self, active_spec: Specialization) -> None:
         """Rozwinięty widok - chips/tabs."""
@@ -137,13 +136,15 @@ class SpecializationSwitcher:
 
         # Aktualizuj UI
         if self.button_icon:
-            self.button_icon.set_content(self._get_icon_html(spec, 18))
-        if self.button_label:
-            self.button_label.text = spec.name
-        if self.button_icon:
             self.button_icon.set_content(self._get_icon_html(spec, 20))
         if self.button_label:
             self.button_label.text = spec.name
+        # Aktualizuj znaczniki aktywnej pozycji w menu
+        for spec_id, icon in self.item_checks.items():
+            try:
+                icon.set_visibility(spec_id == spec.id)
+            except Exception:
+                pass
         if self.menu:
             self.menu.close()
 
@@ -157,13 +158,14 @@ class SpecializationSwitcher:
         """Odświeża stan przełącznika."""
         active_spec = self.spec_manager.get_active()
         if self.button_icon:
-            self.button_icon.set_content(self._get_icon_html(active_spec, 18))
-        if self.button_label:
-            self.button_label.text = active_spec.name
-        if self.button_icon:
             self.button_icon.set_content(self._get_icon_html(active_spec, 20))
         if self.button_label:
             self.button_label.text = active_spec.name
+        for spec_id, icon in self.item_checks.items():
+            try:
+                icon.set_visibility(spec_id == active_spec.id)
+            except Exception:
+                pass
 
     def _on_select_id(self, spec_id: str) -> None:
         """Backward compat (nieużywane w dropdown button)."""
