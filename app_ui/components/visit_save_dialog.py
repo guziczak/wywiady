@@ -598,7 +598,11 @@ class VisitSaveDialog:
                 additional_notes=self.additional_notes.strip()
             )
 
-            ui.notify('Wizyta zapisana!', type='positive')
+            visit_id = getattr(visit, 'id', None)
+            if visit_id:
+                ui.notify(f'Wizyta zapisana: {visit_id[:8]}...', type='positive')
+            else:
+                ui.notify('Wizyta zapisana!', type='positive')
 
             if self.on_save:
                 self.on_save(visit)

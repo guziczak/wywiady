@@ -546,8 +546,8 @@ def run_gui():
 
     root = tk.Tk()
     root.title(f"Instalator {APP_NAME}")
-    root.geometry("560x360")
-    root.minsize(520, 320)
+    root.geometry("520x320")
+    root.minsize(480, 300)
 
     bg = "#f8fafc"
     fg = "#0f172a"
@@ -784,11 +784,11 @@ def run_gui():
         if raw_frame.winfo_ismapped():
             raw_frame.grid_remove()
             toggle_btn.config(text="Pokaz raw")
-            root.geometry("560x360")
+            root.geometry("520x320")
         else:
             raw_frame.grid()
             toggle_btn.config(text="Ukryj raw")
-            root.geometry("560x560")
+            root.geometry("520x520")
 
     def on_close():
         if installing["value"]:
@@ -798,32 +798,60 @@ def run_gui():
             root.destroy()
 
     content = tk.Frame(root, bg=bg)
-    content.pack(fill="both", expand=True, padx=20, pady=16)
+    content.pack(fill="both", expand=True, padx=16, pady=14)
 
-    title_label = tk.Label(content, text=APP_NAME, font=("Segoe UI", 18, "bold"), bg=bg, fg=fg)
-    title_label.grid(row=0, column=0, sticky="w")
+    title_label = tk.Label(content, text=APP_NAME, font=("Segoe UI", 16, "bold"), bg=bg, fg=fg)
+    title_label.grid(row=0, column=0, sticky="w", pady=(0, 6))
 
-    subtitle = tk.Label(content, text="Instalator", font=("Segoe UI", 10), bg=bg, fg=muted)
-    subtitle.grid(row=1, column=0, sticky="w", pady=(0, 12))
-
-    status_label = tk.Label(content, text="Przygotowywanie...", font=("Segoe UI", 12, "bold"), bg=bg, fg=fg)
-    status_label.grid(row=2, column=0, sticky="w", pady=(0, 6))
+    status_label = tk.Label(content, text="Przygotowywanie...", font=("Segoe UI", 11, "bold"), bg=bg, fg=fg)
+    status_label.grid(row=1, column=0, sticky="w", pady=(0, 6))
 
     progress_var = tk.DoubleVar(value=0)
     progress_bar = ttk.Progressbar(content, variable=progress_var, maximum=100)
-    progress_bar.grid(row=3, column=0, sticky="we", pady=(0, 4))
+    progress_bar.grid(row=2, column=0, sticky="we", pady=(0, 4))
 
     progress_label = tk.Label(content, text="", font=("Segoe UI", 9), bg=bg, fg=muted)
-    progress_label.grid(row=4, column=0, sticky="w", pady=(0, 8))
+    progress_label.grid(row=3, column=0, sticky="w", pady=(0, 8))
 
     hint_label = tk.Label(content, text="Szybki reset: wpisz 'rst' w ciagu 2 sekund", font=("Segoe UI", 9), bg=bg, fg=muted)
-    hint_label.grid(row=5, column=0, sticky="w", pady=(0, 12))
+    hint_label.grid(row=4, column=0, sticky="w", pady=(0, 10))
 
     buttons = tk.Frame(content, bg=bg)
-    buttons.grid(row=6, column=0, sticky="w", pady=(0, 10))
+    buttons.grid(row=5, column=0, sticky="w", pady=(0, 8))
 
-    toggle_btn = tk.Button(buttons, text="Pokaz raw", command=toggle_raw, fg=accent, bd=0, bg=bg, activebackground=bg, activeforeground=accent)
+    def copy_raw():
+        try:
+            text = raw_text.get("1.0", "end-1c")
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update()
+            hint_label.config(text="Skopiowano raw do schowka.", fg=muted)
+        except Exception:
+            messagebox.showwarning("Kopiowanie", "Nie udalo sie skopiowac raw.")
+
+    toggle_btn = tk.Button(
+        buttons,
+        text="Pokaz raw",
+        command=toggle_raw,
+        fg=accent,
+        bd=0,
+        bg=bg,
+        activebackground=bg,
+        activeforeground=accent,
+    )
     toggle_btn.pack(side="left", padx=(0, 10))
+
+    copy_btn = tk.Button(
+        buttons,
+        text="Skopiuj raw",
+        command=copy_raw,
+        fg=accent,
+        bd=0,
+        bg=bg,
+        activebackground=bg,
+        activeforeground=accent,
+    )
+    copy_btn.pack(side="left", padx=(0, 10))
 
     launch_btn = tk.Button(buttons, text="Uruchom aplikacje", state="disabled")
     launch_btn.pack(side="left", padx=(0, 10))
@@ -835,8 +863,8 @@ def run_gui():
     close_btn.pack(side="left")
 
     raw_frame = tk.Frame(content, bg=bg)
-    raw_frame.grid(row=7, column=0, sticky="nsew")
-    content.grid_rowconfigure(7, weight=1)
+    raw_frame.grid(row=6, column=0, sticky="nsew")
+    content.grid_rowconfigure(6, weight=1)
     content.grid_columnconfigure(0, weight=1)
 
     raw_text = ScrolledText(

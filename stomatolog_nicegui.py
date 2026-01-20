@@ -1821,8 +1821,7 @@ class WywiadApp:
                 transcript=transcript,
                 diagnoses=diagnoses,
                 procedures=procedures,
-                model_used=self.last_model_used,
-                on_save=lambda visit: ui.notify(f"Wizyta zapisana: {visit.id[:8]}...", type='positive')
+                model_used=self.last_model_used
             )
         except ImportError as e:
             ui.notify(f"Moduł zapisywania niedostępny: {e}", type='negative')
