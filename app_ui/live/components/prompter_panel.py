@@ -296,9 +296,36 @@ class PrompterPanel:
 
     def _render_answer_suggestions(self):
         """Renderuje przykładowe odpowiedzi pacjenta dla wybranego pytania."""
+        from app_ui.live.live_state import SessionStatus
         question = self.state.selected_question
         answers = self.state.answer_suggestions
-        if not question or not answers:
+        if not question:
+            # Subtelny placeholder, aby uzytkownik wiedzial o funkcji
+            if self.state.status == SessionStatus.RECORDING and self.state.suggestions:
+                with ui.card().classes(
+                    'w-full bg-white border border-slate-200 rounded-xl '
+                    'p-4 sm:p-5 shadow-sm'
+                ):
+                    ui.label('Podpowiedzi odpowiedzi pacjenta').classes(
+                        'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
+                    )
+                    ui.label('Kliknij pytanie, aby zobaczyc przykladowe odpowiedzi.').classes(
+                        'text-sm text-slate-500 mt-1'
+                    )
+            return
+
+        if not answers:
+            with ui.card().classes(
+                'w-full bg-white border border-slate-200 rounded-xl '
+                'p-4 sm:p-5 shadow-sm'
+            ):
+                ui.label('Podpowiedzi odpowiedzi pacjenta').classes(
+                    'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
+                )
+                ui.label(question).classes('text-sm text-slate-700 leading-snug')
+                ui.label('Brak podpowiedzi dla tego pytania.').classes(
+                    'text-sm text-slate-500 mt-2'
+                )
             return
 
         with ui.card().classes(

@@ -587,13 +587,12 @@ class LiveInterviewView:
         """Callback: kliknięcie w kartę sugestii."""
         print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
 
-        # Ustaw kontekst odpowiedzi pacjenta
+        # Przygotuj kontekst odpowiedzi pacjenta
         answers = self._generate_patient_answers(question)
-        self.state.set_answer_context(question, answers)
 
-        # Kopiuj do schowka
+        # Kopiuj do schowka przed zmiana UI (unikaj bledu "parent element deleted")
         import json
-        client = self._client
+        client = ui.context.client or self._client
         if client:
             try:
                 client.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
@@ -614,8 +613,12 @@ class LiveInterviewView:
             except Exception:
                 pass
 
+        # Ustaw kontekst odpowiedzi pacjenta (po akcjach UI)
+        self.state.set_answer_context(question, answers)
+
         # Trigger AI (regeneruj pozostałe)
-        self.ai_controller.on_card_clicked(question)
+        if self.ai_controller:
+            self.ai_controller.on_card_clicked(question)
 
     def _generate_patient_answers(self, question: str) -> List[str]:
         """Generuje 3 przykładowe odpowiedzi pacjenta (heurystyki bez LLM)."""

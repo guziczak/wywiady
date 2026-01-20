@@ -2449,12 +2449,41 @@ pause
                     continue
         return start
 
-    port = _find_available_port(8089, 8100)
-    if port != 8089:
-        print(f"[APP] Port 8089 in use, switching to {port}.", flush=True)
+    def _is_port_open(port: int) -> bool:
+        import socket
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return True
+        except OSError:
+            return False
 
     auto_open = os.environ.get("WYWIAD_AUTO_OPEN") == "1"
     scheme = "http"
+
+    preferred_port = 8089
+    allow_multi = os.environ.get("WYWIAD_ALLOW_MULTI") == "1"
+
+    if _is_port_open(preferred_port) and not allow_multi:
+        print(f"[APP] Port {preferred_port} already in use - using existing instance.", flush=True)
+
+        if os.environ.get("WYWIAD_OPEN_LANDING") == "1" or auto_open:
+            def _open_pages_existing():
+                try:
+                    import webbrowser
+                    time.sleep(0.5)
+                    if os.environ.get("WYWIAD_OPEN_LANDING") == "1":
+                        webbrowser.open("https://guziczak.github.io/wywiady/", new=1, autoraise=True)
+                        time.sleep(0.5)
+                    if auto_open:
+                        webbrowser.open(f"{scheme}://127.0.0.1:{preferred_port}", new=1, autoraise=True)
+                except Exception:
+                    pass
+            threading.Thread(target=_open_pages_existing, daemon=True).start()
+        return
+
+    port = _find_available_port(preferred_port, 8100)
+    if port != preferred_port:
+        print(f"[APP] Port {preferred_port} in use, switching to {port}.", flush=True)
 
     if os.environ.get("WYWIAD_OPEN_LANDING") == "1" or auto_open:
         def _open_pages():
