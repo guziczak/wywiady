@@ -1,56 +1,120 @@
-from PIL import Image, ImageDraw
+import os
+import tempfile
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+from fontTools.ttLib import TTFont
+import nicegui
 
-SIZE = 256
-BG = (248, 250, 252)          # slate-50
-FOLDER = (15, 118, 110)       # teal-700
-FOLDER_TAB = (20, 184, 166)   # teal-500
-CROSS = (255, 255, 255)       # white
+SIZE = 512
+BG = (29, 78, 216)          # blue-700 (jak header)
+FG = (255, 255, 255)        # white
 
-img = Image.new('RGBA', (SIZE, SIZE), BG)
+FONT_WOFF2 = (
+    Path(nicegui.__file__).parent
+    / "static"
+    / "fonts"
+    / "0c19a63c7528cc1a.woff2"
+)
+LIGATURE_NAME = "medical_services"
+
+def _get_ligature_codepoint(font: TTFont, ligature: str) -> int:
+    """Zwraca codepoint glypha dla ligatury Material Icons."""
+    cmap = {}
+    for table in font["cmap"].tables:
+        if table.isUnicode():
+            cmap.update(table.cmap)
+
+    glyph_to_char = {}
+    glyph_to_code = {}
+    for code, glyph_name in cmap.items():
+        if glyph_name not in glyph_to_char:
+            glyph_to_char[glyph_name] = chr(code)
+            glyph_to_code[glyph_name] = code
+
+    lig_glyph = None
+    gsub = font["GSUB"].table
+    for lookup in gsub.LookupList.Lookup:
+        if lookup.LookupType != 4:
+            continue
+        for subtable in lookup.SubTable:
+            if not hasattr(subtable, "ligatures"):
+                continue
+            for first, ligs in subtable.ligatures.items():
+                for lig in ligs:
+                    chars = []
+                    for gname in [first] + lig.Component:
+                        ch = glyph_to_char.get(gname)
+                        if ch is None:
+                            chars = None
+                            break
+                        chars.append(ch)
+                    if chars is None:
+                        continue
+                    if "".join(chars) == ligature:
+                        lig_glyph = lig.LigGlyph
+                        break
+                if lig_glyph:
+                    break
+            if lig_glyph:
+                break
+        if lig_glyph:
+            break
+
+    if not lig_glyph:
+        raise RuntimeError(f"Nie znaleziono ligatury: {ligature}")
+
+    if lig_glyph in glyph_to_code:
+        return glyph_to_code[lig_glyph]
+
+    if lig_glyph.startswith("uni"):
+        return int(lig_glyph[3:], 16)
+
+    raise RuntimeError(f"Brak codepointu dla glypha: {lig_glyph}")
+
+font = TTFont(str(FONT_WOFF2))
+codepoint = _get_ligature_codepoint(font, LIGATURE_NAME)
+glyph_char = chr(codepoint)
+
+tmp_ttf = Path(tempfile.gettempdir()) / "material-icons.ttf"
+font.save(str(tmp_ttf))
+
+img = Image.new("RGBA", (SIZE, SIZE), BG)
 draw = ImageDraw.Draw(img)
 
-# Folder body
-pad = int(SIZE * 0.1)
-left = pad
-right = SIZE - pad
-top = int(SIZE * 0.36)
-bottom = int(SIZE * 0.86)
-radius = int(SIZE * 0.08)
-draw.rounded_rectangle([left, top, right, bottom], radius=radius, fill=FOLDER)
+max_box = int(SIZE * 0.72)
+font_size = SIZE
+font_obj = None
+while font_size > 10:
+    try:
+        font_obj = ImageFont.truetype(str(tmp_ttf), font_size)
+    except Exception:
+        font_obj = None
+        break
+    bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
+    glyph_w = bbox[2] - bbox[0]
+    glyph_h = bbox[3] - bbox[1]
+    if glyph_w <= max_box and glyph_h <= max_box:
+        break
+    font_size -= 8
 
-# Folder tab
-tab_width = int((right - left) * 0.45)
-tab_height = int(SIZE * 0.12)
-tab_left = left + int(SIZE * 0.03)
-tab_top = top - tab_height + int(SIZE * 0.02)
-tab_right = tab_left + tab_width
-tab_bottom = top + int(SIZE * 0.02)
-tab_radius = int(SIZE * 0.06)
-draw.rounded_rectangle(
-    [tab_left, tab_top, tab_right, tab_bottom],
-    radius=tab_radius,
-    fill=FOLDER_TAB
+if font_obj is None:
+    raise RuntimeError("Nie udało się załadować fontu Material Icons.")
+
+bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
+glyph_w = bbox[2] - bbox[0]
+glyph_h = bbox[3] - bbox[1]
+x = (SIZE - glyph_w) // 2 - bbox[0]
+y = (SIZE - glyph_h) // 2 - bbox[1]
+draw.text((x, y), glyph_char, font=font_obj, fill=FG)
+
+try:
+    os.remove(tmp_ttf)
+except Exception:
+    pass
+
+img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
+img.save(
+    "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
+    sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
 )
-
-# Medical cross on folder
-cross_thickness = int(SIZE * 0.12)
-cross_length = int(SIZE * 0.38)
-cx = (left + right) // 2
-cy = (top + bottom) // 2 + int(SIZE * 0.02)
-
-v_left = cx - cross_thickness // 2
-v_top = cy - cross_length // 2
-v_right = v_left + cross_thickness
-v_bottom = v_top + cross_length
-draw.rectangle([v_left, v_top, v_right, v_bottom], fill=CROSS)
-
-h_left = cx - cross_length // 2
-h_top = cy - cross_thickness // 2
-h_right = h_left + cross_length
-h_bottom = h_top + cross_thickness
-draw.rectangle([h_left, h_top, h_right, h_bottom], fill=CROSS)
-
-img.save('C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png')
-img.save('C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico',
-         sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print("Icon created!")
