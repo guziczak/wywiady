@@ -114,6 +114,10 @@ class LiveState:
         self.suggestions: List[Suggestion] = []
         self.asked_questions: List[str] = []  # Historia użytych pytań
 
+        # Podpowiedzi odpowiedzi pacjenta
+        self.selected_question: Optional[str] = None
+        self.answer_suggestions: List[str] = []
+
         # Pending validation queue
         self.pending_validation: List[str] = []
 
@@ -241,6 +245,18 @@ class LiveState:
         """Zwraca nieużyte sugestie."""
         return [s for s in self.suggestions if not s.used]
 
+    def set_answer_context(self, question: Optional[str], answers: List[str]):
+        """Ustawia wybrane pytanie i przykładowe odpowiedzi pacjenta."""
+        self.selected_question = question.strip() if question else None
+        self.answer_suggestions = [a.strip() for a in answers if a and a.strip()]
+        self._notify_suggestions_change()
+
+    def clear_answer_context(self):
+        """Czyści podpowiedzi odpowiedzi pacjenta."""
+        self.selected_question = None
+        self.answer_suggestions = []
+        self._notify_suggestions_change()
+
     # === STATUS ===
 
     def set_status(self, status: SessionStatus):
@@ -257,6 +273,8 @@ class LiveState:
         self._words_since_last_regen = 0
         self.suggestions = []
         self.asked_questions = []
+        self.selected_question = None
+        self.answer_suggestions = []
         self.pending_validation = []
         self.diarization = None
         self.prompter_mode = PrompterMode.SUGGESTIONS

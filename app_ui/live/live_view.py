@@ -5,7 +5,7 @@ Główny widok Live Interview z komponentami i smart AI triggers.
 
 from nicegui import ui, app
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
 from app_ui.components.header import create_header
 from app_ui.live.live_state import LiveState, SessionStatus
@@ -587,6 +587,10 @@ class LiveInterviewView:
         """Callback: kliknięcie w kartę sugestii."""
         print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
 
+        # Ustaw kontekst odpowiedzi pacjenta
+        answers = self._generate_patient_answers(question)
+        self.state.set_answer_context(question, answers)
+
         # Kopiuj do schowka
         import json
         ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
@@ -594,6 +598,129 @@ class LiveInterviewView:
 
         # Trigger AI (regeneruj pozostałe)
         self.ai_controller.on_card_clicked(question)
+
+    def _generate_patient_answers(self, question: str) -> List[str]:
+        """Generuje 3 przykładowe odpowiedzi pacjenta (heurystyki bez LLM)."""
+        if not question:
+            return []
+
+        q = question.lower().strip()
+        answers: List[str] = []
+
+        def add(*items: str):
+            for item in items:
+                if item and item not in answers:
+                    answers.append(item)
+
+        def has_any(*terms: str) -> bool:
+            return any(term in q for term in terms)
+
+        if q.startswith("czy "):
+            add(
+                "Tak, szczególnie wieczorem.",
+                "Nie, nic takiego nie zauważyłem/am.",
+                "Raczej sporadycznie, ale się zdarza."
+            )
+
+        if has_any("od kiedy", "jak długo", "ile czasu", "kiedy się zacz", "od ilu"):
+            add(
+                "Od około 3 dni.",
+                "Zaczęło się wczoraj wieczorem.",
+                "Od kilku tygodni, stopniowo się nasila."
+            )
+
+        if has_any("jak często", "ile razy", "często"):
+            add(
+                "Kilka razy dziennie.",
+                "Prawie codziennie, zwykle wieczorem.",
+                "Sporadycznie, co parę dni."
+            )
+
+        if has_any("jak siln", "w skali", "nasilen", "ból", "boli", "bolesn"):
+            add(
+                "To ból około 6/10, pulsujący.",
+                "Raczej umiarkowany, nasila się przy jedzeniu.",
+                "Bywa ostry, szczególnie w nocy."
+            )
+
+        if has_any("gdzie", "lokaliz", "miejsce", "po której stronie", "po jakiej stronie", "promieniuje"):
+            add(
+                "Po lewej stronie, w okolicy żuchwy.",
+                "Boli z tyłu i promieniuje do ucha.",
+                "W jednym miejscu, blisko dziąsła."
+            )
+
+        if has_any("co pomaga", "co łagodzi", "co pogarsza", "co nasila"):
+            add(
+                "Pomaga ibuprofen i chłodny okład.",
+                "Nasila się przy gryzieniu i zimnych napojach.",
+                "Na chwilę pomaga odpoczynek."
+            )
+
+        if has_any("temperatur", "gorączk"):
+            add(
+                "Tak, miałem/am około 38°C.",
+                "Nie, temperatury nie było.",
+                "Raz wieczorem podniosła się do 37,7°C."
+            )
+
+        if has_any("alerg", "uczulen"):
+            add(
+                "Tak, mam uczulenie na penicylinę.",
+                "Nie mam znanych alergii.",
+                "Reaguję na pyłki w sezonie."
+            )
+
+        if has_any("lek", "przyjm", "stosuj"):
+            add(
+                "Biorę ibuprofen doraźnie.",
+                "Nie przyjmuję żadnych leków na stałe.",
+                "Stosuję antybiotyk od 2 dni."
+            )
+
+        if has_any("krwaw", "krew"):
+            add(
+                "Tak, krwawi przy szczotkowaniu.",
+                "Nie, krwawienia nie ma.",
+                "Czasem delikatnie po nitkowaniu."
+            )
+
+        if has_any("obrzęk", "opuch", "spuch"):
+            add(
+                "Jest lekka opuchlizna od wczoraj.",
+                "Nie, obrzęku nie zauważyłem/am.",
+                "Tak, policzek jest spuchnięty."
+            )
+
+        if has_any("uraz", "uderz", "upad", "wypad"):
+            add(
+                "Tak, uderzyłem/am się tydzień temu.",
+                "Nie było żadnego urazu.",
+                "Mogło się zacząć po zabiegu."
+            )
+
+        if has_any("ciąża", "w ciąży"):
+            add(
+                "Nie, nie jestem w ciąży.",
+                "Tak, jestem w drugim trymestrze.",
+                "Nie dotyczy."
+            )
+
+        if has_any("duszno", "oddych", "kaszel"):
+            add(
+                "Mam lekki kaszel i zadyszkę.",
+                "Oddycha mi się normalnie.",
+                "Duszność pojawia się przy wysiłku."
+            )
+
+        if len(answers) < 3:
+            add(
+                "Trudno powiedzieć, ale od kilku dni jest gorzej.",
+                "To raczej stały dyskomfort niż ostry ból.",
+                "Nie zauważyłem/am innych objawów."
+            )
+
+        return answers[:3]
 
     # === AI CALLBACKS ===
 
