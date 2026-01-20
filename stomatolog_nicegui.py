@@ -2210,6 +2210,38 @@ def main():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(line_buffering=True)
 
+    def _setup_favicon():
+        icon_tag = "v3"
+        try:
+            from branding import BRAND_ICON_TAG
+            if BRAND_ICON_TAG:
+                icon_tag = BRAND_ICON_TAG
+        except Exception:
+            pass
+        ext_dir = Path(__file__).parent / "extension"
+        if not ext_dir.is_dir():
+            return
+        try:
+            app.add_static_files("/static", ext_dir)
+        except Exception:
+            pass
+        icon_base = f"/static/icon_{icon_tag}"
+        ui.add_head_html(
+            f"""
+<link rel="icon" type="image/png" sizes="16x16" href="{icon_base}_16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{icon_base}_32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="{icon_base}_48.png">
+<link rel="icon" type="image/png" sizes="64x64" href="{icon_base}_64.png">
+<link rel="icon" type="image/png" sizes="96x96" href="{icon_base}_96.png">
+<link rel="icon" type="image/png" sizes="128x128" href="{icon_base}_128.png">
+<link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png">
+<link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png">
+<link rel="shortcut icon" href="{icon_base}.ico">
+"""
+        )
+
+    _setup_favicon()
+
     log("[STARTUP] Starting app...")
 
     try:

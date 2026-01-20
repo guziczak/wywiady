@@ -156,10 +156,39 @@ def _human_bytes(num):
         size /= 1024
 
 
+def _subprocess_kwargs():
+    if os.name != "nt":
+        return {}
+    try:
+        if isinstance(_sink(), ConsoleSink):
+            return {}
+    except Exception:
+        return {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if not creationflags:
+        return {}
+    startupinfo = None
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+    except Exception:
+        startupinfo = None
+    kwargs = {"creationflags": creationflags}
+    if startupinfo is not None:
+        kwargs["startupinfo"] = startupinfo
+    return kwargs
+
+
 def check_python():
     print_step("Sprawdzanie instalacji Python w systemie...")
     try:
-        subprocess.check_call(["python", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(
+            ["python", "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_subprocess_kwargs(),
+        )
         log_info("    Python znaleziony.")
     except (subprocess.CalledProcessError, FileNotFoundError):
         print_error("Nie znaleziono Pythona!\n"
@@ -176,7 +205,8 @@ def _powershell_json(script: str):
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", script],
             capture_output=True,
-            text=True
+            text=True,
+            **_subprocess_kwargs(),
         )
         if result.returncode != 0:
             return None
@@ -293,7 +323,8 @@ def kill_by_port(port: int, install_dir: str | None = None) -> bool:
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
-                capture_output=True
+                capture_output=True,
+                **_subprocess_kwargs(),
             )
             killed_any = True
         except Exception:
@@ -312,7 +343,8 @@ def kill_by_port_any(port: int) -> bool:
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
-                capture_output=True
+                capture_output=True,
+                **_subprocess_kwargs(),
             )
             killed_any = True
         except Exception:
@@ -335,7 +367,11 @@ def kill_running_app_in_dir(install_dir: str | None = None) -> bool:
         if not pids:
             return False
         ps = f"Stop-Process -Id {','.join(str(pid) for pid in pids)} -Force"
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True,
+            **_subprocess_kwargs(),
+        )
         return True
     except Exception:
         return False
@@ -392,7 +428,8 @@ def reset_installation(install_dir):
             try:
                 subprocess.run(
                     ["powershell", "-Command", f"Remove-Item -LiteralPath '{install_dir}' -Recurse -Force"],
-                    capture_output=True
+                    capture_output=True,
+                    **_subprocess_kwargs(),
                 )
             except Exception:
                 pass
@@ -543,7 +580,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     if not os.path.exists("venv"):
         print_step("Tworzenie wirtualnego srodowiska (venv)...")
         try:
-            subprocess.check_call(["python", "-m", "venv", "venv"])
+            subprocess.check_call(["python", "-m", "venv", "venv"], **_subprocess_kwargs())
         except Exception as e:
             print_error(f"Nie udalo sie stworzyc venv: {e}")
 
@@ -600,7 +637,11 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     $s.IconLocation='{icon_path}';
     $s.Save()
     """
-    subprocess.run(["powershell", "-Command", ps_script], capture_output=True)
+    subprocess.run(
+        ["powershell", "-Command", ps_script],
+        capture_output=True,
+        **_subprocess_kwargs(),
+    )
 
     reset_shortcut = os.path.join(desktop, f"{RESET_SHORTCUT_NAME}.lnk")
     reset_target = os.path.join(install_dir, "AsystentSetup.exe")
@@ -612,7 +653,11 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     $s.IconLocation='{icon_path}';
     $s.Save()
     """
-    subprocess.run(["powershell", "-Command", ps_reset], capture_output=True)
+    subprocess.run(
+        ["powershell", "-Command", ps_reset],
+        capture_output=True,
+        **_subprocess_kwargs(),
+    )
 
     if remote_commit and not skip_download:
         write_state(state_path, {"commit": remote_commit})
@@ -640,9 +685,9 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         log_info("Uruchamianie aplikacji za 3 sekundy...")
         time.sleep(3)
         try:
-            subprocess.Popen([run_vbs_path], shell=True)
+            subprocess.Popen([run_vbs_path], shell=True, **_subprocess_kwargs())
         except Exception:
-            subprocess.Popen([run_bat_path], shell=True)
+            subprocess.Popen([run_bat_path], shell=True, **_subprocess_kwargs())
 
 
 class ConsoleSink:
@@ -693,7 +738,13 @@ class ConsoleSink:
 
     def run_with_spinner(self, cmd, label):
         spinner = "|/-\\"
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            **_subprocess_kwargs(),
+        )
         idx = 0
         out = None
         while True:
@@ -993,7 +1044,13 @@ def run_gui():
             output = []
             proc = None
             try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    **_subprocess_kwargs(),
+                )
                 if proc.stdout:
                     for line in proc.stdout:
                         line = line.rstrip()
