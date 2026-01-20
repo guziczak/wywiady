@@ -579,8 +579,9 @@ class TranscriptPanel:
                 flush_group()
                 current_group = []
                 is_regenerating_group = is_token_active
-            
-                current_group.append((token, idx))
+
+            # Zawsze dodaj bieżący token do aktualnej grupy
+            current_group.append((token, idx))
 
         # Zrzuć ostatnią grupę
         flush_group()
