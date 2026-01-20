@@ -1,12 +1,18 @@
 import os
+import sys
 import tempfile
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
 import nicegui
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from branding import BRAND_ICON, BRAND_ICON_BG
 
 SIZE = 512
-BG = (29, 78, 216)          # blue-700 (jak header)
+BG = tuple(int(BRAND_ICON_BG.lstrip("#")[i:i+2], 16) for i in (0, 2, 4))
 FG = (255, 255, 255)        # white
 
 FONT_WOFF2 = (
@@ -15,7 +21,7 @@ FONT_WOFF2 = (
     / "fonts"
     / "0c19a63c7528cc1a.woff2"
 )
-LIGATURE_NAME = "medical_services"
+LIGATURE_NAME = BRAND_ICON
 
 def _get_ligature_codepoint(font: TTFont, ligature: str) -> int:
     """Zwraca codepoint glypha dla ligatury Material Icons."""

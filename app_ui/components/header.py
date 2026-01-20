@@ -1,4 +1,5 @@
 from nicegui import ui
+from branding import BRAND_ICON
 
 def create_header(app, show_spec_switcher: bool = True):
     """
@@ -21,7 +22,7 @@ def create_header(app, show_spec_switcher: bool = True):
                 
                 # Icon with Glow
                 with ui.element('div').classes('relative flex items-center justify-center'):
-                    ui.icon('medical_services', size='lg').classes(
+                    ui.icon(BRAND_ICON, size='lg').classes(
                         'transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 relative z-10'
                     )
                     # Glow effect background
