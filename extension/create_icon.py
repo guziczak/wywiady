@@ -121,7 +121,18 @@ png_img = _render_icon(512, tmp_ttf, glyph_char)
 png_img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
 png_img.save(f"C:/Users/guzic/Documents/GitHub/wywiady/extension/icon_{BRAND_ICON_TAG}.png")
 
-ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+ico_sizes = [
+    (16, 16),
+    (20, 20),
+    (24, 24),
+    (32, 32),
+    (40, 40),
+    (48, 48),
+    (64, 64),
+    (96, 96),
+    (128, 128),
+    (256, 256),
+]
 png_img.save(
     "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
     sizes=ico_sizes,
@@ -132,7 +143,7 @@ png_img.save(
 )
 
 # Pre-rendered PNGs for Tk window icons (crisp at each size)
-for size in [16, 24, 32, 48, 64, 128, 256]:
+for size in [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]:
     img = _render_icon(size, tmp_ttf, glyph_char)
     img.save(f"C:/Users/guzic/Documents/GitHub/wywiady/extension/icon_{BRAND_ICON_TAG}_{size}.png")
 

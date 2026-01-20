@@ -567,7 +567,7 @@ def run_gui():
             png_path = os.path.join(base, "extension", f"icon_{BRAND_ICON_TAG}.png")
 
             icon_images = []
-            for size in (16, 24, 32, 48, 64, 128, 256):
+            for size in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256):
                 png_size_path = os.path.join(base, "extension", f"icon_{BRAND_ICON_TAG}_{size}.png")
                 if os.path.exists(png_size_path):
                     try:
