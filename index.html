@@ -3,117 +3,241 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Asystent Medyczny - Instalacja</title>
+    <title>Asystent Medyczny AI — Pobieranie</title>
+    <meta name="description" content="Pobierz Asystent Medyczny AI: inteligentne wspomaganie wywiadów lekarskich i transkrypcja w czasie rzeczywistym.">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg: #f6f7fb;
+            --bg-2: #eef2ff;
+            --ink: #0f172a;
+            --muted: #475569;
+            --accent: #2563eb;
+            --accent-2: #0ea5e9;
+            --card: #ffffff;
+            --border: rgba(15, 23, 42, 0.08);
+            --shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+            --radius: 18px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0f172a;
-            color: #e2e8f0;
-            display: flex;
-            flex-direction: column;
+            margin: 0;
+            font-family: "Manrope", "Space Grotesk", "Segoe UI", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(1200px 600px at 20% -20%, #e0f2fe 0%, transparent 60%),
+                radial-gradient(900px 500px at 90% 10%, #dbeafe 0%, transparent 55%),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+            min-height: 100vh;
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 48px 20px 64px;
+        }
+
+        header {
+            display: grid;
+            gap: 18px;
             align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
+            justify-items: start;
+            margin-bottom: 32px;
+            animation: fadeUp 0.6s ease both;
         }
-        .container {
-            max-width: 600px;
-            padding: 2rem;
+
+        .eyebrow {
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 12px;
+            color: var(--muted);
+            font-weight: 600;
         }
+
         h1 {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-            color: #38bdf8;
-        }
-        p {
-            font-size: 1.1rem;
-            margin-bottom: 2rem;
-            color: #94a3b8;
-        }
-        .download-btn {
-            background-color: #2563eb;
-            color: white;
-            border: none;
-            padding: 1.5rem 3rem;
-            font-size: 1.5rem;
-            font-weight: bold;
-            border-radius: 12px;
-            cursor: pointer;
-            text-decoration: none;
-            transition: transform 0.2s, background-color 0.2s;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            display: inline-block;
-        }
-        .download-btn:hover {
-            background-color: #1d4ed8;
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-        .download-btn:active {
-            transform: translateY(0);
-        }
-        .subtext {
-            margin-top: 1rem;
-            font-size: 0.9rem;
-            color: #64748b;
-        }
-        .instructions {
-            margin-top: 2rem;
-            text-align: left;
-            background: #1e293b;
-            padding: 1.5rem;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            border-left: 4px solid #38bdf8;
-        }
-        .instructions ol {
-            padding-left: 1.5rem;
+            font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+            font-size: clamp(32px, 4vw, 48px);
+            line-height: 1.05;
             margin: 0;
         }
-        .instructions li {
-            margin-bottom: 0.8rem;
+
+        p.lead {
+            margin: 0;
+            font-size: clamp(16px, 2.1vw, 20px);
+            color: var(--muted);
+            max-width: 680px;
         }
-        code {
-            background: #0f172a;
-            padding: 2px 5px;
-            border-radius: 4px;
-            font-family: monospace;
-            color: #fbbf24;
+
+        .cta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 16px 24px;
+            border-radius: 14px;
+            text-decoration: none;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+            color: #ffffff;
+            font-weight: 700;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 24px 60px rgba(37, 99, 235, 0.25);
+        }
+
+        .pill {
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: rgba(37, 99, 235, 0.08);
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .grid {
+            display: grid;
+            gap: 18px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            animation: fadeUp 0.7s ease both;
+            animation-delay: 0.1s;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 22px;
+            box-shadow: var(--shadow);
+        }
+
+        .card h3 {
+            margin: 0 0 10px;
+            font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+            font-size: 18px;
+        }
+
+        .steps {
+            display: grid;
+            gap: 10px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .steps li {
+            display: grid;
+            grid-template-columns: 28px 1fr;
+            gap: 10px;
+            align-items: start;
+            color: var(--muted);
+            font-size: 15px;
+        }
+
+        .step-badge {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            background: rgba(15, 23, 42, 0.06);
+            color: var(--ink);
+            font-weight: 700;
+            display: grid;
+            place-items: center;
+            font-size: 13px;
+        }
+
+        .notice {
+            margin-top: 18px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .notice strong {
+            color: var(--ink);
+        }
+
+        .footer {
+            margin-top: 30px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Asystent Medyczny AI</h1>
-        <p>Inteligentne wspomaganie wywiadów lekarskich i transkrypcja w czasie rzeczywistym.</p>
-        
-        <a href="AsystentSetup.exe" download="AsystentSetup.exe" class="download-btn">
-            POBIERZ INSTALATOR
-        </a>
-        
-        <div class="subtext">Wersja dla systemu Windows 10/11</div>
+    <div class="wrap">
+        <header>
+            <div class="eyebrow">Pobieranie</div>
+            <h1>Asystent Medyczny AI</h1>
+            <p class="lead">
+                Inteligentne wspomaganie wywiadów lekarskich i transkrypcja w czasie rzeczywistym.
+                Pobierz instalator i uruchom aplikację w kilka minut.
+            </p>
+            <div class="cta-row">
+                <a href="AsystentSetup.exe" download="AsystentSetup.exe" class="btn">
+                    POBIERZ INSTALATOR
+                    <span aria-hidden="true">⬇</span>
+                </a>
+                <span class="pill">Windows 10 / 11</span>
+            </div>
+            <div class="notice">
+                <strong>SmartScreen:</strong> jeśli zobaczysz komunikat „System Windows ochronił ten komputer”,
+                kliknij „Więcej informacji”, a następnie „Uruchom mimo to”.
+            </div>
+        </header>
 
-        <div class="instructions">
-            <strong>Instrukcja instalacji:</strong>
-            <ol>
-                <li>Kliknij przycisk powyżej, aby pobrać <code>AsystentSetup.exe</code>.</li>
-                <li>Uruchom pobrany plik.</li>
-                <li>
-                    Jeśli zobaczysz niebieskie okno <em>"System Windows ochronił ten komputer"</em>:<br>
-                    kliknij <u>Więcej informacji</u>, a następnie <strong>Uruchom mimo to</strong>.
-                </li>
-                <li>Poczekaj, aż instalator pobierze pliki i skonfiguruje środowisko.</li>
-                <li>Na pulpicie pojawi się skrót <strong>Asystent Medyczny</strong>.</li>
-            </ol>
-        </div>
+        <section class="grid" aria-label="Instrukcja instalacji">
+            <div class="card">
+                <h3>Instrukcja instalacji</h3>
+                <ol class="steps">
+                    <li><span class="step-badge">1</span><span>Kliknij przycisk „Pobierz instalator”.</span></li>
+                    <li><span class="step-badge">2</span><span>Uruchom plik <strong>AsystentSetup.exe</strong>.</span></li>
+                    <li><span class="step-badge">3</span><span>Poczekaj, aż instalator pobierze pliki i skonfiguruje środowisko.</span></li>
+                    <li><span class="step-badge">4</span><span>Na pulpicie pojawi się skrót „Asystent Medyczny”.</span></li>
+                </ol>
+            </div>
 
-        <div class="instructions">
-            <strong>Uruchomienie aplikacji:</strong>
-            <ol>
-                <li>Uruchom aplikacje ze skrotu na pulpicie.</li>
-                <li>Jesli chcesz otworzyc recznie, wejdz na <code>http://127.0.0.1:8089</code>.</li>
-            </ol>
+            <div class="card">
+                <h3>Uruchomienie aplikacji</h3>
+                <ol class="steps">
+                    <li><span class="step-badge">1</span><span>Uruchom aplikację ze skrótu na pulpicie.</span></li>
+                    <li><span class="step-badge">2</span><span>Alternatywnie wejdź na <strong>http://127.0.0.1:8089</strong>.</span></li>
+                </ol>
+            </div>
+        </section>
+
+        <div class="footer">
+            W razie problemów z instalacją uruchom ponownie instalator i postępuj zgodnie z instrukcjami.
         </div>
     </div>
 </body>
