@@ -168,15 +168,76 @@ def check_python():
 
 
 def kill_running_app():
+    kill_running_app_in_dir(None)
+
+
+def _powershell_json(script: str):
     try:
-        ps = (
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -like '*stomatolog_nicegui.py*' -or $_.CommandLine -like '*AsystentMedyczny*' } | "
-            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True
         )
-        subprocess.run(["powershell", "-Command", ps], capture_output=True)
+        if result.returncode != 0:
+            return None
+        out = (result.stdout or "").strip()
+        if not out:
+            return None
+        return json.loads(out)
     except Exception:
-        pass
+        return None
+
+
+def _list_running_app_pids(install_dir: str | None = None):
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.CommandLine -like '*stomatolog_nicegui.py*' } | "
+        "Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"
+    )
+    data = _powershell_json(script)
+    if not data:
+        return []
+    if isinstance(data, dict):
+        items = [data]
+    else:
+        items = data
+    install_dir_l = install_dir.lower() if install_dir else ""
+    pids = []
+    for item in items:
+        try:
+            pid = int(item.get("ProcessId"))
+        except Exception:
+            continue
+        if pid == os.getpid():
+            continue
+        cmd = (item.get("CommandLine") or "").lower()
+        if install_dir_l and install_dir_l not in cmd:
+            continue
+        if cmd:
+            pids.append(pid)
+    return sorted(set(pids))
+
+
+def kill_running_app_in_dir(install_dir: str | None = None) -> bool:
+    try:
+        pids = _list_running_app_pids(install_dir)
+        if not pids:
+            return False
+        ps = f"Stop-Process -Id {','.join(str(pid) for pid in pids)} -Force"
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True)
+        return True
+    except Exception:
+        return False
+
+
+def maybe_kill_running_app(install_dir: str | None = None) -> bool:
+    if os.environ.get("WYWIAD_KILL_RUNNING", "1") in ("0", "false", "no"):
+        return False
+    killed = kill_running_app_in_dir(install_dir)
+    if killed:
+        log_warn("    Wykryto dzialajaca instancje. Zamykam, aby uruchomic nowa.")
+        time.sleep(1.0)
+    return killed
 
 
 def reset_installation(install_dir):
@@ -186,7 +247,7 @@ def reset_installation(install_dir):
         log_info("    Anulowano.")
         raise InstallerExit(0)
 
-    kill_running_app()
+    kill_running_app_in_dir(install_dir)
 
     if os.path.exists(install_dir):
         try:
@@ -439,6 +500,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         result["log_path"] = os.path.join(install_dir, "logs", "stdout.log")
 
     if auto_launch:
+        maybe_kill_running_app(install_dir)
         log_info("Uruchamianie aplikacji za 3 sekundy...")
         time.sleep(3)
         try:
@@ -704,6 +766,7 @@ def run_gui():
                             try:
                                 path = run_vbs or run_bat
                                 if path:
+                                    maybe_kill_running_app(os.path.dirname(path))
                                     os.startfile(path)
                             except Exception:
                                 messagebox.showwarning("Uruchomienie", "Nie udalo sie uruchomic aplikacji.")
