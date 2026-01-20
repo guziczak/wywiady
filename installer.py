@@ -13,8 +13,9 @@ from datetime import datetime
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
 REPO_API_COMMIT = "https://api.github.com/repos/guziczak/wywiady/commits/main"
 APP_NAME = "AsystentMedyczny"
+DISPLAY_NAME = "Asystent Medyczny Hub"
 MAIN_SCRIPT = "stomatolog_nicegui.py"
-ICON_REL_PATH = os.path.join("extension", "icon.png")
+ICON_REL_PATH = os.path.join("extension", "icon.ico")
 STATE_FILE = ".install_state.json"
 
 SINK = None
@@ -251,7 +252,7 @@ def get_install_dir() -> str:
 
 def run_installer(auto_launch: bool = True, result: dict | None = None):
     log_info("========================================================")
-    log_info(f"   INSTALATOR {APP_NAME.upper()}")
+    log_info(f"   {DISPLAY_NAME.upper()}")
     log_info("========================================================")
 
     check_python()
@@ -545,7 +546,7 @@ def run_gui():
     import webbrowser
 
     root = tk.Tk()
-    root.title(f"Instalator {APP_NAME}")
+    root.title(DISPLAY_NAME)
     root.geometry("520x320")
     root.minsize(480, 300)
 
@@ -555,6 +556,22 @@ def run_gui():
     accent = "#2563eb"
 
     root.configure(bg=bg)
+
+    def _apply_window_icon():
+        try:
+            base = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+            ico_path = os.path.join(base, "extension", "icon.ico")
+            png_path = os.path.join(base, "extension", "icon.png")
+            if os.path.exists(ico_path):
+                root.iconbitmap(ico_path)
+            if os.path.exists(png_path):
+                icon_img = tk.PhotoImage(file=png_path)
+                root.iconphoto(True, icon_img)
+                root._icon_img = icon_img
+        except Exception:
+            pass
+
+    _apply_window_icon()
 
     queue_events = queue.Queue()
     installing = {"value": True}
@@ -800,7 +817,7 @@ def run_gui():
     content = tk.Frame(root, bg=bg)
     content.pack(fill="both", expand=True, padx=16, pady=14)
 
-    title_label = tk.Label(content, text=APP_NAME, font=("Segoe UI", 16, "bold"), bg=bg, fg=fg)
+    title_label = tk.Label(content, text=DISPLAY_NAME, font=("Segoe UI", 16, "bold"), bg=bg, fg=fg)
     title_label.grid(row=0, column=0, sticky="w", pady=(0, 6))
 
     status_label = tk.Label(content, text="Przygotowywanie...", font=("Segoe UI", 11, "bold"), bg=bg, fg=fg)
@@ -965,11 +982,11 @@ def _show_gui_error(err_path: str) -> None:
     try:
         import ctypes
         msg = (
-            "Nie udalo sie uruchomic GUI instalatora.\n\n"
+            f"Nie udalo sie uruchomic okna {DISPLAY_NAME}.\n\n"
             f"Szczegoly zapisano w:\n{err_path}\n\n"
             "Uruchom ponownie lub skontaktuj sie z supportem."
         )
-        ctypes.windll.user32.MessageBoxW(0, msg, "Instalator AsystentMedyczny", 0x10)
+        ctypes.windll.user32.MessageBoxW(0, msg, DISPLAY_NAME, 0x10)
     except Exception:
         pass
 

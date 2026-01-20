@@ -11,6 +11,12 @@ if os.path.isdir(tcl_dir):
     datas.append((tcl_dir, 'tcl/tcl8.6'))
 if os.path.isdir(tk_dir):
     datas.append((tk_dir, 'tcl/tk8.6'))
+icon_png = os.path.join('extension', 'icon.png')
+icon_ico = os.path.join('extension', 'icon.ico')
+if os.path.exists(icon_png):
+    datas.append((icon_png, 'extension'))
+if os.path.exists(icon_ico):
+    datas.append((icon_ico, 'extension'))
 
 a = Analysis(
     ['installer.py'],
