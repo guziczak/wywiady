@@ -299,9 +299,18 @@ def main():
             # Przenoszenie z podkatalogu wywiady-main
             extracted_folder = "wywiady-main"
             if os.path.exists(extracted_folder):
+                preserve = {"models", "venv", "config.json", "logs"}
                 for item in os.listdir(extracted_folder):
                     s = os.path.join(extracted_folder, item)
                     d = os.path.join(".", item)
+                    # Zachowaj lokalne dane/runtime (nie nadpisuj przy update)
+                    if item in preserve and os.path.exists(d):
+                        if os.path.isdir(s):
+                            shutil.rmtree(s)
+                        else:
+                            os.remove(s)
+                        print(f"    Pomijam {item} (zachowuję lokalne dane)")
+                        continue
                     if os.path.exists(d):
                         if os.path.isdir(d):
                             shutil.rmtree(d)

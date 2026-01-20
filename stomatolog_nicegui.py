@@ -555,6 +555,31 @@ class WywiadApp:
             xml_path = model_path / "openvino_encoder_model.xml"
             bin_path = model_path / "openvino_encoder_model.bin"
             if not model_path.exists() or not xml_path.exists() or not bin_path.exists():
+                # Spróbuj fallback do już pobranego modelu
+                try:
+                    backend = self.transcriber_manager.get_current_backend()
+                    models = backend.get_models() if backend else []
+                    downloaded = [m for m in models if getattr(m, 'is_downloaded', False)]
+                    if downloaded:
+                        # Preferuj 'small', potem pierwszy dostępny
+                        fallback = next((m for m in downloaded if m.name == "small"), downloaded[0])
+                        if fallback.name != model_name:
+                            print(f"[LOAD] Model '{model_name}' missing, fallback to '{fallback.name}'", flush=True)
+                            if backend and backend.set_model(fallback.name):
+                                self.config["transcriber_model"] = fallback.name
+                                try:
+                                    self.config.save()
+                                except Exception:
+                                    pass
+                                model_name = fallback.name
+                                suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
+                                model_path = MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-{suffix}-ov"
+                                xml_path = model_path / "openvino_encoder_model.xml"
+                                bin_path = model_path / "openvino_encoder_model.bin"
+                except Exception as e:
+                    print(f"[LOAD] Fallback model check error: {e}", flush=True)
+
+            if not model_path.exists() or not xml_path.exists() or not bin_path.exists():
                 if model_path.exists():
                     try:
                         import shutil

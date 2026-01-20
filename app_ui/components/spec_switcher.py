@@ -29,7 +29,6 @@ class SpecializationSwitcher:
         self.button_icon = None
         self.button_label = None
         self.dropdown = None
-        self.dialog = None
 
     @staticmethod
     @lru_cache(maxsize=64)
@@ -53,14 +52,25 @@ class SpecializationSwitcher:
         svg = re.sub(r'height="[^"]+"', f'height="{size}"', svg, count=1)
         return svg
 
-    def _get_icon_html(self, spec: Specialization, size: int = 18) -> str:
+    def _get_icon_html(self, spec: Specialization, size: int = 20) -> str:
         svg_path = getattr(spec, 'icon_svg', '') or ''
         if svg_path:
             svg = self._load_svg(svg_path)
             if svg:
-                return self._svg_with_size(svg, size)
+                icon = self._svg_with_size(svg, max(12, size - 6))
+                color = getattr(spec, 'color_primary', '#1976D2') or '#1976D2'
+                return (
+                    f'<span style="display:inline-flex;align-items:center;justify-content:center;'
+                    f'width:{size}px;height:{size}px;border-radius:999px;background:{color};color:white;">'
+                    f'{icon}</span>'
+                )
         icon_text = spec.icon or ''
-        return f'<span style="font-size:{size}px">{icon_text}</span>'
+        color = getattr(spec, 'color_primary', '#1976D2') or '#1976D2'
+        return (
+            f'<span style="display:inline-flex;align-items:center;justify-content:center;'
+            f'width:{size}px;height:{size}px;border-radius:999px;background:{color};color:white;'
+            f'font-size:{max(12, size - 6)}px">{icon_text}</span>'
+        )
 
     def create(self) -> None:
         """Tworzy komponent przełącznika."""
@@ -72,31 +82,34 @@ class SpecializationSwitcher:
             self._create_expanded(active_spec)
 
     def _create_compact(self, active_spec: Specialization) -> None:
-        """Kompaktowy widok - przycisk + dialog (najpewniejsze w EXE)."""
+        """Kompaktowy widok - dropdown button."""
         def _label(spec: Specialization) -> str:
-            return f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
+            return spec.name
 
         specs = self.spec_manager.get_all()
         button_label = _label(active_spec) if active_spec else "Specjalizacja"
 
-        with ui.button(button_label, on_click=lambda: self.dialog.open()).props(
-            'flat dense'
-        ).classes('text-white bg-white/10 hover:bg-white/20'):
-            ui.icon('arrow_drop_down')
+        with ui.dropdown_button(auto_close=True).props(
+            'flat dense dropdown-icon="arrow_drop_down" menu-class="bg-white text-gray-900"'
+        ).classes('text-white bg-white/10 hover:bg-white/20') as self.dropdown:
+            with ui.row().classes('items-center gap-2'):
+                self.button_icon = ui.html(self._get_icon_html(active_spec, 20), sanitize=False)
+                self.button_label = ui.label(button_label).classes('text-white')
 
-        with ui.dialog() as self.dialog:
-            with ui.card().classes('min-w-64'):
-                ui.label('Wybierz specjalizację').classes('text-sm text-gray-500')
-                if not specs:
-                    ui.label('Brak specjalizacji').classes('text-gray-700')
-                else:
-                    with ui.list():
-                        for spec in specs:
-                            is_active = spec.id == active_spec.id
-                            text = _label(spec)
-                            item = ui.item(text, on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900')
+            if not specs:
+                ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
+            else:
+                for spec in specs:
+                    is_active = spec.id == active_spec.id
+                    with ui.item(on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900'):
+                        with ui.row().classes('items-center gap-2'):
+                            ui.html(self._get_icon_html(spec, 18), sanitize=False)
+                            ui.label(spec.name)
                             if is_active:
-                                item.classes('font-bold')
+                                ui.icon('check', size='sm').classes('ml-auto text-green-600')
+        # Ensure menu opens reliably in desktop EXE
+        if self.dropdown:
+            self.dropdown.on('click', lambda: self.dropdown.open())
 
     def _create_expanded(self, active_spec: Specialization) -> None:
         """Rozwinięty widok - chips/tabs."""
@@ -127,11 +140,10 @@ class SpecializationSwitcher:
             self.button_icon.set_content(self._get_icon_html(spec, 18))
         if self.button_label:
             self.button_label.text = spec.name
-        if self.dropdown:
-            label = f"{spec.icon} {spec.name}".strip() if getattr(spec, 'icon', None) else spec.name
-            self.dropdown.text = label
-        if self.dialog:
-            self.dialog.close()
+        if self.button_icon:
+            self.button_icon.set_content(self._get_icon_html(spec, 20))
+        if self.button_label:
+            self.button_label.text = spec.name
         if self.menu:
             self.menu.close()
 
@@ -148,9 +160,10 @@ class SpecializationSwitcher:
             self.button_icon.set_content(self._get_icon_html(active_spec, 18))
         if self.button_label:
             self.button_label.text = active_spec.name
-        if self.dropdown:
-            label = f"{active_spec.icon} {active_spec.name}".strip() if getattr(active_spec, 'icon', None) else active_spec.name
-            self.dropdown.text = label
+        if self.button_icon:
+            self.button_icon.set_content(self._get_icon_html(active_spec, 20))
+        if self.button_label:
+            self.button_label.text = active_spec.name
 
     def _on_select_id(self, spec_id: str) -> None:
         """Backward compat (nieużywane w dropdown button)."""
