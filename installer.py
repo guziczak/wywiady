@@ -366,7 +366,6 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         f.write("@echo off\n")
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
-        f.write("set WYWIAD_OPEN_LANDING=1\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
@@ -380,7 +379,6 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
             with open(run_vbs_path, "w", encoding="utf-8") as f:
                 f.write('Set WshShell = CreateObject("WScript.Shell")\n')
                 f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
-                f.write('WshShell.Environment("Process")("WYWIAD_OPEN_LANDING") = "1"\n')
                 f.write('WshShell.Environment("Process")("WYWIAD_AUTO_OPEN") = "1"\n')
                 f.write(f'WshShell.Run "{vbs_cmd}", 0, False\n')
         except Exception:
@@ -532,6 +530,7 @@ def run_gui():
     import tkinter as tk
     from tkinter import ttk, messagebox
     from tkinter.scrolledtext import ScrolledText
+    import webbrowser
 
     root = tk.Tk()
     root.title(f"Instalator {APP_NAME}")
@@ -620,6 +619,14 @@ def run_gui():
                             except Exception:
                                 messagebox.showwarning("Uruchomienie", "Nie udalo sie uruchomic aplikacji.")
                         launch_btn.config(state="normal", command=_launch)
+                open_btn.config(
+                    state="normal",
+                    command=lambda: webbrowser.open("http://127.0.0.1:8089", new=1, autoraise=True)
+                )
+                hint_label.config(
+                    text="Aplikacja uruchomiona. Jesli przegladarka sie nie otworzyla, kliknij „Otworz w przegladarce”.",
+                    fg=muted
+                )
                 enable_close()
         root.after(50, process_queue)
 
@@ -760,6 +767,9 @@ def run_gui():
     launch_btn = tk.Button(buttons, text="Uruchom aplikacje", state="disabled")
     launch_btn.pack(side="left", padx=(0, 10))
 
+    open_btn = tk.Button(buttons, text="Otworz w przegladarce", state="disabled")
+    open_btn.pack(side="left", padx=(0, 10))
+
     close_btn = tk.Button(buttons, text="Zamknij", command=root.destroy, state="disabled")
     close_btn.pack(side="left")
 
@@ -779,7 +789,7 @@ def run_gui():
     def install_worker():
         try:
             result = {}
-            run_installer(auto_launch=False, result=result)
+            run_installer(auto_launch=True, result=result)
             queue_events.put(("done", result))
         except InstallerExit:
             queue_events.put(("done", None))
