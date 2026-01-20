@@ -1,5 +1,5 @@
 """
-Wywiad+ v2 - NiceGUI Edition
+Wizyta v2 - NiceGUI Edition
 Nowoczesne GUI do generowania opisow stomatologicznych z wywiadu glosowego.
 """
 
@@ -2372,11 +2372,11 @@ def main():
 
         # Generuj .bat (bez polskich znakow i Unicode - cmd.exe ich nie obsluguje)
         bat_content = f'''@echo off
-title Wywiad+ Extension Installer
+title Wizyta Extension Installer
 
 echo.
 echo ============================================================
-echo   WYWIAD+ EXTENSION INSTALLER for {config['name']}
+echo   WIZYTA EXTENSION INSTALLER for {config['name']}
 echo ============================================================
 echo.
 echo   Opening:
@@ -2484,7 +2484,7 @@ pause
         pass
 
     ui.run(
-        title='Wywiad+ v2',
+        title='Wizyta v2',
         port=port,
         reload=False,
         show=False,

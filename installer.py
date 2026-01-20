@@ -13,7 +13,9 @@ from datetime import datetime
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
 REPO_API_COMMIT = "https://api.github.com/repos/guziczak/wywiady/commits/main"
 APP_NAME = "AsystentMedyczny"
-DISPLAY_NAME = "Asystent Medyczny Hub"
+DISPLAY_NAME = "Wizyta"
+SHORTCUT_NAME = DISPLAY_NAME
+RESET_SHORTCUT_NAME = f"Reset {DISPLAY_NAME}"
 MAIN_SCRIPT = "stomatolog_nicegui.py"
 ICON_REL_PATH = os.path.join("extension", "icon.ico")
 STATE_FILE = ".install_state.json"
@@ -390,7 +392,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         run_vbs_path = run_bat_path
 
     desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
-    shortcut_path = os.path.join(desktop, "Asystent Medyczny.lnk")
+    shortcut_path = os.path.join(desktop, f"{SHORTCUT_NAME}.lnk")
     icon_path = os.path.join(install_dir, ICON_REL_PATH)
 
     ps_script = f"""
@@ -402,7 +404,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     """
     subprocess.run(["powershell", "-Command", ps_script], capture_output=True)
 
-    reset_shortcut = os.path.join(desktop, "Reset Asystent Medyczny.lnk")
+    reset_shortcut = os.path.join(desktop, f"{RESET_SHORTCUT_NAME}.lnk")
     reset_target = os.path.join(install_dir, "AsystentSetup.exe")
     ps_reset = f"""
     $s=(New-Object -COM WScript.Shell).CreateShortcut('{reset_shortcut}');

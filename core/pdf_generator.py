@@ -523,7 +523,7 @@ class PDFGenerator:
         if clinic.get("doctor_pwz"):
             story.append(Paragraph(f"PWZ: {xml_escape(self._safe_text(clinic.get('doctor_pwz')))}", self.styles["Small"]))
 
-        footer = f"Wygenerowano: {datetime.now().strftime('%d.%m.%Y %H:%M')} | System: Wywiad+ v2"
+        footer = f"Wygenerowano: {datetime.now().strftime('%d.%m.%Y %H:%M')} | System: Wizyta v2"
         story.append(Paragraph(footer, self.styles["Small"]))
 
         doc.build(story)

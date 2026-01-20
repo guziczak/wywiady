@@ -1,1 +1,1 @@
-# Core modules for Wywiad+
+# Core modules for Wizyta

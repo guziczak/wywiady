@@ -11,6 +11,6 @@ INSTALACJA ROZSZERZENIA (jednorazowo, 30 sekund)
 UZYCIE
 ======
 1. Kliknij ikone rozszerzenia (puzzle) w prawym gornym rogu Edge
-2. Kliknij "Wywiad+ Connector"
+2. Kliknij "Wizyta Connector"
 3. Kliknij "Wyslij klucz do aplikacji"
 4. Gotowe! Klucz zostanie automatycznie zapisany w aplikacji.

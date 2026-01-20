@@ -19,7 +19,7 @@
     await chrome.storage.local.set({ keySent: true });
 
     // Pokaz komunikat userowi
-    showNotification('Wywiad+ polaczony! Klucz zostal wyslany. To okno mozesz zamknac.');
+    showNotification('Wizyta polaczona! Klucz zostal wyslany. To okno mozesz zamknac.');
   }
 })();
 

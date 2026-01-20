@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title Wywiad+ - Instalator rozszerzenia
+title Wizyta - Instalator rozszerzenia
 
 echo ============================================================
-echo   WYWIAD+ - AUTOMATYCZNA INSTALACJA ROZSZERZENIA
+echo   WIZYTA - AUTOMATYCZNA INSTALACJA ROZSZERZENIA
 echo ============================================================
 echo.
 echo Ten skrypt:
@@ -14,7 +14,7 @@ echo   4. Posprzata po sobie (usunie rozszerzenie i wpisy Registry)
 echo.
 echo WYMAGANIA:
 echo   - Uruchom jako Administrator
-echo   - Aplikacja Wywiad+ musi byc wlaczona
+echo   - Aplikacja Wizyta musi byc wlaczona
 echo.
 pause
 

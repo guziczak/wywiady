@@ -30,7 +30,7 @@ def create_header(app, show_spec_switcher: bool = True):
                     )
 
                 # Title with Color/Shadow animation (no layout shift)
-                ui.label('Wywiad+').classes(
+                ui.label('Wizyta').classes(
                     'text-2xl font-bold tracking-tight transition-all duration-300 group-hover:text-blue-200 group-hover:drop-shadow-lg'
                 )
 
