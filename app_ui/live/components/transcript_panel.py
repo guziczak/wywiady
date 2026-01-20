@@ -58,6 +58,7 @@ class TranscriptPanel:
         self._prev_provisional = ""
         self._prev_improved = ""
         self._prev_final = ""
+        self._last_non_empty_html = ""
 
         # Stan animacji
         self._is_animating = False
@@ -451,7 +452,10 @@ class TranscriptPanel:
         if (self.state.diarization and
             self.state.diarization.enabled and
             self.state.diarization.has_data):
-            return self._render_diarized()
+            content = self._render_diarized()
+            if content:
+                self._last_non_empty_html = content
+                return content
 
         html_parts = []
 
@@ -503,9 +507,14 @@ class TranscriptPanel:
                 self._prev_provisional = self.state.provisional_text
 
         if html_parts:
-            return ' '.join(html_parts)
-        else:
-            return self._render_empty_state()
+            content = ' '.join(html_parts)
+            self._last_non_empty_html = content
+            return content
+
+        if self._last_non_empty_html:
+            return self._last_non_empty_html
+
+        return self._render_empty_state()
 
     def _tokenize_simple(self, text: str) -> List[WordToken]:
         """Prosta tokenizacja bez diff."""
@@ -729,6 +738,7 @@ class TranscriptPanel:
         self._prev_provisional = ""
         self._prev_improved = ""
         self._prev_final = ""
+        self._last_non_empty_html = ""
         if self.html_element:
             self.html_element.content = ''
         self._selected_sentence = ""
