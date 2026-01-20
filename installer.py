@@ -247,6 +247,21 @@ def _get_process_info(pid: int):
     return _powershell_json(script) or {}
 
 
+def _describe_port_listeners(port: int, max_cmd: int = 140) -> list[str]:
+    lines = []
+    for pid in _get_listening_pids(port):
+        info = _get_process_info(pid)
+        name = (info.get("Name") or "process").strip()
+        cmd = (info.get("CommandLine") or "").strip()
+        if cmd and len(cmd) > max_cmd:
+            cmd = cmd[: max_cmd - 3] + "..."
+        if cmd:
+            lines.append(f"{name} (PID {pid})\n{cmd}")
+        else:
+            lines.append(f"{name} (PID {pid})")
+    return lines
+
+
 def _should_kill_pid(pid: int, install_dir: str | None):
     if os.environ.get("WYWIAD_KILL_PORT_ANY", "0") in ("1", "true", "yes"):
         return True
@@ -286,6 +301,25 @@ def kill_by_port(port: int, install_dir: str | None = None) -> bool:
     return killed_any
 
 
+def kill_by_port_any(port: int) -> bool:
+    pids = _get_listening_pids(port)
+    if not pids:
+        return False
+    killed_any = False
+    for pid in pids:
+        if pid == os.getpid():
+            continue
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
+                capture_output=True
+            )
+            killed_any = True
+        except Exception:
+            pass
+    return killed_any
+
+
 def _wait_port_free(port: int, timeout: float = 5.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
@@ -310,9 +344,32 @@ def kill_running_app_in_dir(install_dir: str | None = None) -> bool:
 def maybe_kill_running_app(install_dir: str | None = None) -> bool:
     if os.environ.get("WYWIAD_KILL_RUNNING", "1") in ("0", "false", "no"):
         return False
-    killed = kill_running_app_in_dir(install_dir)
-    if not killed:
-        killed = kill_by_port(8089, install_dir)
+    killed = False
+    if kill_running_app_in_dir(install_dir):
+        killed = True
+    if kill_by_port(8089, install_dir):
+        killed = True
+
+    remaining = _get_listening_pids(8089)
+    if remaining:
+        if os.environ.get("WYWIAD_KILL_PORT_ANY", "0") in ("1", "true", "yes"):
+            if kill_by_port_any(8089):
+                killed = True
+        else:
+            # Tylko w GUI pytamy o ubicie obcego procesu
+            if not isinstance(_sink(), ConsoleSink):
+                details = _describe_port_listeners(8089)
+                prompt = "Port 8089 jest zajety przez inny proces:\n\n"
+                prompt += "\n\n".join(details[:2])
+                if len(details) > 2:
+                    prompt += f"\n\n(+{len(details) - 2} kolejne)"
+                prompt += "\n\nCzy zamknac i uruchomic nowa instancje?"
+                if _sink().confirm(prompt):
+                    if kill_by_port_any(8089):
+                        killed = True
+            else:
+                log_warn("    Port 8089 nadal zajety. Ustaw WYWIAD_KILL_PORT_ANY=1 lub zamknij recznie.")
+
     if killed:
         log_warn("    Wykryto dzialajaca instancje. Zamykam, aby uruchomic nowa.")
         _wait_port_free(8089, timeout=6.0)
