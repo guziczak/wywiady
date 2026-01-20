@@ -786,7 +786,14 @@ def main():
 
     try:
         run_gui()
-    except Exception:
+    except Exception as e:
+        try:
+            tmp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or os.getcwd()
+            err_path = os.path.join(tmp_dir, "asystent_installer_gui_error.log")
+            with open(err_path, "a", encoding="utf-8") as f:
+                f.write(f"[GUI ERROR] {datetime.utcnow().isoformat()}Z {e}\n")
+        except Exception:
+            pass
         run_console()
 
 

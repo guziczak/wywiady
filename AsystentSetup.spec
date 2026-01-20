@@ -6,7 +6,12 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=[
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.scrolledtext',
+        'tkinter.messagebox',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
