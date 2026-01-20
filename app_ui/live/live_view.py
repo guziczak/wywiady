@@ -615,6 +615,8 @@ class LiveInterviewView:
 
         # Ustaw kontekst odpowiedzi pacjenta (po akcjach UI)
         self.state.set_answer_context(question, answers)
+        if self.prompter_panel:
+            self.prompter_panel.refresh()
 
         # Trigger AI (regeneruj pozostałe)
         if self.ai_controller:

@@ -489,14 +489,8 @@ class PrompterPanel:
 
     def _on_suggestions_change(self):
         """Callback gdy zmienią się sugestie (może być z background thread)."""
-        # Sugestie przychodzą z AI controller który działa async
-        if self._client is None:
-            return
-        try:
-            with self._client:
-                self._render_content()
-        except Exception:
-            pass
+        # Sugestie przychodza z AI controller ktory dziala async
+        self.refresh()
 
     def _on_diarization_change(self):
         """Callback gdy zmieni się diaryzacja."""
@@ -555,3 +549,18 @@ class PrompterPanel:
             self._render_content()
         except Exception:
             pass
+
+    def refresh(self):
+        """Wymusza przerysowanie UI w bezpiecznym kontekście klienta."""
+        client = ui.context.client or self._client
+        if client is None:
+            return
+        try:
+            with client:
+                self._render_content()
+        except Exception as e:
+            print(f"[PROMPTER] Refresh error: {e}", flush=True)
+            try:
+                self._render_content()
+            except Exception:
+                pass

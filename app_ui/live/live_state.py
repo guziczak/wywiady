@@ -228,6 +228,10 @@ class LiveState:
             if q not in self.asked_questions
         ][:3]  # Max 3 sugestie
         self._words_since_last_regen = 0
+        # Jesli wybrane pytanie nie jest juz w nowych sugestiach, wyczysc panel odpowiedzi
+        if self.selected_question and all(s.question != self.selected_question for s in self.suggestions):
+            self.selected_question = None
+            self.answer_suggestions = []
         self._notify_suggestions_change()
 
     def mark_suggestion_used(self, question: str):
@@ -249,6 +253,8 @@ class LiveState:
         """Ustawia wybrane pytanie i przykładowe odpowiedzi pacjenta."""
         self.selected_question = question.strip() if question else None
         self.answer_suggestions = [a.strip() for a in answers if a and a.strip()]
+        if self.selected_question:
+            print(f"[STATE] Answer context set ({len(self.answer_suggestions)} answers)", flush=True)
         self._notify_suggestions_change()
 
     def clear_answer_context(self):
