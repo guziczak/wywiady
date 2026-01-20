@@ -2,18 +2,19 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
 import nicegui
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from branding import BRAND_ICON, BRAND_ICON_BG
 
-SIZE = 512
-BG = tuple(int(BRAND_ICON_BG.lstrip("#")[i:i+2], 16) for i in (0, 2, 4))
-FG = (255, 255, 255)        # white
+BG = tuple(int(BRAND_ICON_BG.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+FG = (255, 255, 255)
 
 FONT_WOFF2 = (
     Path(nicegui.__file__).parent
@@ -23,8 +24,8 @@ FONT_WOFF2 = (
 )
 LIGATURE_NAME = BRAND_ICON
 
+
 def _get_ligature_codepoint(font: TTFont, ligature: str) -> int:
-    """Zwraca codepoint glypha dla ligatury Material Icons."""
     cmap = {}
     for table in font["cmap"].tables:
         if table.isUnicode():
@@ -67,7 +68,7 @@ def _get_ligature_codepoint(font: TTFont, ligature: str) -> int:
             break
 
     if not lig_glyph:
-        raise RuntimeError(f"Nie znaleziono ligatury: {ligature}")
+        raise RuntimeError(f"Ligature not found: {ligature}")
 
     if lig_glyph in glyph_to_code:
         return glyph_to_code[lig_glyph]
@@ -75,7 +76,39 @@ def _get_ligature_codepoint(font: TTFont, ligature: str) -> int:
     if lig_glyph.startswith("uni"):
         return int(lig_glyph[3:], 16)
 
-    raise RuntimeError(f"Brak codepointu dla glypha: {lig_glyph}")
+    raise RuntimeError(f"No codepoint for glyph: {lig_glyph}")
+
+
+def _render_icon(size: int, ttf_path: Path, glyph_char: str) -> Image.Image:
+    img = Image.new("RGBA", (size, size), BG)
+    draw = ImageDraw.Draw(img)
+
+    max_ratio = 0.82 if size >= 128 else 0.92
+    max_box = int(size * max_ratio)
+    font_size = size
+    font_obj = None
+    step = 2 if size <= 48 else 4
+
+    while font_size > 4:
+        font_obj = ImageFont.truetype(str(ttf_path), font_size)
+        bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
+        glyph_w = bbox[2] - bbox[0]
+        glyph_h = bbox[3] - bbox[1]
+        if glyph_w <= max_box and glyph_h <= max_box:
+            break
+        font_size -= step
+
+    if font_obj is None:
+        raise RuntimeError("Material Icons font not loaded")
+
+    bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
+    glyph_w = bbox[2] - bbox[0]
+    glyph_h = bbox[3] - bbox[1]
+    x = (size - glyph_w) // 2 - bbox[0]
+    y = (size - glyph_h) // 2 - bbox[1]
+    draw.text((x, y), glyph_char, font=font_obj, fill=FG)
+    return img
+
 
 font = TTFont(str(FONT_WOFF2))
 codepoint = _get_ligature_codepoint(font, LIGATURE_NAME)
@@ -84,43 +117,20 @@ glyph_char = chr(codepoint)
 tmp_ttf = Path(tempfile.gettempdir()) / "material-icons.ttf"
 font.save(str(tmp_ttf))
 
-img = Image.new("RGBA", (SIZE, SIZE), BG)
-draw = ImageDraw.Draw(img)
+png_img = _render_icon(512, tmp_ttf, glyph_char)
+png_img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
 
-max_box = int(SIZE * 0.72)
-font_size = SIZE
-font_obj = None
-while font_size > 10:
-    try:
-        font_obj = ImageFont.truetype(str(tmp_ttf), font_size)
-    except Exception:
-        font_obj = None
-        break
-    bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
-    glyph_w = bbox[2] - bbox[0]
-    glyph_h = bbox[3] - bbox[1]
-    if glyph_w <= max_box and glyph_h <= max_box:
-        break
-    font_size -= 8
-
-if font_obj is None:
-    raise RuntimeError("Nie udało się załadować fontu Material Icons.")
-
-bbox = draw.textbbox((0, 0), glyph_char, font=font_obj)
-glyph_w = bbox[2] - bbox[0]
-glyph_h = bbox[3] - bbox[1]
-x = (SIZE - glyph_w) // 2 - bbox[0]
-y = (SIZE - glyph_h) // 2 - bbox[1]
-draw.text((x, y), glyph_char, font=font_obj, fill=FG)
+ico_sizes = [16, 24, 32, 48, 64, 128, 256]
+ico_images = [_render_icon(size, tmp_ttf, glyph_char) for size in ico_sizes]
+ico_images[0].save(
+    "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
+    format="ICO",
+    append_images=ico_images[1:],
+)
 
 try:
     os.remove(tmp_ttf)
 except Exception:
     pass
 
-img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
-img.save(
-    "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
-    sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
-)
 print("Icon created!")

@@ -1,3 +1,3 @@
 BRAND_NAME = "Wizyta"
-BRAND_ICON = "folder"
+BRAND_ICON = "medical_services"
 BRAND_ICON_BG = "#1d4ed8"
