@@ -141,6 +141,7 @@ class LiveInterviewView:
         self._model_status_container = None
         self.pipeline_panel: Optional[PipelinePanel] = None
         self._pipeline_loading: bool = False
+        self._client = None
 
     def create_ui(self):
         """Buduje interfejs użytkownika."""
@@ -189,6 +190,9 @@ class LiveInterviewView:
         
         # Cleanup on disconnect
         ui.context.client.on_disconnect(self._on_disconnect)
+
+        # Capture client context for background updates
+        self._client = ui.context.client
 
     async def _on_disconnect(self):
         """Sprzątanie po zamknięciu karty."""
@@ -457,11 +461,12 @@ class LiveInterviewView:
         # Zbierz pełny transkrypt
         final_transcript = self.state.full_transcript
 
-        if not final_transcript:
-            ui.notify("Brak transkryptu do zapisania", type='warning')
-        
-        # Zapisz do storage (wersja surowa)
-        app.storage.user['live_transcript'] = final_transcript
+        if self._client:
+            with self._client:
+                if not final_transcript:
+                    ui.notify("Brak transkryptu do zapisania", type='warning')
+                # Zapisz do storage (wersja surowa)
+                app.storage.user['live_transcript'] = final_transcript
 
         # Uruchom diaryzację w tle (jeśli wybrano)
         if analyze_speakers:
@@ -491,7 +496,9 @@ class LiveInterviewView:
                     # Zapisz transkrypt z mówcami do storage (opcjonalnie, jako backup)
                     if result.segments:
                         diarized_transcript = self.state.diarization.get_formatted_transcript()
-                        app.storage.user['live_transcript_diarized'] = diarized_transcript
+                        if self._client:
+                            with self._client:
+                                app.storage.user['live_transcript_diarized'] = diarized_transcript
                 else:
                     print(f"[LIVE] Audio too short for diarization: {len(audio)} samples", flush=True)
 
@@ -509,11 +516,12 @@ class LiveInterviewView:
         
         if self.state.diarization and self.state.diarization.has_data and self.state.diarization.enabled:
             transcript = self.state.diarization.get_formatted_transcript()
-            
-        app.storage.user['live_transcript'] = transcript
-        print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
-        
-        ui.navigate.to('/')
+
+        if self._client:
+            with self._client:
+                app.storage.user['live_transcript'] = transcript
+                print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
+                ui.navigate.to('/')
 
     # === TRANSCRIBER CALLBACKS ===
 

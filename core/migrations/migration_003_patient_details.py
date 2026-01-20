@@ -24,11 +24,17 @@ def up(conn: sqlite3.Connection) -> None:
         ("address", "TEXT DEFAULT ''"),
         ("phone", "TEXT DEFAULT ''"),
         ("email", "TEXT DEFAULT ''"),
-        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TEXT DEFAULT ''"),
     ]
 
     for column, definition in columns:
         _add_column_if_missing(conn, "patients", column, definition)
+
+    # Backfill updated_at for existing rows (SQLite allows CURRENT_TIMESTAMP in UPDATE)
+    conn.execute(
+        "UPDATE patients SET updated_at = CURRENT_TIMESTAMP "
+        "WHERE updated_at IS NULL OR updated_at = ''"
+    )
 
     conn.commit()
 
