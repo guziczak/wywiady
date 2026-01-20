@@ -218,6 +218,83 @@ def _list_running_app_pids(install_dir: str | None = None):
     return sorted(set(pids))
 
 
+def _get_listening_pids(port: int):
+    script = (
+        f"Get-NetTCPConnection -LocalPort {port} -State Listen | "
+        "Select-Object -Expand OwningProcess | ConvertTo-Json -Compress"
+    )
+    data = _powershell_json(script)
+    if not data:
+        return []
+    if isinstance(data, list):
+        pids = data
+    else:
+        pids = [data]
+    out = []
+    for pid in pids:
+        try:
+            out.append(int(pid))
+        except Exception:
+            pass
+    return sorted(set(out))
+
+
+def _get_process_info(pid: int):
+    script = (
+        f"Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" | "
+        "Select-Object Name, CommandLine | ConvertTo-Json -Compress"
+    )
+    return _powershell_json(script) or {}
+
+
+def _should_kill_pid(pid: int, install_dir: str | None):
+    if os.environ.get("WYWIAD_KILL_PORT_ANY", "0") in ("1", "true", "yes"):
+        return True
+    info = _get_process_info(pid)
+    name = (info.get("Name") or "").lower()
+    cmd = (info.get("CommandLine") or "").lower()
+    install_dir_l = (install_dir or "").lower()
+    if "stomatolog_nicegui.py" in cmd:
+        return True
+    if install_dir_l and install_dir_l in cmd:
+        return True
+    if "asystentmedyczny" in cmd:
+        return True
+    if name in ("python.exe", "pythonw.exe"):
+        return True
+    return False
+
+
+def kill_by_port(port: int, install_dir: str | None = None) -> bool:
+    pids = _get_listening_pids(port)
+    if not pids:
+        return False
+    killed_any = False
+    for pid in pids:
+        if pid == os.getpid():
+            continue
+        if not _should_kill_pid(pid, install_dir):
+            continue
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
+                capture_output=True
+            )
+            killed_any = True
+        except Exception:
+            pass
+    return killed_any
+
+
+def _wait_port_free(port: int, timeout: float = 5.0) -> bool:
+    start = time.time()
+    while time.time() - start < timeout:
+        if not _get_listening_pids(port):
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def kill_running_app_in_dir(install_dir: str | None = None) -> bool:
     try:
         pids = _list_running_app_pids(install_dir)
@@ -234,9 +311,11 @@ def maybe_kill_running_app(install_dir: str | None = None) -> bool:
     if os.environ.get("WYWIAD_KILL_RUNNING", "1") in ("0", "false", "no"):
         return False
     killed = kill_running_app_in_dir(install_dir)
+    if not killed:
+        killed = kill_by_port(8089, install_dir)
     if killed:
         log_warn("    Wykryto dzialajaca instancje. Zamykam, aby uruchomic nowa.")
-        time.sleep(1.0)
+        _wait_port_free(8089, timeout=6.0)
     return killed
 
 
