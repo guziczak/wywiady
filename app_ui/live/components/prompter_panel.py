@@ -59,6 +59,8 @@ class PrompterPanel:
         self.status_badge = None
         self._is_loading = False
         self._client = None  # NiceGUI client context
+        self._needs_refresh = False
+        self._refresh_timer = None
 
     def create(self) -> ui.card:
         """Tworzy panel suflera."""
@@ -88,6 +90,9 @@ class PrompterPanel:
         # Capture client context for background updates
         self._client = ui.context.client
         print(f"[PROMPTER] _client set to: {self._client}", flush=True)
+
+        # UI-safe refresh timer (flushes background updates on UI thread)
+        self._refresh_timer = ui.timer(0.3, self._flush_refresh)
 
         # Subscribe to state changes
         self.state.on_suggestions_change(self._on_suggestions_change)
@@ -490,7 +495,7 @@ class PrompterPanel:
     def _on_suggestions_change(self):
         """Callback gdy zmienią się sugestie (może być z background thread)."""
         # Sugestie przychodza z AI controller ktory dziala async
-        self.refresh()
+        self._needs_refresh = True
 
     def _on_diarization_change(self):
         """Callback gdy zmieni się diaryzacja."""
@@ -552,15 +557,14 @@ class PrompterPanel:
 
     def refresh(self):
         """Wymusza przerysowanie UI w bezpiecznym kontekście klienta."""
-        client = ui.context.client or self._client
-        if client is None:
+        self._needs_refresh = True
+
+    def _flush_refresh(self):
+        """Wykonuje odswiezenie w bezpiecznym kontekscie UI."""
+        if not self._needs_refresh:
             return
+        self._needs_refresh = False
         try:
-            with client:
-                self._render_content()
+            self._render_content()
         except Exception as e:
             print(f"[PROMPTER] Refresh error: {e}", flush=True)
-            try:
-                self._render_content()
-            except Exception:
-                pass

@@ -154,7 +154,12 @@ class TranscriptPanel:
                 self._sentence_popup_items = ui.column().classes('w-full gap-2 mt-3')
                 ui.label('Kliknij pytanie, aby skopiować.').classes('text-xs text-slate-400 mt-2')
 
-            self._render()
+            if self._client:
+                with self._client:
+                    self._render()
+                    self._auto_scroll()
+            else:
+                self._render()
 
         # Capture client context
         self._client = ui.context.client
@@ -341,7 +346,10 @@ class TranscriptPanel:
 
         # Jeśli animacja w toku - nie renderuj (animacja sama zarządza renderem)
         if self._is_animating:
-            return
+            if self.state.validated_text and not self.state.final_text and not self.state.provisional_text:
+                pass
+            else:
+                return
 
         try:
             with self._client:

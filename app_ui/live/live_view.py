@@ -155,7 +155,7 @@ class LiveInterviewView:
         ui.timer(1.0, self._start_background_loading, once=True)
 
         # Header (z głównej aplikacji)
-        create_header(self.app)
+        create_header(self.app, show_spec_switcher=True, show_status=False)
         
         # Model Info Bar (new)
         self._create_model_info_bar()
