@@ -2237,7 +2237,8 @@ def main():
 <link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png">
 <link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png">
 <link rel="shortcut icon" href="{icon_base}.ico">
-"""
+""",
+            shared=True,
         )
 
     _setup_favicon()
