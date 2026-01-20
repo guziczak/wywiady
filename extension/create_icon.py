@@ -120,12 +120,10 @@ font.save(str(tmp_ttf))
 png_img = _render_icon(512, tmp_ttf, glyph_char)
 png_img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
 
-ico_sizes = [16, 24, 32, 48, 64, 128, 256]
-ico_images = [_render_icon(size, tmp_ttf, glyph_char) for size in ico_sizes]
-ico_images[0].save(
+ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+png_img.save(
     "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
-    format="ICO",
-    append_images=ico_images[1:],
+    sizes=ico_sizes,
 )
 
 try:
