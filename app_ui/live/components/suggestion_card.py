@@ -36,12 +36,11 @@ class SuggestionCard:
     def create(self) -> ui.card:
         """Tworzy i zwraca kartę."""
 
-        # Style bazowe
+        # Style bazowe (równe karty w siatce)
         is_primary = self.variant == "primary"
         base_classes = (
-            'flex-1 '
-            + ('min-w-[260px] max-w-[520px] min-h-[170px] ' if is_primary else 'min-w-[200px] max-w-[260px] min-h-[120px] ')
-            + 'flex flex-col items-start justify-between '
+            'w-full min-h-[140px] '
+            'flex flex-col items-start justify-between '
             'p-4 rounded-xl '
             'transition-all duration-200 ease-out '
         )
@@ -143,8 +142,7 @@ class PlaceholderCard:
     def create(self) -> ui.card:
         """Tworzy placeholder."""
         with ui.card().classes(
-            'flex-1 min-w-[200px] max-w-[300px] '
-            'min-h-[140px] '
+            'w-full min-h-[140px] '
             'flex items-center justify-center '
             'bg-gray-50 border-2 border-dashed border-gray-200 '
             'rounded-xl'
@@ -167,8 +165,7 @@ class EmptyStateCard:
     def create(self) -> ui.card:
         """Tworzy empty state."""
         with ui.card().classes(
-            'flex-1 min-w-[200px] max-w-[300px] '
-            'min-h-[140px] '
+            'w-full min-h-[140px] '
             'flex items-center justify-center '
             'bg-slate-50 border-2 border-slate-200 '
             'rounded-xl'

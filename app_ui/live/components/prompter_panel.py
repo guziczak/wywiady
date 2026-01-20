@@ -234,52 +234,36 @@ class PrompterPanel:
         with ui.column().classes('w-full gap-4'):
             # === KARTY SUGESTII ===
             if self.state.status == SessionStatus.IDLE:
-                with ui.row().classes('w-full justify-center gap-4 flex-wrap'):
+                with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
                     for _ in range(3):
                         EmptyStateCard("Naciśnij START").create()
             else:
                 suggestions = self.state.suggestions
 
                 if not suggestions and not self._is_loading:
-                    with ui.row().classes('w-full justify-center gap-4 flex-wrap'):
+                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
                         PlaceholderCard("Analizuję rozmowę...").create()
                         PlaceholderCard("Szukam pytań...").create()
                         PlaceholderCard("Czekam na kontekst...").create()
                 elif self._is_loading and not suggestions:
-                    with ui.row().classes('w-full justify-center gap-4 flex-wrap'):
+                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
                         for _ in range(3):
                             PlaceholderCard("Generuję...").create()
                 elif any(s.question == "Brak konfiguracji AI" for s in suggestions):
                     self._render_config_error_card()
                 else:
-                    primary = suggestions[0] if suggestions else None
-                    secondary = suggestions[1:] if len(suggestions) > 1 else []
-
-                    with ui.element('div').classes('w-full grid grid-cols-1 md:grid-cols-3 gap-4'):
-                        with ui.element('div').classes('md:col-span-2'):
-                            if primary:
-                                SuggestionCard(
-                                    question=primary.question,
-                                    on_click=self._handle_card_click,
-                                    used=primary.used,
-                                    variant="primary",
-                                    selected=primary.question == self.state.selected_question
-                                ).create()
-                            else:
-                                PlaceholderCard("Szukam pytań...").create()
-
-                        with ui.element('div').classes('md:col-span-1 flex flex-col gap-4'):
-                            for suggestion in secondary:
+                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
+                        for idx in range(3):
+                            if idx < len(suggestions):
+                                suggestion = suggestions[idx]
                                 SuggestionCard(
                                     question=suggestion.question,
                                     on_click=self._handle_card_click,
                                     used=suggestion.used,
-                                    variant="secondary",
+                                    variant="primary" if idx == 0 else "secondary",
                                     selected=suggestion.question == self.state.selected_question
                                 ).create()
-
-                            remaining = max(0, 2 - len(secondary))
-                            for _ in range(remaining):
+                            else:
                                 PlaceholderCard("Szukam więcej...").create()
 
             # === PODPOWIEDZI ODPOWIEDZI PACJENTA ===
