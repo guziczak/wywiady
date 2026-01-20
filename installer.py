@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import urllib.request
+import traceback
 import zipfile
 import shutil
 import time
@@ -248,7 +249,7 @@ def get_install_dir() -> str:
     return os.path.join(app_data, APP_NAME)
 
 
-def run_installer():
+def run_installer(auto_launch: bool = True, result: dict | None = None):
     log_info("========================================================")
     log_info(f"   INSTALATOR {APP_NAME.upper()}")
     log_info("========================================================")
@@ -370,13 +371,30 @@ def run_installer():
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
 
+    run_vbs_path = os.path.join(install_dir, "run_app.vbs")
+    pythonw_path = os.path.join(install_dir, "venv", "Scripts", "pythonw.exe")
+    if os.path.exists(pythonw_path):
+        vbs_cmd = f"\"{pythonw_path}\" \"{MAIN_SCRIPT}\""
+        vbs_cmd = vbs_cmd.replace("\"", "\"\"")
+        try:
+            with open(run_vbs_path, "w", encoding="utf-8") as f:
+                f.write('Set WshShell = CreateObject("WScript.Shell")\n')
+                f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
+                f.write('WshShell.Environment("Process")("WYWIAD_OPEN_LANDING") = "1"\n')
+                f.write('WshShell.Environment("Process")("WYWIAD_AUTO_OPEN") = "1"\n')
+                f.write(f'WshShell.Run "{vbs_cmd}", 0, False\n')
+        except Exception:
+            run_vbs_path = run_bat_path
+    else:
+        run_vbs_path = run_bat_path
+
     desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
     shortcut_path = os.path.join(desktop, "Asystent Medyczny.lnk")
     icon_path = os.path.join(install_dir, ICON_REL_PATH)
 
     ps_script = f"""
     $s=(New-Object -COM WScript.Shell).CreateShortcut('{shortcut_path}');
-    $s.TargetPath='{run_bat_path}';
+    $s.TargetPath='{run_vbs_path}';
     $s.WorkingDirectory='{install_dir}';
     $s.IconLocation='{icon_path}';
     $s.Save()
@@ -411,10 +429,17 @@ def run_installer():
     log_info("========================================================")
     log_info(f"Wersja: {version_commit[:7] if version_commit else 'unknown'}")
     log_info(f"Skrot utworzony na pulpicie: {shortcut_path}")
-    log_info("Uruchamianie aplikacji za 3 sekundy...")
-    time.sleep(3)
+    if result is not None:
+        result["run_bat_path"] = run_bat_path
+        result["run_vbs_path"] = run_vbs_path
 
-    subprocess.Popen([run_bat_path], shell=True)
+    if auto_launch:
+        log_info("Uruchamianie aplikacji za 3 sekundy...")
+        time.sleep(3)
+        try:
+            subprocess.Popen([run_vbs_path], shell=True)
+        except Exception:
+            subprocess.Popen([run_bat_path], shell=True)
 
 
 class ConsoleSink:
@@ -500,6 +525,8 @@ def run_console():
 
 
 def run_gui():
+    os.environ.pop("TCL_LIBRARY", None)
+    os.environ.pop("TK_LIBRARY", None)
     import threading
     import queue
     import tkinter as tk
@@ -581,6 +608,18 @@ def run_gui():
             elif event == "done":
                 set_status("Gotowe")
                 progress_var.set(100)
+                if isinstance(payload, dict):
+                    run_vbs = payload.get("run_vbs_path")
+                    run_bat = payload.get("run_bat_path")
+                    if run_vbs or run_bat:
+                        def _launch():
+                            try:
+                                path = run_vbs or run_bat
+                                if path:
+                                    os.startfile(path)
+                            except Exception:
+                                messagebox.showwarning("Uruchomienie", "Nie udalo sie uruchomic aplikacji.")
+                        launch_btn.config(state="normal", command=_launch)
                 enable_close()
         root.after(50, process_queue)
 
@@ -718,6 +757,9 @@ def run_gui():
     toggle_btn = tk.Button(buttons, text="Pokaz raw", command=toggle_raw, fg=accent, bd=0, bg=bg, activebackground=bg, activeforeground=accent)
     toggle_btn.pack(side="left", padx=(0, 10))
 
+    launch_btn = tk.Button(buttons, text="Uruchom aplikacje", state="disabled")
+    launch_btn.pack(side="left", padx=(0, 10))
+
     close_btn = tk.Button(buttons, text="Zamknij", command=root.destroy, state="disabled")
     close_btn.pack(side="left")
 
@@ -736,8 +778,9 @@ def run_gui():
 
     def install_worker():
         try:
-            run_installer()
-            queue_events.put(("done", None))
+            result = {}
+            run_installer(auto_launch=False, result=result)
+            queue_events.put(("done", result))
         except InstallerExit:
             queue_events.put(("done", None))
         except InstallerAbort:
@@ -771,14 +814,50 @@ def run_gui():
 
     root.bind_all("<Key>", on_key)
     root.after(2000, start_install)
+    def _bring_to_front():
+        try:
+            root.lift()
+            root.attributes("-topmost", True)
+            root.after(200, lambda: root.attributes("-topmost", False))
+        except Exception:
+            pass
+
     root.after(50, process_queue)
+    root.after(200, _bring_to_front)
 
     root.mainloop()
+
+
+def _write_gui_error(e: Exception) -> str:
+    tmp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or os.getcwd()
+    err_path = os.path.join(tmp_dir, "asystent_installer_gui_error.log")
+    try:
+        with open(err_path, "a", encoding="utf-8") as f:
+            f.write(f"[GUI ERROR] {datetime.utcnow().isoformat()}Z\n")
+            f.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+            f.write("\n")
+    except Exception:
+        pass
+    return err_path
+
+
+def _show_gui_error(err_path: str) -> None:
+    try:
+        import ctypes
+        msg = (
+            "Nie udalo sie uruchomic GUI instalatora.\n\n"
+            f"Szczegoly zapisano w:\n{err_path}\n\n"
+            "Uruchom ponownie lub skontaktuj sie z supportem."
+        )
+        ctypes.windll.user32.MessageBoxW(0, msg, "Instalator AsystentMedyczny", 0x10)
+    except Exception:
+        pass
 
 
 def main():
     args = [a.lower() for a in sys.argv[1:]]
     force_console = "--console" in args or os.environ.get("WYWIAD_INSTALLER_CONSOLE") == "1"
+    is_exe = str(sys.argv[0]).lower().endswith(".exe")
 
     if force_console:
         run_console()
@@ -787,13 +866,10 @@ def main():
     try:
         run_gui()
     except Exception as e:
-        try:
-            tmp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or os.getcwd()
-            err_path = os.path.join(tmp_dir, "asystent_installer_gui_error.log")
-            with open(err_path, "a", encoding="utf-8") as f:
-                f.write(f"[GUI ERROR] {datetime.utcnow().isoformat()}Z {e}\n")
-        except Exception:
-            pass
+        err_path = _write_gui_error(e)
+        if is_exe:
+            _show_gui_error(err_path)
+            sys.exit(1)
         run_console()
 
 
