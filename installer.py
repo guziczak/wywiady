@@ -523,8 +523,17 @@ def run_console():
 
 
 def run_gui():
-    os.environ.pop("TCL_LIBRARY", None)
-    os.environ.pop("TK_LIBRARY", None)
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "")
+        tcl_dir = os.path.join(base, "tcl", "tcl8.6")
+        tk_dir = os.path.join(base, "tcl", "tk8.6")
+        if os.path.isdir(tcl_dir):
+            os.environ["TCL_LIBRARY"] = tcl_dir
+        if os.path.isdir(tk_dir):
+            os.environ["TK_LIBRARY"] = tk_dir
+    else:
+        os.environ.pop("TCL_LIBRARY", None)
+        os.environ.pop("TK_LIBRARY", None)
     import threading
     import queue
     import tkinter as tk
