@@ -141,7 +141,7 @@ class VisitSaveDialog:
                         value=self.patient_birth_date
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_birth_date', e.value))
                     self.patient_sex_input = ui.select(
-                        'Plec',
+                        label='Plec',
                         options=['', 'K', 'M', 'Inna'],
                         value=self.patient_sex
                     ).classes('flex-1').on('change', lambda e: setattr(self, 'patient_sex', e.value))
