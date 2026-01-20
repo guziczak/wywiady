@@ -367,6 +367,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
+        f.write("set WYWIAD_STDOUT_LOG=logs\\stdout.log\n")
         f.write(f"python {MAIN_SCRIPT}\n")
         f.write("pause\n")
 
@@ -380,6 +381,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
                 f.write('Set WshShell = CreateObject("WScript.Shell")\n')
                 f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
                 f.write('WshShell.Environment("Process")("WYWIAD_AUTO_OPEN") = "1"\n')
+                f.write('WshShell.Environment("Process")("WYWIAD_STDOUT_LOG") = "logs\\\\stdout.log"\n')
                 f.write(f'WshShell.Run "{vbs_cmd}", 0, False\n')
         except Exception:
             run_vbs_path = run_bat_path
@@ -430,6 +432,7 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     if result is not None:
         result["run_bat_path"] = run_bat_path
         result["run_vbs_path"] = run_vbs_path
+        result["log_path"] = os.path.join(install_dir, "logs", "stdout.log")
 
     if auto_launch:
         log_info("Uruchamianie aplikacji za 3 sekundy...")
@@ -559,9 +562,24 @@ def run_gui():
     def set_status(text):
         status_label.config(text=text)
 
+    def _tag_for_line(line: str) -> str:
+        upper = line.upper()
+        if line.startswith("----"):
+            return "section"
+        if "[!]" in line or "BLAD" in upper or "ERROR" in upper:
+            return "err"
+        if "WARN" in upper or "WARNING" in upper:
+            return "warn"
+        if line.rstrip().endswith(" OK") or " SUCCESS" in upper:
+            return "ok"
+        if line.startswith("[STREAM]") or line.startswith("[LIVE]") or line.startswith("[APP]"):
+            return "dim"
+        return "base"
+
     def append_log(line):
         raw_text.config(state="normal")
-        raw_text.insert("end", line + "\n")
+        tag = _tag_for_line(line)
+        raw_text.insert("end", line + "\n", tag)
         raw_text.see("end")
         raw_text.config(state="disabled")
 
@@ -587,6 +605,35 @@ def run_gui():
     def enable_close():
         installing["value"] = False
         close_btn.config(state="normal")
+
+    tail_active = {"value": True}
+
+    def _start_log_tail(log_path: str):
+        def _tail():
+            if not log_path:
+                return
+            # Poczekaj az plik sie pojawi
+            for _ in range(120):
+                if not tail_active["value"]:
+                    return
+                if os.path.exists(log_path):
+                    break
+                time.sleep(0.25)
+            if not os.path.exists(log_path):
+                return
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(0, os.SEEK_END)
+                    while tail_active["value"]:
+                        line = f.readline()
+                        if line:
+                            queue_events.put(("log", line.rstrip("\n")))
+                        else:
+                            time.sleep(0.2)
+            except Exception as e:
+                queue_events.put(("log", f"[LOG] tail error: {e}"))
+
+        threading.Thread(target=_tail, daemon=True).start()
 
     def process_queue():
         while True:
@@ -619,6 +666,7 @@ def run_gui():
                 if isinstance(payload, dict):
                     run_vbs = payload.get("run_vbs_path")
                     run_bat = payload.get("run_bat_path")
+                    log_path = payload.get("log_path")
                     if run_vbs or run_bat:
                         def _launch():
                             try:
@@ -628,6 +676,9 @@ def run_gui():
                             except Exception:
                                 messagebox.showwarning("Uruchomienie", "Nie udalo sie uruchomic aplikacji.")
                         launch_btn.config(state="normal", command=_launch)
+                    if log_path:
+                        append_log("---- LOGI APLIKACJI (na zywo) ----")
+                        _start_log_tail(log_path)
                 open_btn.config(
                     state="normal",
                     command=lambda: webbrowser.open("http://127.0.0.1:8089", new=1, autoraise=True)
@@ -743,6 +794,7 @@ def run_gui():
         if installing["value"]:
             messagebox.showinfo("Instalacja", "Instalacja w toku. Zaczekaj na zakonczenie.")
         else:
+            tail_active["value"] = False
             root.destroy()
 
     content = tk.Frame(root, bg=bg)
@@ -787,7 +839,28 @@ def run_gui():
     content.grid_rowconfigure(7, weight=1)
     content.grid_columnconfigure(0, weight=1)
 
-    raw_text = ScrolledText(raw_frame, height=12, wrap="word", state="disabled", font=("Consolas", 9))
+    raw_text = ScrolledText(
+        raw_frame,
+        height=12,
+        wrap="word",
+        state="disabled",
+        font=("Consolas", 9),
+        bg="#0b0f14",
+        fg="#cbd5e1",
+        insertbackground="#38bdf8",
+        selectbackground="#1e293b",
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground="#1f2937",
+        padx=8,
+        pady=6,
+    )
+    raw_text.tag_configure("base", foreground="#cbd5e1")
+    raw_text.tag_configure("dim", foreground="#94a3b8")
+    raw_text.tag_configure("ok", foreground="#22c55e")
+    raw_text.tag_configure("warn", foreground="#f59e0b")
+    raw_text.tag_configure("err", foreground="#ef4444")
+    raw_text.tag_configure("section", foreground="#38bdf8")
     raw_text.pack(fill="both", expand=True)
     raw_frame.grid_remove()
 

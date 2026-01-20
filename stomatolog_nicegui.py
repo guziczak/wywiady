@@ -2156,9 +2156,60 @@ def main():
 
     start_console_quit_listener()
 
+    def _setup_stdout_log():
+        log_path = os.environ.get("WYWIAD_STDOUT_LOG")
+        if not log_path:
+            return
+        try:
+            if not os.path.isabs(log_path):
+                log_path = os.path.join(os.path.dirname(__file__), log_path)
+            log_dir = os.path.dirname(log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+            log_file = open(log_path, "a", encoding="utf-8", buffering=1)
 
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
+            class Tee:
+                def __init__(self, *streams):
+                    self._streams = [s for s in streams if s and hasattr(s, "write")]
+                    self.encoding = getattr(log_file, "encoding", "utf-8")
+
+                def write(self, data):
+                    for s in self._streams:
+                        try:
+                            s.write(data)
+                        except Exception:
+                            pass
+                    return len(data)
+
+                def flush(self):
+                    for s in self._streams:
+                        try:
+                            s.flush()
+                        except Exception:
+                            pass
+
+                def isatty(self):
+                    return False
+
+                def reconfigure(self, **kwargs):
+                    for s in self._streams:
+                        if hasattr(s, "reconfigure"):
+                            try:
+                                s.reconfigure(**kwargs)
+                            except Exception:
+                                pass
+
+            sys.stdout = Tee(sys.stdout, log_file)
+            sys.stderr = Tee(sys.stderr, log_file)
+        except Exception:
+            pass
+
+    _setup_stdout_log()
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(line_buffering=True)
 
     log("[STARTUP] Starting app...")
 
