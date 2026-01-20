@@ -8,6 +8,7 @@ from typing import Optional, Callable
 from nicegui import ui
 
 from core.models import Visit, VisitStatus
+from core.repositories import PatientRepository
 
 
 class VisitDetailDialog:
@@ -47,6 +48,13 @@ class VisitDetailDialog:
                 self._create_status_badge()
 
             with ui.row().classes('items-center gap-2'):
+                if self.on_edit:
+                    ui.button(
+                        'Edytuj',
+                        icon='edit',
+                        on_click=lambda: self._edit_visit()
+                    ).props('flat color=primary')
+
                 if self.on_export_pdf:
                     ui.button(
                         'Eksport PDF',
@@ -70,13 +78,27 @@ class VisitDetailDialog:
                 self._info_row('ID', self.visit.id[:8] + '...')
 
         # Patient details
+        patient = None
+        if getattr(self.visit, 'patient_id', None):
+            try:
+                patient = PatientRepository().get_by_id(self.visit.patient_id)
+            except Exception:
+                patient = None
+
+        patient_identifier = self.visit.patient_identifier or (patient.identifier if patient else "")
+        patient_birth_date = self.visit.patient_birth_date or (patient.birth_date if patient else "")
+        patient_sex = self.visit.patient_sex or (patient.sex if patient else "")
+        patient_address = self.visit.patient_address or (patient.address if patient else "")
+        patient_phone = self.visit.patient_phone or (patient.phone if patient else "")
+        patient_email = self.visit.patient_email or (patient.email if patient else "")
+
         patient_details = [
-            ('PESEL / identyfikator', self.visit.patient_identifier),
-            ('Data urodzenia', self.visit.patient_birth_date),
-            ('Plec', self.visit.patient_sex),
-            ('Adres', self.visit.patient_address),
-            ('Telefon', self.visit.patient_phone),
-            ('Email', self.visit.patient_email),
+            ('PESEL / identyfikator', patient_identifier),
+            ('Data urodzenia', patient_birth_date),
+            ('Plec', patient_sex),
+            ('Adres', patient_address),
+            ('Telefon', patient_phone),
+            ('Email', patient_email),
         ]
         if any(value for _, value in patient_details):
             ui.label('Dane pacjenta').classes('text-lg font-bold mt-4')
@@ -201,6 +223,12 @@ class VisitDetailDialog:
             ui.badge('Zakończona', color='green')
         else:
             ui.badge('Szkic', color='orange')
+
+    def _edit_visit(self) -> None:
+        """Wywoluje edycje wizyty."""
+        if self.on_edit:
+            self.on_edit(self.visit)
+            self.close()
 
     def _info_row(self, label: str, value: str) -> None:
         """Tworzy wiersz informacji."""

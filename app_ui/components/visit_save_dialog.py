@@ -25,12 +25,14 @@ class VisitSaveDialog:
         diagnoses: List[Dict],
         procedures: List[Dict],
         model_used: str = "",
+        existing_visit: Optional[Visit] = None,
         on_save: Optional[Callable[[Visit], None]] = None
     ):
         self.transcript = transcript
         self.diagnoses = diagnoses
         self.procedures = procedures
         self.model_used = model_used
+        self.existing_visit = existing_visit
         self.on_save = on_save
 
         self.visit_service = get_visit_service()
@@ -60,6 +62,29 @@ class VisitSaveDialog:
         self.referrals = ""
         self.certificates = ""
         self.additional_notes = ""
+
+        if self.existing_visit:
+            self.selected_patient_id = self.existing_visit.patient_id
+            self.patient_name = self.existing_visit.patient_name or ""
+            self.patient_identifier = self.existing_visit.patient_identifier or ""
+            self.patient_birth_date = self.existing_visit.patient_birth_date or ""
+            self.patient_sex = self.existing_visit.patient_sex or ""
+            self.patient_address = self.existing_visit.patient_address or ""
+            self.patient_phone = self.existing_visit.patient_phone or ""
+            self.patient_email = self.existing_visit.patient_email or ""
+            self.visit_date = self.existing_visit.visit_date or datetime.now()
+            self.save_as_completed = self.existing_visit.status == VisitStatus.COMPLETED
+            self.subjective = self.existing_visit.subjective or ""
+            self.objective = self.existing_visit.objective or ""
+            self.assessment = self.existing_visit.assessment or ""
+            self.plan = self.existing_visit.plan or ""
+            self.recommendations = self.existing_visit.recommendations or ""
+            self.medications = self.existing_visit.medications or ""
+            self.tests_ordered = self.existing_visit.tests_ordered or ""
+            self.tests_results = self.existing_visit.tests_results or ""
+            self.referrals = self.existing_visit.referrals or ""
+            self.certificates = self.existing_visit.certificates or ""
+            self.additional_notes = self.existing_visit.additional_notes or ""
 
         # Komponenty
         self.patient_select = None
@@ -93,6 +118,7 @@ class VisitSaveDialog:
 
         # Capture client context for async UI updates
         self._client = ui.context.client
+        self._apply_initial_state()
         self.dialog.open()
 
     def close(self) -> None:
@@ -114,6 +140,10 @@ class VisitSaveDialog:
             0: '-- Nowy pacjent --',
             **{p.id: p.display_name for p in recent_patients}
         }
+        if self.selected_patient_id and self.selected_patient_id not in patient_options:
+            existing_patient = self.visit_service.patient_repo.get_by_id(self.selected_patient_id)
+            if existing_patient:
+                patient_options[self.selected_patient_id] = existing_patient.display_name
 
         self.patient_select = ui.select(
             label='Wybierz pacjenta',
@@ -274,6 +304,7 @@ class VisitSaveDialog:
         if patient_id == 0:
             # Nowy pacjent
             self.selected_patient_id = None
+            self._set_patient_fields_from_patient(None, overwrite=True)
             if self.patient_name_input:
                 self.patient_name_input.visible = True
         else:
@@ -281,9 +312,74 @@ class VisitSaveDialog:
             self.selected_patient_id = patient_id
             patient = self.visit_service.patient_repo.get_by_id(patient_id)
             if patient:
-                self.patient_name = patient.display_name
+                self._set_patient_fields_from_patient(patient, overwrite=True)
             if self.patient_name_input:
                 self.patient_name_input.visible = False
+
+    def _set_patient_fields_from_patient(self, patient: Optional[Patient], overwrite: bool = True) -> None:
+        """Uzupełnia pola formularza na podstawie kartoteki pacjenta."""
+        if patient is None:
+            self.patient_name = ""
+            self.patient_identifier = ""
+            self.patient_birth_date = ""
+            self.patient_sex = ""
+            self.patient_address = ""
+            self.patient_phone = ""
+            self.patient_email = ""
+        else:
+            if overwrite or not self.patient_name:
+                self.patient_name = patient.display_name or self.patient_name
+            if overwrite or not self.patient_identifier:
+                self.patient_identifier = getattr(patient, "identifier", "") or self.patient_identifier
+            if overwrite or not self.patient_birth_date:
+                self.patient_birth_date = getattr(patient, "birth_date", "") or self.patient_birth_date
+            if overwrite or not self.patient_sex:
+                self.patient_sex = getattr(patient, "sex", "") or self.patient_sex
+            if overwrite or not self.patient_address:
+                self.patient_address = getattr(patient, "address", "") or self.patient_address
+            if overwrite or not self.patient_phone:
+                self.patient_phone = getattr(patient, "phone", "") or self.patient_phone
+            if overwrite or not self.patient_email:
+                self.patient_email = getattr(patient, "email", "") or self.patient_email
+
+        if self.patient_name_input:
+            self.patient_name_input.value = self.patient_name
+            self.patient_name_input.update()
+        if self.patient_identifier_input:
+            self.patient_identifier_input.value = self.patient_identifier
+            self.patient_identifier_input.update()
+        if self.patient_birth_date_input:
+            self.patient_birth_date_input.value = self.patient_birth_date
+            self.patient_birth_date_input.update()
+        if self.patient_sex_input:
+            self.patient_sex_input.value = self.patient_sex
+            self.patient_sex_input.update()
+        if self.patient_address_input:
+            self.patient_address_input.value = self.patient_address
+            self.patient_address_input.update()
+        if self.patient_phone_input:
+            self.patient_phone_input.value = self.patient_phone
+            self.patient_phone_input.update()
+        if self.patient_email_input:
+            self.patient_email_input.value = self.patient_email
+            self.patient_email_input.update()
+
+    def _apply_initial_state(self) -> None:
+        """Ustawia stan formularza po wyrenderowaniu."""
+        if self.patient_select:
+            self.patient_select.value = self.selected_patient_id or 0
+            self.patient_select.update()
+
+        if self.selected_patient_id:
+            patient = self.visit_service.patient_repo.get_by_id(self.selected_patient_id)
+            if patient:
+                # Uzupelnij brakujace pola z kartoteki pacjenta
+                self._set_patient_fields_from_patient(patient, overwrite=False)
+            if self.patient_name_input:
+                self.patient_name_input.visible = False
+        else:
+            if self.patient_name_input:
+                self.patient_name_input.visible = True
 
     def _on_date_change(self, value: str, input_elem, menu) -> None:
         """Obsługa zmiany daty."""
@@ -458,7 +554,15 @@ class VisitSaveDialog:
             patient_name = self.patient_name.strip()
 
             if not patient_id and patient_name:
-                patient = self.visit_service.get_or_create_patient(patient_name)
+                patient = self.visit_service.get_or_create_patient(
+                    display_name=patient_name,
+                    identifier=self.patient_identifier.strip(),
+                    birth_date=self.patient_birth_date.strip(),
+                    sex=self.patient_sex.strip(),
+                    address=self.patient_address.strip(),
+                    phone=self.patient_phone.strip(),
+                    email=self.patient_email.strip(),
+                )
                 patient_id = patient.id
                 patient_name = patient.display_name
 
@@ -470,6 +574,7 @@ class VisitSaveDialog:
                 diagnoses=self.diagnoses,
                 procedures=self.procedures,
                 model_used=self.model_used,
+                visit_id=self.existing_visit.id if self.existing_visit else None,
                 patient_name=patient_name,
                 patient_identifier=self.patient_identifier.strip(),
                 patient_birth_date=self.patient_birth_date.strip(),
@@ -509,6 +614,7 @@ def open_save_visit_dialog(
     diagnoses: List[Dict],
     procedures: List[Dict],
     model_used: str = "",
+    existing_visit: Optional[Visit] = None,
     on_save: Optional[Callable[[Visit], None]] = None
 ) -> VisitSaveDialog:
     """
@@ -529,6 +635,7 @@ def open_save_visit_dialog(
         diagnoses=diagnoses,
         procedures=procedures,
         model_used=model_used,
+        existing_visit=existing_visit,
         on_save=on_save
     )
     dialog.open()

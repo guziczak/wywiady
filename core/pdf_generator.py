@@ -20,6 +20,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from core.models import Visit
+from core.repositories import PatientRepository
 from core.log_utils import log
 
 
@@ -331,7 +332,25 @@ class PDFGenerator:
 
         visit_date = visit.visit_date if hasattr(visit, "visit_date") else None
         visit_date_str = self._format_datetime(visit_date) if isinstance(visit_date, datetime) else str(visit_date or "")
-        patient_name = self._safe_text(visit.patient_name or "Pacjent anonimowy")
+        patient_repo = PatientRepository()
+        patient = None
+        if getattr(visit, "patient_id", None):
+            try:
+                patient = patient_repo.get_by_id(visit.patient_id)
+            except Exception:
+                patient = None
+
+        patient_name = self._safe_text(
+            visit.patient_name
+            or (patient.display_name if patient else "")
+            or "Pacjent anonimowy"
+        )
+        patient_identifier = getattr(visit, "patient_identifier", "") or (patient.identifier if patient else "")
+        patient_birth_date = getattr(visit, "patient_birth_date", "") or (patient.birth_date if patient else "")
+        patient_sex = getattr(visit, "patient_sex", "") or (patient.sex if patient else "")
+        patient_address = getattr(visit, "patient_address", "") or (patient.address if patient else "")
+        patient_phone = getattr(visit, "patient_phone", "") or (patient.phone if patient else "")
+        patient_email = getattr(visit, "patient_email", "") or (patient.email if patient else "")
         model_used = self._safe_text(visit_dict.get("model_used", "-"))
 
         add_kv_table(
@@ -347,12 +366,12 @@ class PDFGenerator:
             "Dane pacjenta",
             [
                 ("Pacjent", patient_name),
-                ("PESEL / identyfikator", getattr(visit, "patient_identifier", "")),
-                ("Data urodzenia", getattr(visit, "patient_birth_date", "")),
-                ("Plec", getattr(visit, "patient_sex", "")),
-                ("Adres", getattr(visit, "patient_address", "")),
-                ("Telefon", getattr(visit, "patient_phone", "")),
-                ("Email", getattr(visit, "patient_email", "")),
+                ("PESEL / identyfikator", patient_identifier),
+                ("Data urodzenia", patient_birth_date),
+                ("Plec", patient_sex),
+                ("Adres", patient_address),
+                ("Telefon", patient_phone),
+                ("Email", patient_email),
             ],
         )
 

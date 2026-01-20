@@ -2225,6 +2225,7 @@ def main():
         """Strona historii wizyt."""
         from app_ui.views.history_view import create_history_view
         from app_ui.components.header import create_header
+        from app_ui.components.visit_save_dialog import open_save_visit_dialog
 
         # Minimalny app context dla headera
         class MinimalApp:
@@ -2241,7 +2242,24 @@ def main():
         create_header(mini_app)
 
         with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
-            create_history_view()
+            view = None
+
+            def _edit_visit(visit):
+                diagnoses = [d.to_dict() for d in visit.diagnoses]
+                procedures = [p.to_dict() for p in visit.procedures]
+                open_save_visit_dialog(
+                    transcript=visit.transcript,
+                    diagnoses=diagnoses,
+                    procedures=procedures,
+                    model_used=visit.model_used,
+                    existing_visit=visit,
+                    on_save=lambda v: (
+                        ui.notify(f"Wizyta zaktualizowana: {v.id[:8]}...", type='positive'),
+                        view.refresh_data() if view else None
+                    )
+                )
+
+            view = create_history_view(on_edit_visit=_edit_visit)
 
     # API endpoint dla rozszerzenia przeglądarki
     from fastapi import Request

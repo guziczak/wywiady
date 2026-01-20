@@ -76,6 +76,7 @@ class VisitService:
         diagnoses: List[Dict],
         procedures: List[Dict],
         model_used: str = "",
+        visit_id: Optional[str] = None,
         patient_name: str = "",
         patient_identifier: str = "",
         patient_birth_date: str = "",
@@ -114,7 +115,57 @@ class VisitService:
         Returns:
             Zapisana wizyta
         """
-        visit = Visit(
+        # Pacjent: pobierz i uzupelnij dane
+        patient = None
+        if patient_id:
+            patient = self.patient_repo.get_by_id(patient_id)
+        elif patient_name:
+            patient = self.get_or_create_patient(
+                display_name=patient_name,
+                identifier=patient_identifier,
+                birth_date=patient_birth_date,
+                sex=patient_sex,
+                address=patient_address,
+                phone=patient_phone,
+                email=patient_email,
+            )
+            patient_id = patient.id
+
+        if patient:
+            # Uzupelnij brakujace dane wizyty z kartoteki pacjenta
+            if not patient_name:
+                patient_name = patient.display_name
+            if not patient_identifier:
+                patient_identifier = patient.identifier or patient_identifier
+            if not patient_birth_date:
+                patient_birth_date = patient.birth_date or patient_birth_date
+            if not patient_sex:
+                patient_sex = patient.sex or patient_sex
+            if not patient_address:
+                patient_address = patient.address or patient_address
+            if not patient_phone:
+                patient_phone = patient.phone or patient_phone
+            if not patient_email:
+                patient_email = patient.email or patient_email
+
+            # Aktualizuj kartoteke pacjenta danymi z wizyty
+            if self._merge_patient_fields(
+                patient,
+                display_name=patient_name,
+                identifier=patient_identifier,
+                birth_date=patient_birth_date,
+                sex=patient_sex,
+                address=patient_address,
+                phone=patient_phone,
+                email=patient_email,
+            ):
+                self.patient_repo.save(patient)
+        else:
+            # Jesli patient_id nie istnieje w bazie, nie zapisuj referencji
+            if patient_id:
+                patient_id = None
+
+        visit_kwargs = dict(
             transcript=transcript,
             model_used=model_used,
             patient_name=patient_name,
@@ -139,12 +190,16 @@ class VisitService:
             certificates=certificates,
             additional_notes=additional_notes
         )
+        if visit_id:
+            visit_kwargs["id"] = visit_id
+
+        visit = Visit(**visit_kwargs)
 
         # Dodaj diagnozy
         for i, diag in enumerate(diagnoses):
             diagnosis = VisitDiagnosis(
-                icd10_code=diag.get('kod', ''),
-                icd10_name=diag.get('nazwa', ''),
+                icd10_code=diag.get('kod', diag.get('icd10_code', '')),
+                icd10_name=diag.get('nazwa', diag.get('icd10_name', '')),
                 location=diag.get('zab', diag.get('location', '')),
                 description=diag.get('opis_tekstowy', diag.get('description', '')),
                 display_order=i
@@ -154,8 +209,8 @@ class VisitService:
         # Dodaj procedury
         for i, proc in enumerate(procedures):
             procedure = VisitProcedure(
-                procedure_code=proc.get('kod', ''),
-                procedure_name=proc.get('nazwa', ''),
+                procedure_code=proc.get('kod', proc.get('procedure_code', '')),
+                procedure_name=proc.get('nazwa', proc.get('procedure_name', '')),
                 location=proc.get('zab', proc.get('location', '')),
                 description=proc.get('opis_tekstowy', proc.get('description', '')),
                 display_order=i
@@ -235,13 +290,75 @@ class VisitService:
 
     # === Operacje na pacjentach ===
 
+    def _merge_patient_fields(
+        self,
+        patient: Patient,
+        display_name: Optional[str] = None,
+        identifier: Optional[str] = None,
+        birth_date: Optional[str] = None,
+        sex: Optional[str] = None,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> bool:
+        """Uzupelnia dane pacjenta bez nadpisywania pustymi wartosciami."""
+        changed = False
+
+        def _set(attr: str, value: Optional[str]):
+            nonlocal changed
+            if value is None:
+                return
+            value = value.strip()
+            if not value:
+                return
+            if getattr(patient, attr, "") != value:
+                setattr(patient, attr, value)
+                changed = True
+
+        _set("display_name", display_name)
+        _set("identifier", identifier)
+        _set("birth_date", birth_date)
+        _set("sex", sex)
+        _set("address", address)
+        _set("phone", phone)
+        _set("email", email)
+
+        # Aktualizuj hash identyfikatora jesli mamy identyfikator
+        if identifier:
+            try:
+                new_hash = Patient.hash_identifier(identifier)
+                if patient.identifier_hash != new_hash:
+                    patient.identifier_hash = new_hash
+                    changed = True
+            except Exception:
+                pass
+
+        return changed
+
     def get_or_create_patient(
         self,
         display_name: str,
-        identifier: Optional[str] = None
+        identifier: Optional[str] = None,
+        birth_date: str = "",
+        sex: str = "",
+        address: str = "",
+        phone: str = "",
+        email: str = "",
     ) -> Patient:
-        """Pobiera lub tworzy pacjenta."""
-        return self.patient_repo.get_or_create(display_name, identifier)
+        """Pobiera lub tworzy pacjenta oraz uzupelnia dane."""
+        patient = self.patient_repo.get_or_create(display_name, identifier)
+        if self._merge_patient_fields(
+            patient,
+            display_name=display_name,
+            identifier=identifier,
+            birth_date=birth_date,
+            sex=sex,
+            address=address,
+            phone=phone,
+            email=email,
+        ):
+            patient = self.patient_repo.save(patient)
+        return patient
 
     def get_patients(
         self,

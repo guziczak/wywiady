@@ -69,11 +69,13 @@ class Migrator:
         """Ładuje wszystkie dostępne migracje z modułów."""
         from . import migration_001_visits
         from . import migration_002_visit_details
+        from . import migration_003_patient_details
 
         # Rejestruj migracje
         self.migrations = [
             migration_001_visits.migration,
             migration_002_visit_details.migration,
+            migration_003_patient_details.migration,
         ]
 
         # Sortuj po wersji

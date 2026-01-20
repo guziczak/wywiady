@@ -22,22 +22,38 @@ class PatientRepository(BaseRepository):
                 # UPDATE
                 conn.execute('''
                     UPDATE patients
-                    SET display_name = ?, identifier_hash = ?, notes = ?
+                    SET display_name = ?, identifier = ?, identifier_hash = ?, birth_date = ?,
+                        sex = ?, address = ?, phone = ?, email = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ''', (
                     patient.display_name,
+                    patient.identifier,
                     patient.identifier_hash,
+                    patient.birth_date,
+                    patient.sex,
+                    patient.address,
+                    patient.phone,
+                    patient.email,
                     patient.notes,
                     patient.id
                 ))
             else:
                 # INSERT
                 cursor = conn.execute('''
-                    INSERT INTO patients (display_name, identifier_hash, notes)
-                    VALUES (?, ?, ?)
+                    INSERT INTO patients (
+                        display_name, identifier, identifier_hash, birth_date, sex,
+                        address, phone, email, notes, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ''', (
                     patient.display_name,
+                    patient.identifier,
                     patient.identifier_hash,
+                    patient.birth_date,
+                    patient.sex,
+                    patient.address,
+                    patient.phone,
+                    patient.email,
                     patient.notes
                 ))
                 patient.id = cursor.lastrowid
@@ -129,6 +145,7 @@ class PatientRepository(BaseRepository):
 
             patient = Patient(
                 display_name=display_name,
+                identifier=identifier,
                 identifier_hash=identifier_hash
             )
         else:

@@ -121,6 +121,7 @@ class HistoryView:
         self.grid.add_slot('body-cell-actions', '''
             <q-td :props="props">
                 <q-btn flat round dense icon="visibility" @click="$parent.$emit('view_visit', props.row.id)" />
+                <q-btn flat round dense icon="edit" @click="$parent.$emit('edit_visit', props.row.id)" />
                 <q-btn flat round dense icon="picture_as_pdf" @click="$parent.$emit('export_visit_pdf', props.row.id)" />
                 <q-btn flat round dense icon="delete" color="negative" @click="$parent.$emit('delete_visit', props.row.id)" />
             </q-td>
@@ -137,6 +138,7 @@ class HistoryView:
 
         # Obsługa eventów z tabeli
         self.grid.on('view_visit', lambda e: self._on_view_visit(e.args))
+        self.grid.on('edit_visit', lambda e: self._on_edit_visit(e.args))
         self.grid.on('export_visit_pdf', lambda e: self._on_export_pdf(e.args))
         self.grid.on('delete_visit', lambda e: self._on_delete_visit(e.args))
 
@@ -268,9 +270,16 @@ class HistoryView:
             dialog = VisitDetailDialog(
                 visit=visit,
                 on_export_pdf=lambda v: self._on_export_pdf(v.id),
-                on_delete=lambda v: self._on_delete_visit(v.id)
+                on_delete=lambda v: self._on_delete_visit(v.id),
+                on_edit=self.on_edit_visit
             )
             dialog.open()
+
+    def _on_edit_visit(self, visit_id: str) -> None:
+        """Otwiera edycję wizyty."""
+        visit = self.visit_service.get_visit(visit_id)
+        if visit and self.on_edit_visit:
+            self.on_edit_visit(visit)
 
     def _on_export_pdf(self, visit_id: str) -> None:
         """Eksportuje wizytę do PDF."""
