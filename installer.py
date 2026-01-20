@@ -8,6 +8,7 @@ import shutil
 import time
 import json
 from datetime import datetime
+from branding import BRAND_ICON_TAG
 
 # Konfiguracja
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
@@ -17,7 +18,7 @@ DISPLAY_NAME = "Wizyta"
 SHORTCUT_NAME = DISPLAY_NAME
 RESET_SHORTCUT_NAME = f"Reset {DISPLAY_NAME}"
 MAIN_SCRIPT = "stomatolog_nicegui.py"
-ICON_REL_PATH = os.path.join("extension", "icon.ico")
+ICON_REL_PATH = os.path.join("extension", f"icon_{BRAND_ICON_TAG}.ico")
 STATE_FILE = ".install_state.json"
 
 SINK = None
@@ -562,14 +563,26 @@ def run_gui():
     def _apply_window_icon():
         try:
             base = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
-            ico_path = os.path.join(base, "extension", "icon.ico")
-            png_path = os.path.join(base, "extension", "icon.png")
-            if os.path.exists(ico_path):
+            ico_path = os.path.join(base, "extension", f"icon_{BRAND_ICON_TAG}.ico")
+            png_path = os.path.join(base, "extension", f"icon_{BRAND_ICON_TAG}.png")
+
+            icon_images = []
+            for size in (16, 24, 32, 48, 64, 128, 256):
+                png_size_path = os.path.join(base, "extension", f"icon_{BRAND_ICON_TAG}_{size}.png")
+                if os.path.exists(png_size_path):
+                    try:
+                        icon_images.append(tk.PhotoImage(file=png_size_path))
+                    except Exception:
+                        pass
+
+            if not icon_images and os.path.exists(png_path):
+                icon_images.append(tk.PhotoImage(file=png_path))
+
+            if icon_images:
+                root.iconphoto(True, *icon_images)
+                root._icon_imgs = icon_images
+            elif os.path.exists(ico_path):
                 root.iconbitmap(ico_path)
-            if os.path.exists(png_path):
-                icon_img = tk.PhotoImage(file=png_path)
-                root.iconphoto(True, icon_img)
-                root._icon_img = icon_img
         except Exception:
             pass
 

@@ -11,7 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from branding import BRAND_ICON, BRAND_ICON_BG
+from branding import BRAND_ICON, BRAND_ICON_BG, BRAND_ICON_TAG
 
 BG = tuple(int(BRAND_ICON_BG.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
 FG = (255, 255, 255)
@@ -119,12 +119,22 @@ font.save(str(tmp_ttf))
 
 png_img = _render_icon(512, tmp_ttf, glyph_char)
 png_img.save("C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.png")
+png_img.save(f"C:/Users/guzic/Documents/GitHub/wywiady/extension/icon_{BRAND_ICON_TAG}.png")
 
 ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 png_img.save(
     "C:/Users/guzic/Documents/GitHub/wywiady/extension/icon.ico",
     sizes=ico_sizes,
 )
+png_img.save(
+    f"C:/Users/guzic/Documents/GitHub/wywiady/extension/icon_{BRAND_ICON_TAG}.ico",
+    sizes=ico_sizes,
+)
+
+# Pre-rendered PNGs for Tk window icons (crisp at each size)
+for size in [16, 24, 32, 48, 64, 128, 256]:
+    img = _render_icon(size, tmp_ttf, glyph_char)
+    img.save(f"C:/Users/guzic/Documents/GitHub/wywiady/extension/icon_{BRAND_ICON_TAG}_{size}.png")
 
 try:
     os.remove(tmp_ttf)
