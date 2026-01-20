@@ -77,7 +77,9 @@ class StreamingTranscriber:
         enable_medium: bool = True,
         enable_large: bool = True,
         improved_interval: float = 5.0,
-        silence_threshold: float = 2.0
+        silence_threshold: float = 2.0,
+        max_segment_seconds: float = 25.0,
+        voice_rms_threshold: float = 0.01
     ):
         self.model_size = model_size
         self.device = device
@@ -127,6 +129,11 @@ class StreamingTranscriber:
         self.silence_timer = None
         self.silence_threshold = silence_threshold
         self._silence_lock = threading.Lock()
+        self.voice_rms_threshold = voice_rms_threshold
+        self.last_voice_time = 0.0
+        self.max_segment_seconds = max_segment_seconds
+        self.force_finalize_min_pause = 0.4
+        self._last_forced_finalize_time = 0.0
 
     def update_pipeline_config(
         self,
@@ -254,6 +261,7 @@ class StreamingTranscriber:
         self.last_improved_samples = 0
         self.last_improved_time = time.time()
         self._cancel_silence_timer()
+        self.last_voice_time = time.time()
 
         # Start audio stream
         self.stream = sd.InputStream(
@@ -309,6 +317,11 @@ class StreamingTranscriber:
             try:
                 chunk = self.audio_queue.get(timeout=0.5)
 
+                chunk_rms = float(np.sqrt(np.mean(chunk**2))) if len(chunk) else 0.0
+                if chunk_rms >= self.voice_rms_threshold:
+                    self.last_voice_time = time.time()
+                    self._cancel_silence_timer()
+
                 # Dodaj do pełnego bufora
                 self.full_audio_buffer.append(chunk)
                 chunk_len = len(chunk)
@@ -336,13 +349,18 @@ class StreamingTranscriber:
         end_sample = start_sample + len(audio_data)
 
         # Detekcja ciszy - ASYNC TIMER
-        rms = np.sqrt(np.mean(audio_data**2))
-        if rms < 0.01:
-            # Cisza - uruchom timer jeśli nie działa
-            self._start_silence_timer()
+        rms = float(np.sqrt(np.mean(audio_data**2))) if len(audio_data) else 0.0
+        now = time.time()
+        if rms < self.voice_rms_threshold:
+            time_since_voice = now - self.last_voice_time if self.last_voice_time else self.silence_threshold
+            remaining = self.silence_threshold - time_since_voice
+            if remaining <= 0:
+                self._start_silence_timer(0.05)
+            else:
+                self._start_silence_timer(remaining)
             return
         else:
-            # Dźwięk - anuluj timer
+            self.last_voice_time = now
             self._cancel_silence_timer()
 
         try:
@@ -361,12 +379,13 @@ class StreamingTranscriber:
         except Exception as e:
             print(f"[STREAM] Provisional error: {e}", flush=True)
     
-    def _start_silence_timer(self):
+    def _start_silence_timer(self, delay: float | None = None):
         """Uruchamia async timer dla ciszy (bulletproof - odpala się niezależnie)."""
         with self._silence_lock:
             if self.silence_timer is None:
+                wait_time = self.silence_threshold if delay is None else max(0.05, float(delay))
                 self.silence_timer = threading.Timer(
-                    self.silence_threshold, 
+                    wait_time, 
                     self._on_silence_timeout
                 )
                 self.silence_timer.daemon = True
@@ -385,6 +404,9 @@ class StreamingTranscriber:
             self.silence_timer = None
         
         if not self.is_running:
+            return
+
+        if time.time() - self.last_voice_time < self.silence_threshold:
             return
         
         # Sprawdź czy jest coś do finalizacji
@@ -407,6 +429,19 @@ class StreamingTranscriber:
                     self._do_improved_transcription()
                     self.last_improved_time = now
 
+                # Wymuś finalizację gdy segment robi się zbyt długi
+                if self.max_segment_seconds:
+                    pending_samples = self.full_audio_samples - self.finalized_samples
+                    if pending_samples > 0:
+                        pending_seconds = pending_samples / self.sample_rate
+                        if pending_seconds >= self.max_segment_seconds:
+                            time_since_voice = now - self.last_voice_time if self.last_voice_time else pending_seconds
+                            if time_since_voice >= self.force_finalize_min_pause:
+                                if now - self._last_forced_finalize_time >= 1.0:
+                                    print(f"[STREAM] Max segment {pending_seconds:.1f}s - forcing final", flush=True)
+                                    self._last_forced_finalize_time = now
+                                    self._do_final_transcription()
+
                 # WARSTWA 3 (Final) jest teraz obsługiwana przez async timer w _on_silence_timeout
 
             except Exception as e:
@@ -421,13 +456,14 @@ class StreamingTranscriber:
         if self.full_audio_samples <= self.last_improved_samples:
             return
 
-        # Bierzemy ostatnie 10-15 sekund LUB od ostatniego improved
-        max_samples = int(15.0 * self.sample_rate)
+        # Bierzemy ostatni segment do max_window_seconds
+        max_window_seconds = max(5.0, float(self.max_segment_seconds))
+        max_samples = int(max_window_seconds * self.sample_rate)
         # Startujemy od finalized (już zaakceptowane) - nie od last_improved
         # żeby nie tracić kontekstu
         start_sample = self.finalized_samples
         
-        # Ale nie więcej niż 15 sekund wstecz
+        # Ale nie więcej niż okno
         if self.full_audio_samples - start_sample > max_samples:
             start_sample = self.full_audio_samples - max_samples
 
@@ -440,8 +476,8 @@ class StreamingTranscriber:
             return
 
         # Sprawdź czy nie cisza
-        rms = np.sqrt(np.mean(segment_audio**2))
-        if rms < 0.01:
+        rms = float(np.sqrt(np.mean(segment_audio**2))) if len(segment_audio) else 0.0
+        if rms < self.voice_rms_threshold:
             return
 
         try:
@@ -486,8 +522,8 @@ class StreamingTranscriber:
             return
 
         # Sprawdź czy nie cisza (cały segment)
-        rms = np.sqrt(np.mean(segment_audio**2))
-        if rms < 0.01:
+        rms = float(np.sqrt(np.mean(segment_audio**2))) if len(segment_audio) else 0.0
+        if rms < self.voice_rms_threshold:
             self.finalized_samples = self.full_audio_samples
             return
 
@@ -522,14 +558,17 @@ class StreamingTranscriber:
                 )
                 text = " ".join([s.text for s in segments]).strip()
 
-            try:
-                if text and self.callback_final:
-                    self.callback_final(text, self.finalized_samples, self.full_audio_samples)
-            except Exception as cb_err:
-                print(f"[STREAM] Callback final error: {cb_err}", flush=True)
+            if text:
+                try:
+                    if self.callback_final:
+                        self.callback_final(text, self.finalized_samples, self.full_audio_samples)
+                except Exception as cb_err:
+                    print(f"[STREAM] Callback final error: {cb_err}", flush=True)
 
-            # Oznacz jako sfinalizowane - ZAWSZE, nawet jak callback padnie
-            self.finalized_samples = self.full_audio_samples
+                # Oznacz jako sfinalizowane - ZAWSZE, nawet jak callback padnie
+                self.finalized_samples = self.full_audio_samples
+            else:
+                print("[STREAM] Final empty text - keeping buffer for retry", flush=True)
 
         except Exception as e:
             print(f"[STREAM] Final error: {e}", flush=True)

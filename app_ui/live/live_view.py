@@ -593,8 +593,26 @@ class LiveInterviewView:
 
         # Kopiuj do schowka
         import json
-        ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
-        ui.notify("Skopiowano pytanie!", type='positive', position='top')
+        client = self._client
+        if client:
+            try:
+                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
+            except Exception:
+                pass
+            try:
+                with client:
+                    ui.notify("Skopiowano pytanie!", type='positive', position='top')
+            except Exception:
+                pass
+        else:
+            try:
+                ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
+            except Exception:
+                pass
+            try:
+                ui.notify("Skopiowano pytanie!", type='positive', position='top')
+            except Exception:
+                pass
 
         # Trigger AI (regeneruj pozostałe)
         self.ai_controller.on_card_clicked(question)

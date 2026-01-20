@@ -334,8 +334,26 @@ class PrompterPanel:
     def _handle_answer_click(self, answer: str):
         """Kopiuj odpowiedź pacjenta do schowka."""
         import json
-        ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(answer)})')
-        ui.notify("Skopiowano odpowiedź", type='positive', position='top')
+        client = self._client
+        if client:
+            try:
+                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(answer)})')
+            except Exception:
+                pass
+            try:
+                with client:
+                    ui.notify("Skopiowano odpowiedź", type='positive', position='top')
+            except Exception:
+                pass
+        else:
+            try:
+                ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(answer)})')
+            except Exception:
+                pass
+            try:
+                ui.notify("Skopiowano odpowiedź", type='positive', position='top')
+            except Exception:
+                pass
 
     def _clear_answer_context(self):
         """Czyści wybrane pytanie i odpowiedzi."""

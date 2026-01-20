@@ -216,11 +216,26 @@ class TranscriptPanel:
             self._sentence_popup.set_visibility(False)
 
     def _copy_question(self, question: str):
-        try:
-            ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
-            ui.notify("Skopiowano pytanie", type='positive', position='top')
-        except Exception:
-            pass
+        client = self._client
+        if client:
+            try:
+                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
+            except Exception:
+                pass
+            try:
+                with client:
+                    ui.notify("Skopiowano pytanie", type='positive', position='top')
+            except Exception:
+                pass
+        else:
+            try:
+                ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
+            except Exception:
+                pass
+            try:
+                ui.notify("Skopiowano pytanie", type='positive', position='top')
+            except Exception:
+                pass
 
     def _generate_followup_questions(self, sentence: str) -> list:
         """Generuje szybkie pytania follow-up (bez AI)."""
