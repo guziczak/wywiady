@@ -84,12 +84,15 @@ class VisitSaveDialog:
         self.soap_prefill_btn = None
         self.soap_spinner = None
         self.soap_model_label = None
+        self._client = None
 
     def open(self) -> None:
         """Otwiera dialog."""
         with ui.dialog() as self.dialog, ui.card().classes('w-full max-w-lg'):
             self._create_content()
 
+        # Capture client context for async UI updates
+        self._client = ui.context.client
         self.dialog.open()
 
     def close(self) -> None:
@@ -333,10 +336,14 @@ class VisitSaveDialog:
 
     async def _prefill_soap(self) -> None:
         if not self.transcript.strip():
-            ui.notify('Brak transkrypcji do analizy', type='warning')
+            if self._client:
+                with self._client:
+                    ui.notify('Brak transkrypcji do analizy', type='warning')
             return
 
-        self._set_soap_loading(True)
+        if self._client:
+            with self._client:
+                self._set_soap_loading(True)
         try:
             result, used_model = await self.llm_service.generate_soap(
                 transcript=self.transcript,
@@ -345,14 +352,22 @@ class VisitSaveDialog:
                 procedures=self.procedures,
             )
             if not isinstance(result, dict):
-                ui.notify('Nieudane parsowanie wyniku AI', type='negative')
+                if self._client:
+                    with self._client:
+                        ui.notify('Nieudane parsowanie wyniku AI', type='negative')
                 return
-            self._apply_soap_result(result, used_model)
-            ui.notify('SOAP uzupelniony przez AI', type='positive')
+            if self._client:
+                with self._client:
+                    self._apply_soap_result(result, used_model)
+                    ui.notify('SOAP uzupelniony przez AI', type='positive')
         except Exception as e:
-            ui.notify(f'Blad AI: {e}', type='negative')
+            if self._client:
+                with self._client:
+                    ui.notify(f'Blad AI: {e}', type='negative')
         finally:
-            self._set_soap_loading(False)
+            if self._client:
+                with self._client:
+                    self._set_soap_loading(False)
 
     def _normalize_birth_date(self, value: str) -> Optional[str]:
         raw = value.strip()
