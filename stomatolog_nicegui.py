@@ -2233,26 +2233,24 @@ def main():
             from fastapi.responses import FileResponse, Response
             icon_ico = ext_dir / f"icon_{icon_tag}.ico"
             icon_png = ext_dir / f"icon_{icon_tag}_32.png"
-            if icon_ico.is_file():
-                app.add_route(
-                    "/favicon.ico",
-                    lambda: FileResponse(icon_ico, media_type="image/x-icon"),
-                    methods=["GET"],
-                )
-            elif icon_png.is_file():
-                app.add_route(
-                    "/favicon.ico",
-                    lambda: FileResponse(icon_png, media_type="image/png"),
-                    methods=["GET"],
-                )
-            elif icon_data_uri:
-                header, b64 = icon_data_uri.split(",", 1)
-                data = base64.b64decode(b64.encode("ascii"))
-                app.add_route(
-                    "/favicon.ico",
-                    lambda: Response(content=data, media_type="image/png"),
-                    methods=["GET"],
-                )
+            icon_bytes = b""
+            if icon_data_uri:
+                try:
+                    header, b64 = icon_data_uri.split(",", 1)
+                    icon_bytes = base64.b64decode(b64.encode("ascii"))
+                except Exception:
+                    icon_bytes = b""
+
+            def _favicon_route(_request=None):
+                if icon_ico.is_file():
+                    return FileResponse(icon_ico, media_type="image/x-icon")
+                if icon_png.is_file():
+                    return FileResponse(icon_png, media_type="image/png")
+                if icon_bytes:
+                    return Response(content=icon_bytes, media_type="image/png")
+                return Response(status_code=404)
+
+            app.add_route("/favicon.ico", _favicon_route, methods=["GET"])
         except Exception:
             pass
         icon_base = f"/static/icon_{icon_tag}"
