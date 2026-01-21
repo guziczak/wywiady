@@ -5,14 +5,17 @@ from branding import BRAND_ICON, BRAND_ICON_TAG, BRAND_ICON_DATA_URI
 
 def _get_logo_src() -> str:
     """Returns static logo path if available, otherwise empty string."""
+    # Prefer embedded data URI to avoid static mount conflicts.
+    if BRAND_ICON_DATA_URI:
+        return BRAND_ICON_DATA_URI
     tag = BRAND_ICON_TAG or ""
     if not tag:
-        return BRAND_ICON_DATA_URI or ""
+        return ""
     root_dir = Path(__file__).resolve().parents[2]
     icon_path = root_dir / "extension" / f"icon_{tag}_64.png"
     if icon_path.is_file():
         return f"/static/icon_{tag}_64.png?v={tag}"
-    return BRAND_ICON_DATA_URI or ""
+    return ""
 
 def create_header(app, show_spec_switcher: bool = True, show_status: bool = True):
     """

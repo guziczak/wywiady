@@ -2214,6 +2214,7 @@ def main():
     def _setup_favicon():
         icon_tag = "v3"
         icon_data_uri = ""
+        favicon_value = None
         try:
             from branding import BRAND_ICON_TAG, BRAND_ICON_DATA_URI
             if BRAND_ICON_TAG:
@@ -2223,7 +2224,7 @@ def main():
             pass
         ext_dir = Path(__file__).parent / "extension"
         if not ext_dir.is_dir() and not icon_data_uri:
-            return
+            return None
         try:
             if ext_dir.is_dir():
                 app.add_static_files("/static", ext_dir)
@@ -2240,6 +2241,12 @@ def main():
                     icon_bytes = base64.b64decode(b64.encode("ascii"))
                 except Exception:
                     icon_bytes = b""
+            if icon_data_uri:
+                favicon_value = icon_data_uri
+            elif icon_ico.is_file():
+                favicon_value = icon_ico
+            elif icon_png.is_file():
+                favicon_value = icon_png
 
             def _favicon_route(_request=None):
                 if icon_ico.is_file():
@@ -2255,7 +2262,16 @@ def main():
             pass
         icon_base = f"/static/icon_{icon_tag}"
         cache_bust = f"?v={icon_tag}"
-        if ext_dir.is_dir():
+        if icon_data_uri:
+            ui.add_head_html(
+                f"""
+<link rel="icon" type="image/png" href="{icon_data_uri}">
+<link rel="apple-touch-icon" href="{icon_data_uri}">
+<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
+""",
+                shared=True,
+            )
+        elif ext_dir.is_dir():
             ui.add_head_html(
                 f"""
 <link rel="icon" type="image/png" sizes="16x16" href="{icon_base}_16.png{cache_bust}">
@@ -2270,17 +2286,9 @@ def main():
 """,
                 shared=True,
             )
-        elif icon_data_uri:
-            ui.add_head_html(
-                f"""
-<link rel="icon" type="image/png" href="{icon_data_uri}">
-<link rel="apple-touch-icon" href="{icon_data_uri}">
-<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
-""",
-                shared=True,
-            )
+        return favicon_value
 
-    _setup_favicon()
+    favicon_value = _setup_favicon()
 
     log("[STARTUP] Starting app...")
 
@@ -2593,6 +2601,7 @@ pause
         binding_refresh_interval=0.1,
         reconnect_timeout=120.0,  # Dlugi timeout dla ladowania modeli
         storage_secret='wywiad_plus_secret_key',  # Wymagane dla reconnect
+        favicon=favicon_value,
     )
 
 
