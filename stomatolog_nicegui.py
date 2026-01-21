@@ -10,7 +10,6 @@ import sys
 # ProactorEventLoop nie obsługuje prawidłowo Ctrl+C
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-import base64
 import concurrent.futures
 import json
 import os
@@ -2214,7 +2213,6 @@ def main():
     def _setup_favicon():
         icon_tag = "v3"
         icon_data_uri = ""
-        favicon_value = None
         try:
             from branding import BRAND_ICON_TAG, BRAND_ICON_DATA_URI
             if BRAND_ICON_TAG:
@@ -2222,71 +2220,18 @@ def main():
             icon_data_uri = BRAND_ICON_DATA_URI or ""
         except Exception:
             pass
-        ext_dir = Path(__file__).parent / "extension"
-        if not ext_dir.is_dir() and not icon_data_uri:
-            return None
-        try:
-            if ext_dir.is_dir():
-                app.add_static_files("/static", ext_dir)
-        except Exception:
-            pass
-        try:
-            from fastapi.responses import FileResponse, Response
-            icon_ico = ext_dir / f"icon_{icon_tag}.ico"
-            icon_png = ext_dir / f"icon_{icon_tag}_32.png"
-            icon_bytes = b""
-            if icon_data_uri:
-                try:
-                    header, b64 = icon_data_uri.split(",", 1)
-                    icon_bytes = base64.b64decode(b64.encode("ascii"))
-                except Exception:
-                    icon_bytes = b""
-            if icon_data_uri:
-                favicon_value = icon_data_uri
-            elif icon_ico.is_file():
-                favicon_value = icon_ico
-            elif icon_png.is_file():
-                favicon_value = icon_png
-
-            def _favicon_route(_request=None):
-                if icon_ico.is_file():
-                    return FileResponse(icon_ico, media_type="image/x-icon")
-                if icon_png.is_file():
-                    return FileResponse(icon_png, media_type="image/png")
-                if icon_bytes:
-                    return Response(content=icon_bytes, media_type="image/png")
-                return Response(status_code=404)
-
-            app.add_route("/favicon.ico", _favicon_route, methods=["GET"])
-        except Exception:
-            pass
-        icon_base = f"/static/icon_{icon_tag}"
-        cache_bust = f"?v={icon_tag}"
         if icon_data_uri:
-            ui.add_head_html(
-                f"""
-<link rel="icon" type="image/png" href="{icon_data_uri}">
-<link rel="apple-touch-icon" href="{icon_data_uri}">
-<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
-""",
-                shared=True,
-            )
-        elif ext_dir.is_dir():
-            ui.add_head_html(
-                f"""
-<link rel="icon" type="image/png" sizes="16x16" href="{icon_base}_16.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="32x32" href="{icon_base}_32.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="48x48" href="{icon_base}_48.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="64x64" href="{icon_base}_64.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="96x96" href="{icon_base}_96.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="128x128" href="{icon_base}_128.png{cache_bust}">
-<link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
-<link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
-<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
-""",
-                shared=True,
-            )
-        return favicon_value
+            return icon_data_uri
+        ext_dir = Path(__file__).parent / "extension"
+        if not ext_dir.is_dir():
+            return None
+        icon_ico = ext_dir / f"icon_{icon_tag}.ico"
+        icon_png = ext_dir / f"icon_{icon_tag}_32.png"
+        if icon_ico.is_file():
+            return icon_ico
+        if icon_png.is_file():
+            return icon_png
+        return None
 
     favicon_value = _setup_favicon()
 
