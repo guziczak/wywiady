@@ -10,6 +10,7 @@ import sys
 # ProactorEventLoop nie obsługuje prawidłowo Ctrl+C
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+import base64
 import concurrent.futures
 import json
 import os
@@ -2228,6 +2229,32 @@ def main():
                 app.add_static_files("/static", ext_dir)
         except Exception:
             pass
+        try:
+            from fastapi.responses import FileResponse, Response
+            icon_ico = ext_dir / f"icon_{icon_tag}.ico"
+            icon_png = ext_dir / f"icon_{icon_tag}_32.png"
+            if icon_ico.is_file():
+                app.add_route(
+                    "/favicon.ico",
+                    lambda: FileResponse(icon_ico, media_type="image/x-icon"),
+                    methods=["GET"],
+                )
+            elif icon_png.is_file():
+                app.add_route(
+                    "/favicon.ico",
+                    lambda: FileResponse(icon_png, media_type="image/png"),
+                    methods=["GET"],
+                )
+            elif icon_data_uri:
+                header, b64 = icon_data_uri.split(",", 1)
+                data = base64.b64decode(b64.encode("ascii"))
+                app.add_route(
+                    "/favicon.ico",
+                    lambda: Response(content=data, media_type="image/png"),
+                    methods=["GET"],
+                )
+        except Exception:
+            pass
         icon_base = f"/static/icon_{icon_tag}"
         cache_bust = f"?v={icon_tag}"
         if ext_dir.is_dir():
@@ -2241,7 +2268,7 @@ def main():
 <link rel="icon" type="image/png" sizes="128x128" href="{icon_base}_128.png{cache_bust}">
 <link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
 <link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
-<link rel="shortcut icon" href="{icon_base}.ico{cache_bust}">
+<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
 """,
                 shared=True,
             )
@@ -2250,6 +2277,7 @@ def main():
                 f"""
 <link rel="icon" type="image/png" href="{icon_data_uri}">
 <link rel="apple-touch-icon" href="{icon_data_uri}">
+<link rel="shortcut icon" href="/favicon.ico{cache_bust}">
 """,
                 shared=True,
             )
