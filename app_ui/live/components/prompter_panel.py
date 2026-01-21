@@ -304,6 +304,7 @@ class PrompterPanel:
         from app_ui.live.live_state import SessionStatus
         question = self.state.selected_question
         answers = self.state.answer_suggestions
+        loading = getattr(self.state, 'answer_loading', False)
         if not question:
             # Subtelny placeholder, aby uzytkownik wiedzial o funkcji
             if self.state.status == SessionStatus.RECORDING and self.state.suggestions:
@@ -328,9 +329,14 @@ class PrompterPanel:
                     'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
                 )
                 ui.label(question).classes('text-sm text-slate-700 leading-snug')
-                ui.label('Brak podpowiedzi dla tego pytania.').classes(
-                    'text-sm text-slate-500 mt-2'
-                )
+                if loading:
+                    ui.label('Generuję odpowiedzi...').classes(
+                        'text-sm text-slate-500 mt-2'
+                    )
+                else:
+                    ui.label('Brak podpowiedzi dla tego pytania.').classes(
+                        'text-sm text-slate-500 mt-2'
+                    )
             return
 
         with ui.card().classes(

@@ -1,5 +1,18 @@
 from nicegui import ui
-from branding import BRAND_ICON
+from pathlib import Path
+from branding import BRAND_ICON, BRAND_ICON_TAG
+
+
+def _get_logo_src() -> str:
+    """Returns static logo path if available, otherwise empty string."""
+    tag = BRAND_ICON_TAG or ""
+    if not tag:
+        return ""
+    root_dir = Path(__file__).resolve().parents[2]
+    icon_path = root_dir / "extension" / f"icon_{tag}_64.png"
+    if icon_path.is_file():
+        return f"/static/icon_{tag}_64.png"
+    return ""
 
 def create_header(app, show_spec_switcher: bool = True, show_status: bool = True):
     """
@@ -22,9 +35,16 @@ def create_header(app, show_spec_switcher: bool = True, show_status: bool = True
                 
                 # Icon with Glow
                 with ui.element('div').classes('relative flex items-center justify-center'):
-                    ui.icon(BRAND_ICON, size='lg').classes(
-                        'transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 relative z-10'
-                    )
+                    logo_src = _get_logo_src()
+                    if logo_src:
+                        ui.image(logo_src).classes(
+                            'w-8 h-8 object-contain '
+                            'transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 relative z-10'
+                        )
+                    else:
+                        ui.icon(BRAND_ICON, size='lg').classes(
+                            'transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 relative z-10'
+                        )
                     # Glow effect background
                     ui.element('div').classes(
                         'absolute inset-0 bg-white/20 rounded-full blur-md opacity-0 scale-50 transition-all duration-300 group-hover:opacity-100 group-hover:scale-150'

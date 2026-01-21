@@ -122,11 +122,21 @@ class LLMService:
             raise RuntimeError("Biblioteka Google GenAI nie jest zainstalowana")
             
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        return response.text.strip()
+        primary_model = "gemini-2.5-flash"
+        fallback_model = "gemini-2.0-flash"
+        try:
+            response = client.models.generate_content(
+                model=primary_model,
+                contents=prompt
+            )
+            return response.text.strip()
+        except Exception as e:
+            log(f"[LLM] Gemini {primary_model} error ({e}); fallback to {fallback_model}")
+            response = client.models.generate_content(
+                model=fallback_model,
+                contents=prompt
+            )
+            return response.text.strip()
 
     def _call_with_retry(self, func, *args, max_retries=3, initial_delay=1.0):
         """WywoĹ‚uje funkcjÄ™ z mechanizmem retry (exponential backoff)."""
@@ -467,7 +477,7 @@ Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
                     auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
                     response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
                 else:
-                    return ["Brak konfiguracji AI"]
+                    return []
 
             cleaned = response.strip()
             if cleaned.startswith("```"):
@@ -480,6 +490,76 @@ Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
             
         except Exception as e:
             print(f"[LLM] Suggestion error: {e}", flush=True)
+            return []
+
+    async def generate_patient_answers(
+        self,
+        question: str,
+        config: Dict,
+        spec_id: int = None
+    ) -> List[str]:
+        """Generuje 3 przykładowe odpowiedzi pacjenta do pytania lekarza."""
+        if not question:
+            return []
+
+        spec_label = ""
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            if spec_id is None:
+                spec_id = spec_manager.get_active().id
+            spec = spec_manager.get_by_id(spec_id)
+            if spec:
+                spec_label = f"Specjalizacja: {spec.name}"
+
+        prompt = f"""Jesteś pacjentem w gabinecie lekarskim.
+{spec_label}
+Lekarz pyta: "{question}"
+
+Podaj DOKŁADNIE 3 krótkie, realistyczne odpowiedzi pacjenta w języku polskim (1 zdanie każda).
+Zwróć WYŁĄCZNIE poprawny JSON w formacie:
+["Odpowiedź 1", "Odpowiedź 2", "Odpowiedź 3"]
+"""
+
+        gemini_key = config.get("api_key", "")
+        loop = asyncio.get_event_loop()
+
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                response = await loop.run_in_executor(
+                    None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt)
+                )
+            else:
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    response = await loop.run_in_executor(
+                        None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt)
+                    )
+                else:
+                    return []
+
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, list):
+                return []
+
+            answers: List[str] = []
+            for item in parsed:
+                if isinstance(item, str):
+                    text = item.strip()
+                    if text and text not in answers:
+                        answers.append(text)
+            return answers[:3]
+
+        except Exception as e:
+            print(f"[LLM] Patient answers error: {e}", flush=True)
             return []
 
     async def validate_segment(self, segment: str, context: str, suggested_questions: List[str], config: Dict) -> Dict:

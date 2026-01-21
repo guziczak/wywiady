@@ -587,8 +587,11 @@ class LiveInterviewView:
         """Callback: kliknięcie w kartę sugestii."""
         print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
 
-        # Przygotuj kontekst odpowiedzi pacjenta
-        answers = self._generate_patient_answers(question)
+        # Przygotuj kontekst odpowiedzi pacjenta (AI)
+        self.state.set_answer_loading(question)
+        if self.prompter_panel:
+            self.prompter_panel.refresh()
+        asyncio.create_task(self._load_patient_answers(question))
 
         # Kopiuj do schowka przed zmiana UI (unikaj bledu "parent element deleted")
         import json
@@ -613,137 +616,36 @@ class LiveInterviewView:
             except Exception:
                 pass
 
-        # Ustaw kontekst odpowiedzi pacjenta (po akcjach UI)
-        self.state.set_answer_context(question, answers)
-        if self.prompter_panel:
-            self.prompter_panel.refresh()
+        # Ustaw kontekst odpowiedzi pacjenta (AI) - odswiezanie robi task
 
         # Trigger AI (regeneruj pozostałe)
         if self.ai_controller:
             self.ai_controller.on_card_clicked(question)
 
-    def _generate_patient_answers(self, question: str) -> List[str]:
-        """Generuje 3 przykładowe odpowiedzi pacjenta (heurystyki bez LLM)."""
+    async def _load_patient_answers(self, question: str) -> None:
+        """Generuje podpowiedzi odpowiedzi pacjenta przez AI."""
         if not question:
-            return []
+            return
 
-        q = question.lower().strip()
         answers: List[str] = []
+        try:
+            if self.app.llm_service:
+                spec_id = self.ai_controller.current_spec_id if self.ai_controller else None
+                answers = await self.app.llm_service.generate_patient_answers(
+                    question,
+                    self.app.config,
+                    spec_id=spec_id
+                )
+        except Exception as e:
+            print(f"[LIVE] Patient answers error: {e}", flush=True)
 
-        def add(*items: str):
-            for item in items:
-                if item and item not in answers:
-                    answers.append(item)
+        if self.state.selected_question != question:
+            return
 
-        def has_any(*terms: str) -> bool:
-            return any(term in q for term in terms)
+        self.state.set_answer_context(question, answers)
+        if self.prompter_panel:
+            self.prompter_panel.refresh()
 
-        if q.startswith("czy "):
-            add(
-                "Tak, szczególnie wieczorem.",
-                "Nie, nic takiego nie zauważyłem/am.",
-                "Raczej sporadycznie, ale się zdarza."
-            )
-
-        if has_any("od kiedy", "jak długo", "ile czasu", "kiedy się zacz", "od ilu"):
-            add(
-                "Od około 3 dni.",
-                "Zaczęło się wczoraj wieczorem.",
-                "Od kilku tygodni, stopniowo się nasila."
-            )
-
-        if has_any("jak często", "ile razy", "często"):
-            add(
-                "Kilka razy dziennie.",
-                "Prawie codziennie, zwykle wieczorem.",
-                "Sporadycznie, co parę dni."
-            )
-
-        if has_any("jak siln", "w skali", "nasilen", "ból", "boli", "bolesn"):
-            add(
-                "To ból około 6/10, pulsujący.",
-                "Raczej umiarkowany, nasila się przy jedzeniu.",
-                "Bywa ostry, szczególnie w nocy."
-            )
-
-        if has_any("gdzie", "lokaliz", "miejsce", "po której stronie", "po jakiej stronie", "promieniuje"):
-            add(
-                "Po lewej stronie, w okolicy żuchwy.",
-                "Boli z tyłu i promieniuje do ucha.",
-                "W jednym miejscu, blisko dziąsła."
-            )
-
-        if has_any("co pomaga", "co łagodzi", "co pogarsza", "co nasila"):
-            add(
-                "Pomaga ibuprofen i chłodny okład.",
-                "Nasila się przy gryzieniu i zimnych napojach.",
-                "Na chwilę pomaga odpoczynek."
-            )
-
-        if has_any("temperatur", "gorączk"):
-            add(
-                "Tak, miałem/am około 38°C.",
-                "Nie, temperatury nie było.",
-                "Raz wieczorem podniosła się do 37,7°C."
-            )
-
-        if has_any("alerg", "uczulen"):
-            add(
-                "Tak, mam uczulenie na penicylinę.",
-                "Nie mam znanych alergii.",
-                "Reaguję na pyłki w sezonie."
-            )
-
-        if has_any("lek", "przyjm", "stosuj"):
-            add(
-                "Biorę ibuprofen doraźnie.",
-                "Nie przyjmuję żadnych leków na stałe.",
-                "Stosuję antybiotyk od 2 dni."
-            )
-
-        if has_any("krwaw", "krew"):
-            add(
-                "Tak, krwawi przy szczotkowaniu.",
-                "Nie, krwawienia nie ma.",
-                "Czasem delikatnie po nitkowaniu."
-            )
-
-        if has_any("obrzęk", "opuch", "spuch"):
-            add(
-                "Jest lekka opuchlizna od wczoraj.",
-                "Nie, obrzęku nie zauważyłem/am.",
-                "Tak, policzek jest spuchnięty."
-            )
-
-        if has_any("uraz", "uderz", "upad", "wypad"):
-            add(
-                "Tak, uderzyłem/am się tydzień temu.",
-                "Nie było żadnego urazu.",
-                "Mogło się zacząć po zabiegu."
-            )
-
-        if has_any("ciąża", "w ciąży"):
-            add(
-                "Nie, nie jestem w ciąży.",
-                "Tak, jestem w drugim trymestrze.",
-                "Nie dotyczy."
-            )
-
-        if has_any("duszno", "oddych", "kaszel"):
-            add(
-                "Mam lekki kaszel i zadyszkę.",
-                "Oddycha mi się normalnie.",
-                "Duszność pojawia się przy wysiłku."
-            )
-
-        if len(answers) < 3:
-            add(
-                "Trudno powiedzieć, ale od kilku dni jest gorzej.",
-                "To raczej stały dyskomfort niż ostry ból.",
-                "Nie zauważyłem/am innych objawów."
-            )
-
-        return answers[:3]
 
     # === AI CALLBACKS ===
 

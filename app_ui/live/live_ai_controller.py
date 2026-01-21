@@ -208,14 +208,16 @@ class AIController:
 
     async def _do_regeneration(self, reason: TriggerReason):
         """Wykonuje regenerację sugestii."""
-        if not self.llm_service:
-            print(f"[AI] No LLM service available", flush=True)
-            return
-
         if self._on_regen_start:
             self._on_regen_start()
 
         print(f"[AI] Generating suggestions (reason: {reason.value})...", flush=True)
+
+        if not self.llm_service:
+            print(f"[AI] No LLM service available", flush=True)
+            if self._on_regen_end:
+                self._on_regen_end()
+            return
 
         try:
             # Pobierz kontekst

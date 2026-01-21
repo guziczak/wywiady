@@ -117,6 +117,7 @@ class LiveState:
         # Podpowiedzi odpowiedzi pacjenta
         self.selected_question: Optional[str] = None
         self.answer_suggestions: List[str] = []
+        self.answer_loading: bool = False
 
         # Pending validation queue
         self.pending_validation: List[str] = []
@@ -232,6 +233,7 @@ class LiveState:
         if self.selected_question and all(s.question != self.selected_question for s in self.suggestions):
             self.selected_question = None
             self.answer_suggestions = []
+            self.answer_loading = False
         self._notify_suggestions_change()
 
     def mark_suggestion_used(self, question: str):
@@ -253,14 +255,23 @@ class LiveState:
         """Ustawia wybrane pytanie i przykładowe odpowiedzi pacjenta."""
         self.selected_question = question.strip() if question else None
         self.answer_suggestions = [a.strip() for a in answers if a and a.strip()]
+        self.answer_loading = False
         if self.selected_question:
             print(f"[STATE] Answer context set ({len(self.answer_suggestions)} answers)", flush=True)
+        self._notify_suggestions_change()
+
+    def set_answer_loading(self, question: Optional[str]):
+        """Ustawia stan ladowania odpowiedzi pacjenta dla wybranego pytania."""
+        self.selected_question = question.strip() if question else None
+        self.answer_suggestions = []
+        self.answer_loading = bool(self.selected_question)
         self._notify_suggestions_change()
 
     def clear_answer_context(self):
         """Czyści podpowiedzi odpowiedzi pacjenta."""
         self.selected_question = None
         self.answer_suggestions = []
+        self.answer_loading = False
         self._notify_suggestions_change()
 
     # === STATUS ===
@@ -281,6 +292,7 @@ class LiveState:
         self.asked_questions = []
         self.selected_question = None
         self.answer_suggestions = []
+        self.answer_loading = False
         self.pending_validation = []
         self.diarization = None
         self.prompter_mode = PrompterMode.SUGGESTIONS
