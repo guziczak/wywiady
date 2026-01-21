@@ -2212,34 +2212,47 @@ def main():
 
     def _setup_favicon():
         icon_tag = "v3"
+        icon_data_uri = ""
         try:
-            from branding import BRAND_ICON_TAG
+            from branding import BRAND_ICON_TAG, BRAND_ICON_DATA_URI
             if BRAND_ICON_TAG:
                 icon_tag = BRAND_ICON_TAG
+            icon_data_uri = BRAND_ICON_DATA_URI or ""
         except Exception:
             pass
         ext_dir = Path(__file__).parent / "extension"
-        if not ext_dir.is_dir():
+        if not ext_dir.is_dir() and not icon_data_uri:
             return
         try:
-            app.add_static_files("/static", ext_dir)
+            if ext_dir.is_dir():
+                app.add_static_files("/static", ext_dir)
         except Exception:
             pass
         icon_base = f"/static/icon_{icon_tag}"
-        ui.add_head_html(
-            f"""
-<link rel="icon" type="image/png" sizes="16x16" href="{icon_base}_16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="{icon_base}_32.png">
-<link rel="icon" type="image/png" sizes="48x48" href="{icon_base}_48.png">
-<link rel="icon" type="image/png" sizes="64x64" href="{icon_base}_64.png">
-<link rel="icon" type="image/png" sizes="96x96" href="{icon_base}_96.png">
-<link rel="icon" type="image/png" sizes="128x128" href="{icon_base}_128.png">
-<link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png">
-<link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png">
-<link rel="shortcut icon" href="{icon_base}.ico">
+        cache_bust = f"?v={icon_tag}"
+        if ext_dir.is_dir():
+            ui.add_head_html(
+                f"""
+<link rel="icon" type="image/png" sizes="16x16" href="{icon_base}_16.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="32x32" href="{icon_base}_32.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="48x48" href="{icon_base}_48.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="64x64" href="{icon_base}_64.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="96x96" href="{icon_base}_96.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="128x128" href="{icon_base}_128.png{cache_bust}">
+<link rel="icon" type="image/png" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
+<link rel="apple-touch-icon" sizes="256x256" href="{icon_base}_256.png{cache_bust}">
+<link rel="shortcut icon" href="{icon_base}.ico{cache_bust}">
 """,
-            shared=True,
-        )
+                shared=True,
+            )
+        elif icon_data_uri:
+            ui.add_head_html(
+                f"""
+<link rel="icon" type="image/png" href="{icon_data_uri}">
+<link rel="apple-touch-icon" href="{icon_data_uri}">
+""",
+                shared=True,
+            )
 
     _setup_favicon()
 
