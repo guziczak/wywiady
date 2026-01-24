@@ -217,6 +217,7 @@ class LiveState:
         self.final_text = self._smart_join(self.final_text, text)
         self.provisional_text = ""
         self.pending_validation.append(text)
+        print(f"[STATE] set_final: pending now has {len(self.pending_validation)} segments", flush=True)
 
         # Zlicz słowa dla smart triggers
         self._words_since_last_regen += len(text.split())
@@ -242,6 +243,7 @@ class LiveState:
         """Pobiera i czyści kolejkę walidacji."""
         segments = self.pending_validation.copy()
         self.pending_validation = []
+        print(f"[STATE] clear_pending: returning {len(segments)} segments: {[s[:30] for s in segments]}", flush=True)
         return segments
 
     # === SUGGESTIONS MANAGEMENT ===
