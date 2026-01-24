@@ -3,6 +3,7 @@ Live Interview State Management
 Centralne zarządzanie stanem transkrypcji i sugestii.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable, Dict, TYPE_CHECKING
 from enum import Enum
@@ -167,9 +168,33 @@ class LiveState:
         text = text.strip()
         if not text:
             return
+
+        # Filtr halucynacji - wykryj powtórzenia słów (typowe dla Whisper przy ciszy)
+        if self._is_hallucination(text):
+            return
+
         self.provisional_text = self._smart_join(self.provisional_text, text)
         self._rebuild_full_transcript()
         self._notify_transcript_change()
+
+    def _is_hallucination(self, text: str) -> bool:
+        """Wykrywa halucynacje Whisper (powtórzenia słów przy ciszy/szumie)."""
+        words = text.lower().split()
+        if len(words) < 4:
+            return False
+
+        # Sprawdź czy to samo słowo powtarza się 3+ razy z rzędu
+        for i in range(len(words) - 2):
+            if words[i] == words[i+1] == words[i+2]:
+                return True
+
+        # Sprawdź czy >50% tekstu to jedno słowo (np. "się się się się tak się")
+        counts = Counter(words)
+        most_common_word, most_common_count = counts.most_common(1)[0]
+        if most_common_count >= len(words) * 0.5 and len(words) >= 4:
+            return True
+
+        return False
 
     def set_improved(self, text: str):
         """Improved zastępuje provisional (lepszy kontekst dla bieżącego segmentu)."""
