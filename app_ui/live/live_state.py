@@ -201,7 +201,11 @@ class LiveState:
         text = text.strip()
         if not text:
             return
-        
+
+        # Filtr halucynacji
+        if self._is_hallucination(text):
+            return
+
         # Improved po prostu zastępuje cały provisional
         # (streaming service wysyła tekst tylko dla niesfinalizowanego segmentu)
         self.provisional_text = text
@@ -212,6 +216,11 @@ class LiveState:
         """Przenosi tekst do final (po ciszy)."""
         text = text.strip()
         if not text:
+            return
+
+        # Filtr halucynacji - nawet large model może halucynować
+        if self._is_hallucination(text):
+            print(f"[STATE] set_final: BLOCKED hallucination: '{text[:40]}...'", flush=True)
             return
 
         self.final_text = self._smart_join(self.final_text, text)
