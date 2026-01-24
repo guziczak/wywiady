@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 import numpy as np
 import sounddevice as sd
+from core.hallucination_filter import is_hallucination
 try:
     from faster_whisper import WhisperModel
     _FASTER_WHISPER_IMPORT_ERROR = None
@@ -370,6 +371,10 @@ class StreamingTranscriber:
 
             text = " ".join([s.text for s in segments]).strip()
 
+            # Filtruj halucynacje przed callbackiem
+            if text and is_hallucination(text):
+                return
+
             if text and self.callback_provisional:
                 self.callback_provisional(text, start_sample, end_sample)
 
@@ -493,6 +498,10 @@ class StreamingTranscriber:
 
             text = " ".join([s.text for s in segments]).strip()
 
+            # Filtruj halucynacje przed callbackiem
+            if text and is_hallucination(text):
+                return
+
             try:
                 if text and self.callback_improved:
                     self.callback_improved(text, start_sample, self.full_audio_samples)
@@ -554,6 +563,13 @@ class StreamingTranscriber:
             text = " ".join([s.text for s in segments]).strip()
 
             if text:
+                # Filtruj halucynacje przed callbackiem
+                if is_hallucination(text):
+                    print(f"[STREAM] Final BLOCKED hallucination: '{text[:40]}...'", flush=True)
+                    # Oznacz jako sfinalizowane żeby nie retryować
+                    self.finalized_samples = self.full_audio_samples
+                    return
+
                 try:
                     if self.callback_final:
                         self.callback_final(text, self.finalized_samples, self.full_audio_samples)
