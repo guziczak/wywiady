@@ -6,6 +6,8 @@ Centralne zarządzanie stanem transkrypcji i sugestii.
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable, Dict, TYPE_CHECKING
 from enum import Enum
+import time
+import uuid
 
 if TYPE_CHECKING:
     from core.diarization import DiarizationResult, DiarizationSegment, SpeakerRole
@@ -66,6 +68,24 @@ class DiarizationInfo:
                 label = seg.role.display_name if hasattr(seg.role, 'display_name') else str(seg.role)
                 lines.append(f"{label}: {seg.text}")
         return "\n".join(lines)
+
+
+@dataclass
+class QAPair:
+    """Para pytanie + odpowiedź (gamifikacja)."""
+    id: str
+    question: str
+    answer: str
+    question_timestamp: float
+    answer_timestamp: float
+
+
+@dataclass
+class PendingQuestion:
+    """Pytanie oczekujące na odpowiedź pacjenta."""
+    question: str
+    clicked_at: float
+    answer_keywords: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -131,12 +151,18 @@ class LiveState:
         self.analyze_speakers_preference: bool = True  # Zapamiętana preferencja
         self._recording_start_time: Optional[float] = None
 
+        # Q+A Gamifikacja
+        self.qa_pairs: List[QAPair] = []
+        self.pending_question: Optional[PendingQuestion] = None
+        self.qa_target_count: int = 10
+
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
         self._on_suggestions_change: Optional[Callable] = None
         self._on_status_change: Optional[Callable] = None
         self._on_diarization_change: Optional[Callable] = None
         self._on_mode_change: Optional[Callable] = None
+        self._on_qa_pair_created: Optional[Callable[[QAPair], None]] = None
 
     # === SUBSCRIPTION ===
 
@@ -159,6 +185,10 @@ class LiveState:
     def on_mode_change(self, callback: Callable):
         """Rejestruje callback na zmianę trybu panelu."""
         self._on_mode_change = callback
+
+    def on_qa_pair_created(self, callback: Callable[['QAPair'], None]):
+        """Rejestruje callback na utworzenie pary Q+A."""
+        self._on_qa_pair_created = callback
 
     # === TRANSCRIPT MANAGEMENT ===
 
@@ -293,6 +323,9 @@ class LiveState:
         self.prompter_mode = PrompterMode.SUGGESTIONS
         self.interview_stats = None
         self._recording_start_time = None
+        # Q+A reset
+        self.qa_pairs = []
+        self.pending_question = None
         self._notify_transcript_change()
         self._notify_suggestions_change()
 
@@ -406,6 +439,65 @@ class LiveState:
 
         print(f"[STATE] Speaker roles swapped", flush=True)
         self._notify_diarization_change()
+
+    # === Q+A GAMIFIKACJA ===
+
+    def start_question(self, question: str, keywords: List[str] = None):
+        """
+        Rozpoczyna śledzenie pytania (oczekiwanie na odpowiedź pacjenta).
+        Wywoływane po kliknięciu karty pytania.
+        """
+        self.pending_question = PendingQuestion(
+            question=question,
+            clicked_at=time.time(),
+            answer_keywords=keywords or []
+        )
+        print(f"[STATE] Q+A tracking started: '{question[:40]}...'", flush=True)
+
+    def complete_qa_pair(self, answer: str) -> Optional[QAPair]:
+        """
+        Tworzy parę Q+A gdy odpowiedź została wykryta.
+        Zwraca utworzoną parę lub None jeśli brak pending question.
+        """
+        if not self.pending_question:
+            return None
+
+        pair = QAPair(
+            id=str(uuid.uuid4())[:8],
+            question=self.pending_question.question,
+            answer=answer,
+            question_timestamp=self.pending_question.clicked_at,
+            answer_timestamp=time.time()
+        )
+
+        self.qa_pairs.append(pair)
+        self.pending_question = None
+
+        print(f"[STATE] Q+A pair created: {len(self.qa_pairs)}/{self.qa_target_count}", flush=True)
+
+        # Notify UI
+        self._notify_qa_pair_created(pair)
+
+        return pair
+
+    def clear_pending_question(self):
+        """Czyści oczekujące pytanie (timeout lub ręczne)."""
+        if self.pending_question:
+            print(f"[STATE] Pending question cleared", flush=True)
+            self.pending_question = None
+
+    @property
+    def qa_progress(self) -> tuple:
+        """Zwraca (current, target) dla progress badge."""
+        return (len(self.qa_pairs), self.qa_target_count)
+
+    def _notify_qa_pair_created(self, pair: 'QAPair'):
+        """Powiadamia o utworzeniu pary Q+A."""
+        if self._on_qa_pair_created:
+            try:
+                self._on_qa_pair_created(pair)
+            except Exception as e:
+                print(f"[LiveState] QA pair callback error: {e}")
 
     # === HELPERS ===
 

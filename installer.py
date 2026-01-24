@@ -13,6 +13,8 @@ from branding import BRAND_ICON_TAG
 # Konfiguracja
 REPO_URL = "https://github.com/guziczak/wywiady/archive/refs/heads/main.zip"
 REPO_API_COMMIT = "https://api.github.com/repos/guziczak/wywiady/commits/main"
+STANDALONE_EXE_URL = "https://github.com/guziczak/wywiady/releases/latest/download/Asystent.exe"
+RELEASES_PAGE_URL = "https://github.com/guziczak/wywiady/releases/latest"
 APP_NAME = "AsystentMedyczny"
 DISPLAY_NAME = "Wizyta"
 SHORTCUT_NAME = DISPLAY_NAME
@@ -1101,11 +1103,42 @@ def run_gui():
     progress_label = tk.Label(content, text="", font=("Segoe UI", 9), bg=bg, fg=muted)
     progress_label.grid(row=3, column=0, sticky="w", pady=(0, 8))
 
+    # Info o standalone exe
+    standalone_frame = tk.Frame(content, bg="#ecfdf5", highlightbackground="#86efac", highlightthickness=1)
+    standalone_frame.grid(row=4, column=0, sticky="we", pady=(0, 10))
+
+    standalone_info = tk.Label(
+        standalone_frame,
+        text="Nie chcesz instalowac? Pobierz gotowa aplikacje (.exe) - bez Pythona!",
+        font=("Segoe UI", 9),
+        bg="#ecfdf5",
+        fg="#166534"
+    )
+    standalone_info.pack(side="left", padx=8, pady=6)
+
+    def open_releases():
+        webbrowser.open(RELEASES_PAGE_URL)
+
+    standalone_link = tk.Button(
+        standalone_frame,
+        text="Pobierz Asystent.exe",
+        command=open_releases,
+        font=("Segoe UI", 9, "bold"),
+        fg="#ffffff",
+        bg="#16a34a",
+        activebackground="#15803d",
+        activeforeground="#ffffff",
+        relief="flat",
+        padx=10,
+        pady=2,
+    )
+    standalone_link.pack(side="right", padx=8, pady=4)
+
     hint_label = tk.Label(content, text="Szybki reset: wpisz 'rst' w ciagu 2 sekund", font=("Segoe UI", 9), bg=bg, fg=muted)
-    hint_label.grid(row=4, column=0, sticky="w", pady=(0, 10))
+    hint_label.grid(row=5, column=0, sticky="w", pady=(0, 10))
 
     buttons = tk.Frame(content, bg=bg)
-    buttons.grid(row=5, column=0, sticky="w", pady=(0, 8))
+    buttons.grid(row=6, column=0, sticky="w", pady=(0, 8))
 
     def copy_raw():
         try:
@@ -1148,11 +1181,28 @@ def run_gui():
     open_btn.pack(side="left", padx=(0, 10))
 
     close_btn = tk.Button(buttons, text="Zamknij", command=root.destroy, state="disabled")
-    close_btn.pack(side="left")
+    close_btn.pack(side="left", padx=(0, 10))
+
+    # Przycisk do pobrania standalone exe
+    def download_standalone():
+        webbrowser.open(RELEASES_PAGE_URL)
+        hint_label.config(text="Otwarto strone pobierania. Pobierz Asystent.exe.", fg=accent)
+
+    standalone_btn = tk.Button(
+        buttons,
+        text="Pobierz .exe (standalone)",
+        command=download_standalone,
+        fg="#16a34a",
+        bd=0,
+        bg=bg,
+        activebackground=bg,
+        activeforeground="#16a34a",
+    )
+    standalone_btn.pack(side="left")
 
     raw_frame = tk.Frame(content, bg=bg)
-    raw_frame.grid(row=6, column=0, sticky="nsew")
-    content.grid_rowconfigure(6, weight=1)
+    raw_frame.grid(row=7, column=0, sticky="nsew")
+    content.grid_rowconfigure(7, weight=1)
     content.grid_columnconfigure(0, weight=1)
 
     raw_text = ScrolledText(

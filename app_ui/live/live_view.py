@@ -13,6 +13,7 @@ from app_ui.live.live_ai_controller import AIController
 from app_ui.live.components.transcript_panel import TranscriptPanel
 from app_ui.live.components.prompter_panel import PrompterPanel
 from app_ui.live.components.pipeline_panel import PipelinePanel
+from app_ui.live.components.qa_collection_panel import QACollectionPanel
 
 # Streaming transcriber (opcjonalny)
 try:
@@ -130,6 +131,7 @@ class LiveInterviewView:
         # UI Components
         self.transcript_panel: Optional[TranscriptPanel] = None
         self.prompter_panel: Optional[PrompterPanel] = None
+        self.qa_panel: Optional[QACollectionPanel] = None
 
         # Diarization service
         self.diarization_service: Optional[DiarizationService] = None
@@ -171,6 +173,11 @@ class LiveInterviewView:
             with ui.element('div').classes('w-full flex-1 min-h-[200px] overflow-hidden'):
                 self.transcript_panel = TranscriptPanel(self.state)
                 self.transcript_panel.create()
+
+            # === ŚRODEK: KOLEKCJA Q+A (GAMIFIKACJA) ===
+            with ui.element('div').classes('w-full shrink-0'):
+                self.qa_panel = QACollectionPanel(self.state)
+                self.qa_panel.create()
 
             # === DÓŁ: SUFLER ===
             with ui.element('div').classes('w-full shrink-0'):
@@ -572,6 +579,10 @@ class LiveInterviewView:
         """Callback: kliknięcie w kartę sugestii."""
         print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
 
+        # === Q+A TRACKING - START NATYCHMIAST ===
+        # Rozpocznij śledzenie od razu (keywords zostaną dodane później)
+        self.state.start_question(question, [])
+
         # Przygotuj kontekst odpowiedzi pacjenta (AI)
         self.state.set_answer_loading(question)
         if self.prompter_panel:
@@ -628,8 +639,33 @@ class LiveInterviewView:
             return
 
         self.state.set_answer_context(question, answers)
+
+        # Keywords dla Q+A (opcjonalne - tracking już wystartował w _on_card_click)
+        if self.state.pending_question and self.state.pending_question.question == question:
+            keywords = self._extract_keywords(answers)
+            self.state.pending_question.answer_keywords = keywords
+
         if self.prompter_panel:
             self.prompter_panel.refresh()
+
+    def _extract_keywords(self, answers: List[str]) -> List[str]:
+        """Wyciąga słowa kluczowe z przykładowych odpowiedzi AI."""
+        if not answers:
+            return []
+
+        # Proste wyciąganie słów kluczowych (>4 znaki, bez powtórek)
+        keywords = set()
+        stopwords = {'jest', 'są', 'był', 'była', 'było', 'będzie', 'tak', 'nie', 'może', 'bardzo', 'trochę', 'dużo'}
+
+        for answer in answers:
+            words = answer.lower().split()
+            for word in words:
+                # Usuń interpunkcję
+                word = word.strip('.,!?;:()[]"\'')
+                if len(word) > 4 and word not in stopwords:
+                    keywords.add(word)
+
+        return list(keywords)[:10]  # Max 10 keywords
 
 
     # === AI CALLBACKS ===

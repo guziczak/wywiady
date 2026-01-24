@@ -33,6 +33,10 @@ class AIController:
     VALIDATION_DELAY = 2.5            # Sekundy przed walidacją segmentu
     REGEN_COOLDOWN = 5.0              # Minimalny czas między regeneracjami
 
+    # Q+A matching configuration
+    QA_TIMEOUT_SECONDS = 60.0         # Okno czasowe na odpowiedź
+    QA_MIN_WORDS = 5                  # Minimalna liczba słów w odpowiedzi
+
     def __init__(self, state: 'LiveState', llm_service, config):
         self.state = state
         self.llm_service = llm_service
@@ -153,9 +157,11 @@ class AIController:
 
     def _schedule_validation(self):
         """Scheduluje walidację segmentu."""
-        # Anuluj poprzedni task
+        # NIE anuluj poprzedniej walidacji - niech się dokończy
+        # (anulowanie powoduje utratę segmentów bo clear_pending jest wywoływane przed LLM)
         if self._validation_task and not self._validation_task.done():
-            self._validation_task.cancel()
+            # Poprzednia walidacja w toku - nie scheduluj nowej, ta pobierze wszystkie segmenty
+            return
 
         # Użyj głównego event loop (thread-safe)
         if self._loop and self._loop.is_running():
@@ -195,12 +201,25 @@ class AIController:
             print(f"[AI] Regeneration error: {e}", flush=True)
 
     async def _debounced_validation(self):
-        """Walidacja z debounce."""
+        """Walidacja z debounce - pętla do wyczerpania pending."""
         try:
-            await asyncio.sleep(self.VALIDATION_DELAY)
-            await self._do_validation()
+            while True:
+                await asyncio.sleep(self.VALIDATION_DELAY)
+
+                # Sprawdź czy są segmenty do walidacji
+                if not self.state.pending_validation:
+                    break
+
+                await self._do_validation()
+
+                # Po walidacji sprawdź czy przyszły nowe segmenty
+                # (mogły przyjść podczas wywołania LLM)
+                if not self.state.pending_validation:
+                    break
+                # Jeśli są nowe - kontynuuj pętlę (z nowym delay)
+
         except asyncio.CancelledError:
-            pass  # Nowy tekst przyszedł, poczekamy
+            pass  # Stop sesji
         except Exception as e:
             print(f"[AI] Validation error: {e}", flush=True)
 
@@ -288,10 +307,55 @@ class AIController:
             self.state.validate_segment(corrected, needs_newline)
             print(f"[AI] Validated: '{corrected[:50]}...'", flush=True)
 
+            # === Q+A MATCHING ===
+            # Sprawdź czy to odpowiedź na oczekujące pytanie
+            if self._is_answer_to_pending_question(corrected):
+                pair = self.state.complete_qa_pair(corrected)
+                if pair:
+                    print(f"[AI] Q+A pair matched!", flush=True)
+
         except Exception as e:
             print(f"[AI] Validation error: {e}", flush=True)
             # W razie błędu - przepuść bez walidacji
             self.state.validate_segment(combined)
+
+    def _is_answer_to_pending_question(self, text: str) -> bool:
+        """
+        Sprawdza czy tekst jest odpowiedzią na oczekujące pytanie.
+
+        Kryteria:
+        - Jest oczekujące pytanie (pending_question)
+        - Nie minęło 60 sekund od kliknięcia pytania
+        - Tekst ma minimum 5 słów
+        - Tekst NIE kończy się znakiem zapytania (to byłoby pytanie)
+        """
+        import time
+
+        pending = self.state.pending_question
+        if not pending:
+            return False
+
+        # Sprawdź okno czasowe
+        elapsed = time.time() - pending.clicked_at
+        if elapsed > self.QA_TIMEOUT_SECONDS:
+            print(f"[AI] Q+A timeout: {elapsed:.1f}s > {self.QA_TIMEOUT_SECONDS}s", flush=True)
+            self.state.clear_pending_question()
+            return False
+
+        # Sprawdź długość tekstu (min 5 słów)
+        word_count = len(text.split())
+        if word_count < self.QA_MIN_WORDS:
+            print(f"[AI] Q+A too short: {word_count} < {self.QA_MIN_WORDS} words", flush=True)
+            return False
+
+        # Sprawdź że nie kończy się znakiem zapytania (to byłoby pytanie, nie odpowiedź)
+        text_stripped = text.strip()
+        if text_stripped.endswith('?'):
+            print(f"[AI] Q+A rejected: ends with '?' (likely a question)", flush=True)
+            return False
+
+        print(f"[AI] Q+A match criteria passed (words={word_count}, elapsed={elapsed:.1f}s)", flush=True)
+        return True
 
     # === CLEANUP ===
 
