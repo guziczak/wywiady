@@ -398,26 +398,11 @@ class LiveInterviewView:
         # Ustaw event loop dla AI controller (do thread-safe scheduling)
         self.ai_controller.set_event_loop(asyncio.get_running_loop())
 
-        # Przygotuj backend OpenVINO jeśli wybrany
-        external_backend = None
-        if self.app.transcriber_manager:
-            try:
-                from core.transcriber import TranscriberType, OpenVINOWhisperTranscriber
-                current_type = self.app.transcriber_manager.get_current_type()
-                if current_type == TranscriberType.OPENVINO_WHISPER:
-                    backend = self.app.transcriber_manager.get_current_backend()
-                    if isinstance(backend, OpenVINOWhisperTranscriber) and backend.is_model_loaded():
-                        print("[LIVE] Using OpenVINO for finalization", flush=True)
-                        external_backend = backend
-            except Exception as e:
-                print(f"[LIVE] OpenVINO check error: {e}", flush=True)
-
-        # Start transcriber
+        # Start transcriber (używa wewnętrznych modeli cascade: tiny → medium → large)
         self.transcriber.start(
             callback_provisional=self._on_provisional,
             callback_improved=self._on_improved,
-            callback_final=self._on_final,
-            external_backend=external_backend
+            callback_final=self._on_final
         )
 
         # Wymuś wygenerowanie początkowych sugestii

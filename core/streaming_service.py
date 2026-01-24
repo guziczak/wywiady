@@ -107,7 +107,6 @@ class StreamingTranscriber:
         self.callback_provisional = None
         self.callback_improved = None
         self.callback_final = None
-        self.external_backend = None # Deprecated logic, but kept for compatibility
 
         # Audio params
         self.sample_rate = 16000
@@ -233,7 +232,7 @@ class StreamingTranscriber:
                 self.model_large = None
                 self.model_large_error = str(e)
 
-    def start(self, callback_provisional, callback_improved=None, callback_final=None, external_backend=None):
+    def start(self, callback_provisional, callback_improved=None, callback_final=None):
         """
         Uruchamia streaming z wieloma callbackami.
 
@@ -241,12 +240,10 @@ class StreamingTranscriber:
             callback_provisional: fn(text, start_sample, end_sample)
             callback_improved: fn(text, start_sample, end_sample)
             callback_final: fn(text, start_sample, end_sample)
-            external_backend: Opcjonalny backend OpenVINO do finalizacji
         """
         self.callback_provisional = callback_provisional
         self.callback_improved = callback_improved or callback_provisional
         self.callback_final = callback_final or callback_improved or callback_provisional
-        self.external_backend = external_backend
 
         if not self.model_tiny:
             self.load_model()
@@ -529,34 +526,32 @@ class StreamingTranscriber:
 
         try:
             duration = len(segment_audio) / self.sample_rate
-            
-            # Hybrid Mode: OpenVINO for finalization if available
-            if self.external_backend and hasattr(self.external_backend, 'transcribe_raw'):
-                print(f"[STREAM] Final (External OpenVINO): {duration:.1f}s audio", flush=True)
-                # OpenVINO expects float32 array, which we have
-                text = self.external_backend.transcribe_raw(segment_audio, language="pl")
-            else:
-                backend_name = "OpenVINOShim" if self.use_openvino else "Faster-Whisper"
-                print(f"[STREAM] Final ({backend_name}): {duration:.1f}s audio", flush=True)
-                # Użyj large model jeśli dostępny, inaczej medium, inaczej tiny
-                if self.enable_large and self.model_large:
-                    model = self.model_large
-                    beam = 5
-                elif self.enable_medium and self.model_medium:
-                    model = self.model_medium
-                    beam = 4
-                else:
-                    model = self.model_tiny
-                    beam = 3
 
-                segments, info = model.transcribe(
-                    segment_audio,
-                    beam_size=beam,
-                    language="pl",
-                    vad_filter=True,
-                    word_timestamps=False
-                )
-                text = " ".join([s.text for s in segments]).strip()
+            # Użyj large model jeśli dostępny, inaczej medium, inaczej tiny
+            if self.enable_large and self.model_large:
+                model = self.model_large
+                model_name = "large-v3"
+                beam = 5
+            elif self.enable_medium and self.model_medium:
+                model = self.model_medium
+                model_name = "medium"
+                beam = 4
+            else:
+                model = self.model_tiny
+                model_name = "tiny"
+                beam = 3
+
+            backend_name = f"OpenVINO {model_name}" if self.use_openvino else f"Faster-Whisper {model_name}"
+            print(f"[STREAM] Final ({backend_name}): {duration:.1f}s audio", flush=True)
+
+            segments, info = model.transcribe(
+                segment_audio,
+                beam_size=beam,
+                language="pl",
+                vad_filter=True,
+                word_timestamps=False
+            )
+            text = " ".join([s.text for s in segments]).strip()
 
             if text:
                 try:
