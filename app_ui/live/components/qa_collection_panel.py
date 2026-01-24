@@ -11,7 +11,8 @@ from typing import Optional, TYPE_CHECKING
 from app_ui.live.components.card_throw_styles import inject_card_throw_styles
 
 if TYPE_CHECKING:
-    from app_ui.live.live_state import LiveState, QAPair
+    from app_ui.live.live_state import LiveState
+    from app_ui.live.state.qa_collector import QAPair
 
 
 class QACollectionPanel:
@@ -80,8 +81,8 @@ class QACollectionPanel:
         # Capture client context
         self._client = ui.context.client
 
-        # Subscribe to Q+A pair creation
-        self.state.on_qa_pair_created(self._on_qa_pair_created)
+        # Subscribe to Q+A pair creation (nowa architektura używa qa_collector)
+        self.state.qa_collector.on_pair_added(self._on_qa_pair_created)
 
         return self.container
 

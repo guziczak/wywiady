@@ -14,6 +14,7 @@ from app_ui.live.components.transcript_panel import TranscriptPanel
 from app_ui.live.components.prompter_panel import PrompterPanel
 from app_ui.live.components.pipeline_panel import PipelinePanel
 from app_ui.live.components.qa_collection_panel import QACollectionPanel
+from app_ui.live.components.active_question_panel import ActiveQuestionPanel
 
 # Streaming transcriber (opcjonalny)
 try:
@@ -132,6 +133,7 @@ class LiveInterviewView:
         self.transcript_panel: Optional[TranscriptPanel] = None
         self.prompter_panel: Optional[PrompterPanel] = None
         self.qa_panel: Optional[QACollectionPanel] = None
+        self.active_question_panel: Optional[ActiveQuestionPanel] = None
 
         # Diarization service
         self.diarization_service: Optional[DiarizationService] = None
@@ -173,6 +175,15 @@ class LiveInterviewView:
             with ui.element('div').classes('w-full flex-1 min-h-[200px] overflow-hidden'):
                 self.transcript_panel = TranscriptPanel(self.state)
                 self.transcript_panel.create()
+
+            # === ŚRODEK: AKTYWNE PYTANIE (ODDZIELONY OD SUGESTII!) ===
+            with ui.element('div').classes('w-full shrink-0'):
+                self.active_question_panel = ActiveQuestionPanel(
+                    context=self.state.active_question,
+                    on_answer_click=self._on_answer_copied,
+                    on_close=self._on_active_question_closed
+                )
+                self.active_question_panel.create()
 
             # === ŚRODEK: KOLEKCJA Q+A (GAMIFIKACJA) ===
             with ui.element('div').classes('w-full shrink-0'):
@@ -576,20 +587,25 @@ class LiveInterviewView:
     # === CARD INTERACTION ===
 
     def _on_card_click(self, question: str):
-        """Callback: kliknięcie w kartę sugestii."""
+        """
+        Callback: kliknięcie w kartę sugestii.
+
+        NOWA ARCHITEKTURA:
+        1. Aktywuje pytanie w ActiveQuestionContext (ODDZIELONY od sugestii)
+        2. Ładuje odpowiedzi asynchronicznie
+        3. Kopiuje pytanie do schowka
+        4. Triggeruje regenerację sugestii Z OPÓŹNIENIEM (8s)
+        """
         print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
 
-        # === Q+A TRACKING - START NATYCHMIAST ===
-        # Rozpocznij śledzenie od razu (keywords zostaną dodane później)
+        # === 1. AKTYWUJ PYTANIE W NOWYM KONTEKŚCIE ===
+        # To NIE znika przy regeneracji sugestii!
         self.state.start_question(question, [])
 
-        # Przygotuj kontekst odpowiedzi pacjenta (AI)
-        self.state.set_answer_loading(question)
-        if self.prompter_panel:
-            self.prompter_panel.refresh()
+        # === 2. ZAŁADUJ ODPOWIEDZI ===
         asyncio.create_task(self._load_patient_answers(question))
 
-        # Kopiuj do schowka przed zmiana UI (unikaj bledu "parent element deleted")
+        # === 3. KOPIUJ DO SCHOWKA ===
         import json
         client = ui.context.client or self._client
         if client:
@@ -602,25 +618,24 @@ class LiveInterviewView:
                     ui.notify("Skopiowano pytanie!", type='positive', position='top')
             except Exception:
                 pass
-        else:
-            try:
-                ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
-            except Exception:
-                pass
-            try:
-                ui.notify("Skopiowano pytanie!", type='positive', position='top')
-            except Exception:
-                pass
 
-        # Ustaw kontekst odpowiedzi pacjenta (AI) - odswiezanie robi task
-
-        # Trigger AI (regeneruj pozostałe)
+        # === 4. TRIGGER AI Z OPÓŹNIENIEM ===
+        # Regeneracja sugestii po 8s - daje czas na przeczytanie odpowiedzi
         if self.ai_controller:
             self.ai_controller.on_card_clicked(question)
 
     async def _load_patient_answers(self, question: str) -> None:
-        """Generuje podpowiedzi odpowiedzi pacjenta przez AI."""
+        """
+        Generuje podpowiedzi odpowiedzi pacjenta przez AI.
+
+        NOWA ARCHITEKTURA: Ustawia odpowiedzi w ActiveQuestionContext.
+        """
         if not question:
+            return
+
+        # Sprawdź czy to wciąż aktywne pytanie
+        if self.state.active_question.question != question:
+            print(f"[LIVE] Skipping answers - question changed", flush=True)
             return
 
         answers: List[str] = []
@@ -635,16 +650,33 @@ class LiveInterviewView:
         except Exception as e:
             print(f"[LIVE] Patient answers error: {e}", flush=True)
 
-        if self.state.selected_question != question:
+        # Ponownie sprawdź czy pytanie się nie zmieniło podczas generowania
+        if self.state.active_question.question != question:
+            print(f"[LIVE] Skipping answers - question changed during generation", flush=True)
             return
 
+        # Ustaw odpowiedzi w nowym kontekście
+        self.state.active_question.set_answers(answers)
+
+        # Deprecated: zachowaj dla kompatybilności wstecznej
         self.state.set_answer_context(question, answers)
 
-        # Keywords dla Q+A (opcjonalne - tracking już wystartował w _on_card_click)
-        if self.state.pending_question and self.state.pending_question.question == question:
-            keywords = self._extract_keywords(answers)
-            self.state.pending_question.answer_keywords = keywords
+        # Odśwież panele
+        if self.active_question_panel:
+            self.active_question_panel.refresh()
+        if self.prompter_panel:
+            self.prompter_panel.refresh()
 
+    def _on_answer_copied(self, answer: str):
+        """Callback: skopiowano odpowiedź z panelu aktywnego pytania."""
+        print(f"[LIVE] Answer copied: {answer[:30]}...", flush=True)
+        # Opcjonalnie: można tu dodać logikę
+
+    def _on_active_question_closed(self):
+        """Callback: zamknięto panel aktywnego pytania."""
+        print(f"[LIVE] Active question closed by user", flush=True)
+        # Wyczyść deprecated pola
+        self.state.clear_answer_context()
         if self.prompter_panel:
             self.prompter_panel.refresh()
 

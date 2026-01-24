@@ -300,74 +300,18 @@ class PrompterPanel:
                 )
 
     def _render_answer_suggestions(self):
-        """Renderuje przykładowe odpowiedzi pacjenta dla wybranego pytania."""
-        from app_ui.live.live_state import SessionStatus
-        question = self.state.selected_question
-        answers = self.state.answer_suggestions
-        loading = getattr(self.state, 'answer_loading', False)
-        if not question:
-            # Subtelny placeholder, aby uzytkownik wiedzial o funkcji
-            if self.state.status == SessionStatus.RECORDING and self.state.suggestions:
-                with ui.card().classes(
-                    'w-full bg-white border border-slate-200 rounded-xl '
-                    'p-4 sm:p-5 shadow-sm'
-                ):
-                    ui.label('Podpowiedzi odpowiedzi pacjenta').classes(
-                        'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
-                    )
-                    ui.label('Kliknij pytanie, aby zobaczyc przykladowe odpowiedzi.').classes(
-                        'text-sm text-slate-500 mt-1'
-                    )
-            return
+        """
+        DEPRECATED: Odpowiedzi pacjenta przeniesione do ActiveQuestionPanel.
 
-        if not answers:
-            with ui.card().classes(
-                'w-full bg-white border border-slate-200 rounded-xl '
-                'p-4 sm:p-5 shadow-sm'
-            ):
-                ui.label('Podpowiedzi odpowiedzi pacjenta').classes(
-                    'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
-                )
-                ui.label(question).classes('text-sm text-slate-700 leading-snug')
-                if loading:
-                    ui.label('Generuję odpowiedzi...').classes(
-                        'text-sm text-slate-500 mt-2'
-                    )
-                else:
-                    ui.label('Brak podpowiedzi dla tego pytania.').classes(
-                        'text-sm text-slate-500 mt-2'
-                    )
-            return
-
-        with ui.card().classes(
-            'w-full bg-white border border-slate-200 rounded-xl '
-            'p-4 sm:p-5 shadow-sm'
-        ):
-            with ui.row().classes('w-full items-start justify-between gap-3'):
-                with ui.column().classes('gap-1'):
-                    ui.label('Podpowiedzi odpowiedzi pacjenta').classes(
-                        'text-[11px] uppercase tracking-wide text-slate-500 font-medium'
-                    )
-                    ui.label(question).classes('text-sm text-slate-700 leading-snug')
-                ui.button(icon='close', on_click=self._clear_answer_context).props(
-                    'flat dense round'
-                ).classes('text-slate-400 hover:text-slate-600')
-
-            with ui.row().classes('w-full flex-wrap gap-2 mt-3'):
-                for answer in answers[:3]:
-                    with ui.card().classes(
-                        'px-3 py-2 '
-                        'bg-slate-50 border border-slate-200 rounded-lg '
-                        'cursor-pointer hover:bg-slate-100 '
-                        'transition-colors'
-                    ).on('click', lambda e=None, a=answer: self._handle_answer_click(a)):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.icon('chat_bubble_outline', size='xs').classes('text-slate-400')
-                            ui.label(answer).classes('text-sm text-slate-700')
-
-            ui.label('Kliknij odpowiedź, aby skopiować.').classes(
-                'text-xs text-slate-400 mt-2'
-            )
+        Ten panel teraz pokazuje tylko subtelny hint.
+        Cała logika odpowiedzi jest w osobnym komponencie który:
+        - NIE znika przy regeneracji sugestii
+        - Ma timer countdown
+        - Ma przycisk pin
+        """
+        # Nie renderujemy nic - odpowiedzi są w ActiveQuestionPanel
+        # Zachowujemy metodę dla kompatybilności wstecznej
+        pass
 
     def _handle_answer_click(self, answer: str):
         """Kopiuj odpowiedź pacjenta do schowka."""

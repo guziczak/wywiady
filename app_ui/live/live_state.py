@@ -1,6 +1,14 @@
 """
 Live Interview State Management
 Centralne zarządzanie stanem transkrypcji i sugestii.
+
+Architektura (po refaktorze):
+- LiveState: fasada łącząca sub-stany
+- ActiveQuestionContext: osobny stan aktywnego pytania (ODDZIELONY od sugestii!)
+- QACollector: zbieranie par Q+A
+
+KLUCZOWA ZMIANA: set_suggestions() NIE czyści aktywnego pytania!
+Aktywne pytanie żyje w osobnym kontekście i nie znika przy regeneracji.
 """
 
 from dataclasses import dataclass, field
@@ -8,6 +16,10 @@ from typing import List, Optional, Callable, Dict, TYPE_CHECKING
 from enum import Enum
 import time
 import uuid
+
+# Import nowych komponentów state
+from app_ui.live.state.active_question import ActiveQuestionContext, QuestionState
+from app_ui.live.state.qa_collector import QACollector, QAPair
 
 if TYPE_CHECKING:
     from core.diarization import DiarizationResult, DiarizationSegment, SpeakerRole
@@ -70,22 +82,9 @@ class DiarizationInfo:
         return "\n".join(lines)
 
 
-@dataclass
-class QAPair:
-    """Para pytanie + odpowiedź (gamifikacja)."""
-    id: str
-    question: str
-    answer: str
-    question_timestamp: float
-    answer_timestamp: float
-
-
-@dataclass
-class PendingQuestion:
-    """Pytanie oczekujące na odpowiedź pacjenta."""
-    question: str
-    clicked_at: float
-    answer_keywords: List[str] = field(default_factory=list)
+# QAPair i PendingQuestion przeniesione do app_ui/live/state/
+# Import z góry: from app_ui.live.state.qa_collector import QACollector, QAPair
+# ActiveQuestionContext zastępuje PendingQuestion z lepszą logiką state machine
 
 
 @dataclass
@@ -115,6 +114,13 @@ class LiveState:
     """
     Centralny stan sesji Live Interview.
     Single Source of Truth dla wszystkich komponentów.
+
+    ARCHITEKTURA (po refaktorze):
+    - Sugestie (suggestions) - pula 3 kart, regenerowana przez AI
+    - ActiveQuestionContext - ODDZIELNY stan aktywnego pytania
+    - QACollector - zbieranie par Q+A
+
+    KLUCZOWA ZASADA: regeneracja sugestii NIE wpływa na aktywne pytanie!
     """
 
     def __init__(self):
@@ -130,11 +136,19 @@ class LiveState:
         self._full_transcript: str = ""
         self._words_since_last_regen: int = 0
 
-        # Sugestie
+        # Sugestie - TYLKO pula kart, oddzielona od aktywnego pytania
         self.suggestions: List[Suggestion] = []
         self.asked_questions: List[str] = []  # Historia użytych pytań
 
-        # Podpowiedzi odpowiedzi pacjenta
+        # === NOWA ARCHITEKTURA: Aktywne pytanie w osobnym kontekście ===
+        self.active_question = ActiveQuestionContext()
+        self.qa_collector = QACollector(target_count=10)
+
+        # Wire up: gdy dopasowano odpowiedź -> dodaj do kolekcji
+        self.active_question.on_matched(self._on_question_matched)
+
+        # DEPRECATED: stare pola dla kompatybilności wstecznej
+        # Będą usunięte w przyszłości
         self.selected_question: Optional[str] = None
         self.answer_suggestions: List[str] = []
         self.answer_loading: bool = False
@@ -151,11 +165,6 @@ class LiveState:
         self.analyze_speakers_preference: bool = True  # Zapamiętana preferencja
         self._recording_start_time: Optional[float] = None
 
-        # Q+A Gamifikacja
-        self.qa_pairs: List[QAPair] = []
-        self.pending_question: Optional[PendingQuestion] = None
-        self.qa_target_count: int = 10
-
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
         self._on_suggestions_change: Optional[Callable] = None
@@ -163,6 +172,27 @@ class LiveState:
         self._on_diarization_change: Optional[Callable] = None
         self._on_mode_change: Optional[Callable] = None
         self._on_qa_pair_created: Optional[Callable[[QAPair], None]] = None
+        self._on_active_question_change: Optional[Callable] = None
+
+    def _on_question_matched(self, question: str, answer: str):
+        """Callback gdy aktywne pytanie zostało dopasowane do odpowiedzi."""
+        pair = self.qa_collector.add(
+            question=question,
+            answer=answer,
+            question_time=self.active_question.started_at
+        )
+        # Notify UI
+        if self._on_qa_pair_created:
+            try:
+                self._on_qa_pair_created(pair)
+            except Exception as e:
+                print(f"[LiveState] QA pair callback error: {e}")
+
+    def on_active_question_change(self, callback: Callable):
+        """Rejestruje callback na zmianę aktywnego pytania."""
+        self._on_active_question_change = callback
+        # Przekaż do kontekstu
+        self.active_question.on_state_change(lambda ctx: callback())
 
     # === SUBSCRIPTION ===
 
@@ -247,18 +277,27 @@ class LiveState:
     # === SUGGESTIONS MANAGEMENT ===
 
     def set_suggestions(self, questions: List[str]):
-        """Ustawia nowe sugestie (wykluczając już użyte)."""
+        """
+        Ustawia nowe sugestie (wykluczając już użyte).
+
+        KLUCZOWA ZMIANA: NIE czyści aktywnego pytania!
+        Aktywne pytanie żyje w osobnym kontekście (self.active_question)
+        i nie jest niszczone przez regenerację sugestii.
+        """
         self.suggestions = [
             Suggestion(question=q)
             for q in questions
             if q not in self.asked_questions
         ][:3]  # Max 3 sugestie
         self._words_since_last_regen = 0
-        # Jesli wybrane pytanie nie jest juz w nowych sugestiach, wyczysc panel odpowiedzi
-        if self.selected_question and all(s.question != self.selected_question for s in self.suggestions):
-            self.selected_question = None
-            self.answer_suggestions = []
-            self.answer_loading = False
+
+        # USUNIĘTO problematyczny kod który czyścił selected_question!
+        # Stara logika:
+        #   if self.selected_question and all(s.question != self.selected_question for s in self.suggestions):
+        #       self.selected_question = None  # ← TO POWODOWAŁO PROBLEM!
+        #
+        # Teraz: aktywne pytanie żyje w self.active_question i jest niezależne
+
         self._notify_suggestions_change()
 
     def mark_suggestion_used(self, question: str):
@@ -315,17 +354,22 @@ class LiveState:
         self._words_since_last_regen = 0
         self.suggestions = []
         self.asked_questions = []
+
+        # Reset deprecated fields (dla kompatybilności)
         self.selected_question = None
         self.answer_suggestions = []
         self.answer_loading = False
+
         self.pending_validation = []
         self.diarization = None
         self.prompter_mode = PrompterMode.SUGGESTIONS
         self.interview_stats = None
         self._recording_start_time = None
-        # Q+A reset
-        self.qa_pairs = []
-        self.pending_question = None
+
+        # Reset nowych komponentów
+        self.active_question.clear(force=True)
+        self.qa_collector.reset()
+
         self._notify_transcript_change()
         self._notify_suggestions_change()
 
@@ -440,64 +484,90 @@ class LiveState:
         print(f"[STATE] Speaker roles swapped", flush=True)
         self._notify_diarization_change()
 
-    # === Q+A GAMIFIKACJA ===
+    # === Q+A GAMIFIKACJA (NOWA ARCHITEKTURA) ===
 
     def start_question(self, question: str, keywords: List[str] = None):
         """
-        Rozpoczyna śledzenie pytania (oczekiwanie na odpowiedź pacjenta).
-        Wywoływane po kliknięciu karty pytania.
+        Rozpoczyna śledzenie pytania (po kliknięciu karty).
+        Używa nowego ActiveQuestionContext.
         """
-        self.pending_question = PendingQuestion(
-            question=question,
-            clicked_at=time.time(),
-            answer_keywords=keywords or []
-        )
+        # Aktywuj w nowym kontekście
+        self.active_question.activate(question, timeout=120.0)
+
+        # Deprecated: zachowaj dla kompatybilności wstecznej
+        self.selected_question = question
+
         print(f"[STATE] Q+A tracking started: '{question[:40]}...'", flush=True)
 
     def complete_qa_pair(self, answer: str) -> Optional[QAPair]:
         """
         Tworzy parę Q+A gdy odpowiedź została wykryta.
-        Zwraca utworzoną parę lub None jeśli brak pending question.
+        Używa nowego ActiveQuestionContext.
         """
-        if not self.pending_question:
+        if not self.active_question.is_ready_for_match:
             return None
 
-        pair = QAPair(
-            id=str(uuid.uuid4())[:8],
-            question=self.pending_question.question,
-            answer=answer,
-            question_timestamp=self.pending_question.clicked_at,
-            answer_timestamp=time.time()
-        )
+        # Match w kontekście (to automatycznie doda do qa_collector)
+        if self.active_question.match(answer):
+            # Zwróć ostatnio dodaną parę
+            pairs = self.qa_collector.get_latest(1)
+            return pairs[0] if pairs else None
 
-        self.qa_pairs.append(pair)
-        self.pending_question = None
-
-        print(f"[STATE] Q+A pair created: {len(self.qa_pairs)}/{self.qa_target_count}", flush=True)
-
-        # Notify UI
-        self._notify_qa_pair_created(pair)
-
-        return pair
+        return None
 
     def clear_pending_question(self):
         """Czyści oczekujące pytanie (timeout lub ręczne)."""
-        if self.pending_question:
-            print(f"[STATE] Pending question cleared", flush=True)
-            self.pending_question = None
+        self.active_question.clear(force=True)
+
+        # Deprecated
+        self.selected_question = None
+
+    @property
+    def pending_question(self):
+        """
+        DEPRECATED: Zwraca obiekt dla kompatybilności wstecznej.
+        Użyj self.active_question zamiast tego.
+        """
+        if self.active_question.is_active:
+            # Zwróć pseudo-obiekt dla kompatybilności
+            class _LegacyPendingQuestion:
+                def __init__(self, ctx):
+                    self.question = ctx.question
+                    self.clicked_at = ctx.started_at
+                    self.answer_keywords = []
+            return _LegacyPendingQuestion(self.active_question)
+        return None
+
+    @pending_question.setter
+    def pending_question(self, value):
+        """DEPRECATED setter - ignoruj."""
+        pass
+
+    @property
+    def qa_pairs(self) -> List[QAPair]:
+        """Zwraca zebrane pary Q+A."""
+        return self.qa_collector.pairs
+
+    @qa_pairs.setter
+    def qa_pairs(self, value):
+        """Setter dla kompatybilności."""
+        # Ignoruj - używamy qa_collector
+        pass
 
     @property
     def qa_progress(self) -> tuple:
         """Zwraca (current, target) dla progress badge."""
-        return (len(self.qa_pairs), self.qa_target_count)
+        return self.qa_collector.progress
 
-    def _notify_qa_pair_created(self, pair: 'QAPair'):
-        """Powiadamia o utworzeniu pary Q+A."""
-        if self._on_qa_pair_created:
-            try:
-                self._on_qa_pair_created(pair)
-            except Exception as e:
-                print(f"[LiveState] QA pair callback error: {e}")
+    @property
+    def qa_target_count(self) -> int:
+        """Zwraca docelową liczbę par."""
+        return self.qa_collector.target_count
+
+    @qa_target_count.setter
+    def qa_target_count(self, value: int):
+        """Ustawia docelową liczbę par."""
+        self.qa_collector.target_count = value
 
     # === HELPERS ===
 

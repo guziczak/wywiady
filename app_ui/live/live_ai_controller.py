@@ -25,6 +25,10 @@ class AIController:
     """
     Kontroler AI dla Live Interview.
     Zarządza smart triggers zamiast głupiego timera.
+
+    KLUCZOWA ZMIANA (UX fix):
+    - Po kliknięciu karty: delay 8s zamiast natychmiastowej regeneracji
+    - Pozwala userowi zobaczyć odpowiedzi zanim sugestie się zmienią
     """
 
     # Konfiguracja triggerów
@@ -33,9 +37,12 @@ class AIController:
     VALIDATION_DELAY = 2.5            # Sekundy przed walidacją segmentu
     REGEN_COOLDOWN = 5.0              # Minimalny czas między regeneracjami
 
+    # NOWE: Delay po kliknięciu karty (żeby user widział odpowiedzi)
+    CARD_CLICK_REGEN_DELAY = 8.0      # Sekundy przed regeneracją po kliknięciu
+
     # Q+A matching configuration
-    QA_TIMEOUT_SECONDS = 60.0         # Okno czasowe na odpowiedź
-    QA_MIN_WORDS = 5                  # Minimalna liczba słów w odpowiedzi
+    QA_TIMEOUT_SECONDS = 120.0        # Okno czasowe na odpowiedź (zwiększone z 60s)
+    QA_MIN_WORDS = 3                  # Minimalna liczba słów w odpowiedzi (zmniejszone z 5)
 
     def __init__(self, state: 'LiveState', llm_service, config):
         self.state = state
@@ -115,15 +122,22 @@ class AIController:
     def on_card_clicked(self, question: str):
         """
         Wywoływane gdy user kliknie kartę z pytaniem.
-        Natychmiast triggeruje regenerację.
+
+        ZMIANA UX: Opóźniona regeneracja (8s) zamiast natychmiastowej!
+        Pozwala userowi zobaczyć odpowiedzi pacjenta zanim sugestie się zmienią.
         """
         print(f"[AI] Trigger: card clicked - '{question[:30]}...'", flush=True)
 
         # Oznacz jako użyte
         self.state.mark_suggestion_used(question)
 
-        # Natychmiastowa regeneracja (bez debounce)
-        self._schedule_regeneration(TriggerReason.CARD_CLICKED, immediate=True)
+        # ZMIANA: Opóźniona regeneracja (nie natychmiastowa!)
+        # Daje userowi czas na przeczytanie odpowiedzi
+        self._schedule_regeneration(
+            TriggerReason.CARD_CLICKED,
+            immediate=False,  # ← KLUCZOWA ZMIANA!
+            delay=self.CARD_CLICK_REGEN_DELAY
+        )
 
     def force_regeneration(self):
         """Wymusza regenerację (np. na starcie sesji)."""
@@ -132,13 +146,28 @@ class AIController:
 
     # === SCHEDULING ===
 
-    def _schedule_regeneration(self, reason: TriggerReason, immediate: bool = False):
-        """Scheduluje regenerację z debounce."""
+    def _schedule_regeneration(self, reason: TriggerReason, immediate: bool = False, delay: float = None):
+        """
+        Scheduluje regenerację z debounce.
+
+        Args:
+            reason: Powód regeneracji
+            immediate: Jeśli True, bez delay (0s)
+            delay: Opcjonalny custom delay (nadpisuje immediate i DEBOUNCE_DELAY)
+        """
         # Anuluj poprzedni task
         if self._regen_task and not self._regen_task.done():
             self._regen_task.cancel()
 
-        delay = 0 if immediate else self.DEBOUNCE_DELAY
+        # Określ delay
+        if delay is not None:
+            final_delay = delay
+        elif immediate:
+            final_delay = 0
+        else:
+            final_delay = self.DEBOUNCE_DELAY
+
+        delay = final_delay
         
         # Użyj głównego event loop (thread-safe)
         if self._loop and self._loop.is_running():
@@ -321,28 +350,28 @@ class AIController:
 
     def _is_answer_to_pending_question(self, text: str) -> bool:
         """
-        Sprawdza czy tekst jest odpowiedzią na oczekujące pytanie.
+        Sprawdza czy tekst jest odpowiedzią na aktywne pytanie.
+
+        Używa nowego ActiveQuestionContext zamiast starego pending_question.
 
         Kryteria:
-        - Jest oczekujące pytanie (pending_question)
-        - Nie minęło 60 sekund od kliknięcia pytania
-        - Tekst ma minimum 5 słów
+        - Jest aktywne pytanie w stanie READY lub WAITING
+        - Nie minął timeout
+        - Tekst ma minimum QA_MIN_WORDS słów
         - Tekst NIE kończy się znakiem zapytania (to byłoby pytanie)
         """
-        import time
+        active = self.state.active_question
 
-        pending = self.state.pending_question
-        if not pending:
+        # Sprawdź czy jest aktywne pytanie gotowe do dopasowania
+        if not active.is_ready_for_match:
             return False
 
-        # Sprawdź okno czasowe
-        elapsed = time.time() - pending.clicked_at
-        if elapsed > self.QA_TIMEOUT_SECONDS:
-            print(f"[AI] Q+A timeout: {elapsed:.1f}s > {self.QA_TIMEOUT_SECONDS}s", flush=True)
-            self.state.clear_pending_question()
+        # Sprawdź timeout (active_question sam to obsłuży, ale sprawdźmy)
+        if active.check_timeout():
+            print(f"[AI] Q+A timeout expired", flush=True)
             return False
 
-        # Sprawdź długość tekstu (min 5 słów)
+        # Sprawdź długość tekstu
         word_count = len(text.split())
         if word_count < self.QA_MIN_WORDS:
             print(f"[AI] Q+A too short: {word_count} < {self.QA_MIN_WORDS} words", flush=True)
@@ -354,6 +383,7 @@ class AIController:
             print(f"[AI] Q+A rejected: ends with '?' (likely a question)", flush=True)
             return False
 
+        elapsed = active.time_elapsed
         print(f"[AI] Q+A match criteria passed (words={word_count}, elapsed={elapsed:.1f}s)", flush=True)
         return True
 
