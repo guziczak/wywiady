@@ -7,7 +7,8 @@ class ThreeStage(ui.element):
         super().__init__('div')
         self.classes('w-full h-full relative overflow-hidden')
         self._initialized = False
-        
+        print("[ThreeStage] __init__ called")
+
         # 1. Setup Import Map for Three.js (Module resolution)
         # Using local files downloaded by installer
         import_map = """
@@ -22,55 +23,117 @@ class ThreeStage(ui.element):
         </script>
         """
         ui.add_head_html(import_map)
-        
+
         # 2. Load our Engine
         # We will load it dynamically in _init_client_side to ensure order
         # ui.add_head_html('<script type="module" src="/assets/js/card_engine.js"></script>')
 
-        # 3. Initialize on Client
+        # 3. Initialize on Client - use timer as fallback since mount event may not fire
         self.on('mount', self._init_client_side)
+        # Fallback: try init after short delay
+        ui.timer(1.0, self._init_client_side, once=True)
 
     async def _init_client_side(self):
-        # Dynamically import the module to guarantee it's loaded
+        if self._initialized:
+            print("[ThreeStage] Already initialized, skipping")
+            return
+
+        print(f"[ThreeStage] _init_client_side called, container id={self.id}")
+
+        # Diagnostic: check if files are accessible and create engine
         js_init = f'''
-        console.log("[3D] Starting dynamic import of card_engine.js...");
-        import('/assets/js/card_engine.js').then(module => {{
-            console.log("[3D] Module loaded!", module);
-            if (module.createCardEngine) {{
-                window.engine = module.createCardEngine("{self.id}");
-                console.log("[3D] Engine initialized:", window.engine);
-            }} else {{
-                console.error("[3D] Module does not export createCardEngine!");
+        (async function() {{
+            let diag = {{}};
+
+            // Test if container exists (NiceGUI uses "c" prefix for element IDs)
+            diag.containerExists = !!document.getElementById("c{self.id}");
+
+            // Try to load the module
+            try {{
+                console.log("[3D] Starting dynamic import...");
+                const module = await import('/assets/js/card_engine.js');
+                console.log("[3D] Module loaded:", module);
+                diag.moduleLoaded = true;
+                diag.hasCreateCardEngine = !!module.createCardEngine;
+
+                if (module.createCardEngine) {{
+                    window.engine = module.createCardEngine("c{self.id}");
+                    diag.engineCreated = !!window.engine;
+                    console.log("[3D] Engine created:", window.engine);
+                }}
+            }} catch(e) {{
+                diag.moduleLoaded = false;
+                diag.error = e.message;
+                console.error("[3D] Import error:", e);
             }}
-        }}).catch(err => {{
-            console.error("[3D] Failed to load 3D engine:", err);
-            console.error(err.message);
-        }});
+
+            console.log("[3D-INIT]", JSON.stringify(diag));
+            return JSON.stringify(diag);
+        }})()
         '''
-        await self.run_method_js(js_init)
+        try:
+            result = await ui.run_javascript(js_init, timeout=15.0)
+            print(f"[ThreeStage] Init diagnostic: {result}")
+        except Exception as e:
+            print(f"[ThreeStage] Init error: {e}")
+
         self._initialized = True
+        print("[ThreeStage] Initialization complete, _initialized=True")
 
     async def run_method_js(self, code: str):
         """Helper to run JS safely."""
-        await ui.run_javascript(code, respond=False)
+        try:
+            await ui.run_javascript(code, timeout=10.0)
+        except Exception as e:
+            print(f"[ThreeStage] JS error: {e}")
 
     async def add_card(self, card_element: ui.element):
         """
-        Takes a NiceGUI element (the card), ensures it's mounted, 
+        Takes a NiceGUI element (the card), ensures it's mounted,
         and passes its ID to the 3D engine.
         """
-        # Element must be in the DOM. 
-        # We assume the card is created as a child of a hidden container elsewhere, 
-        # or we move it here. 
-        # For CSS3D, the element is moved by the renderer, so its initial parent doesn't matter much
-        # as long as it exists.
-        
+        print(f"[ThreeStage] add_card called for element c{card_element.id}")
+
         # Wait for init
+        wait_count = 0
         while not self._initialized:
             await asyncio.sleep(0.1)
+            wait_count += 1
+            if wait_count > 50:  # 5 seconds max
+                print("[ThreeStage] ERROR: Timeout waiting for initialization!")
+                return
 
-        # Execute JS
-        await self.run_method_js(f'window.engine.addCard("c{card_element.id}")')
+        element_id = f"c{card_element.id}"
+        print(f"[ThreeStage] Executing JS: window.engine.addCard('{element_id}')")
+
+        # Diagnostic JS that logs back to Python
+        diag_js = f'''
+        (function() {{
+            let result = {{}};
+            result.engineExists = !!window.engine;
+            result.elementExists = !!document.getElementById("{element_id}");
+            if (result.elementExists) {{
+                let el = document.getElementById("{element_id}");
+                result.elementTag = el.tagName;
+                result.elementParent = el.parentElement ? el.parentElement.id : 'no-parent';
+            }}
+            if (window.engine) {{
+                try {{
+                    window.engine.addCard("{element_id}");
+                    result.addCardOK = true;
+                }} catch(e) {{
+                    result.addCardError = e.message;
+                }}
+            }}
+            console.log("[3D-DIAG]", JSON.stringify(result));
+            return JSON.stringify(result);
+        }})()
+        '''
+        try:
+            result = await ui.run_javascript(diag_js, timeout=10.0)
+            print(f"[ThreeStage] JS diagnostic result: {result}")
+        except Exception as e:
+            print(f"[ThreeStage] JS diagnostic error: {e}")
 
     async def move_to_stack(self, card_element: ui.element):
         if not self._initialized: return

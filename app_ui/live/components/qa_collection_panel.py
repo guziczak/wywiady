@@ -117,7 +117,9 @@ class QACollectionPanel:
 
     async def _create_and_throw_card(self, pair: 'QAPair'):
         """Tworzy element karty i wrzuca go do sceny 3D."""
+        print(f"[3D-CARD] _create_and_throw_card called for pair: {pair.id}")
         if not self.staging_container:
+            print("[3D-CARD] ERROR: No staging_container!")
             return
 
         self._added_card_ids.add(pair.id)
@@ -125,14 +127,19 @@ class QACollectionPanel:
         # Create the card element in the staging area
         with self.staging_container:
             card_el = self._build_card_element(pair)
-        
+
+        print(f"[3D-CARD] Card element created: id=c{card_el.id}")
         self._pair_element_map[pair.id] = card_el
 
         # Tell Three.js to take it
         # We need to wait a tick for NiceGUI/Vue to mount it
         await asyncio.sleep(0.05)
         if self.three_stage:
+            print(f"[3D-CARD] Calling three_stage.add_card(c{card_el.id})")
             await self.three_stage.add_card(card_el)
+            print(f"[3D-CARD] add_card done")
+        else:
+            print("[3D-CARD] ERROR: No three_stage!")
 
     def _build_card_element(self, pair: 'QAPair') -> ui.card:
         """Tworzy wizualną reprezentację karty (NiceGUI Element)."""
