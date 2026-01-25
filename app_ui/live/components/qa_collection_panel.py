@@ -194,19 +194,23 @@ class QACollectionPanel:
 
     async def _handle_new_pair_async(self, pair: 'QAPair'):
         """Async handler dla nowej karty."""
-        # Update UI text
-        current, target = self.state.qa_progress
-        if self.progress_badge:
-            self.progress_badge.text = f'{current}/{target}'
-            self.progress_badge.classes(add='pulse')
-            ui.timer(0.7, lambda: self.progress_badge.classes(remove='pulse'), once=True)
-        
-        self._update_undo_visibility()
-        
-        # Add to 3D scene
-        await self._create_and_throw_card(pair)
-        
-        ui.notify('Zebrano parę Q+A!', type='positive', position='top-right')
+        if not self._client:
+            return
+
+        with self._client:
+            # Update UI text
+            current, target = self.state.qa_progress
+            if self.progress_badge:
+                self.progress_badge.text = f'{current}/{target}'
+                self.progress_badge.classes(add='pulse')
+                ui.timer(0.7, lambda: self.progress_badge.classes(remove='pulse'), once=True)
+            
+            self._update_undo_visibility()
+            
+            # Add to 3D scene
+            await self._create_and_throw_card(pair)
+            
+            ui.notify('Zebrano parę Q+A!', type='positive', position='top-right')
 
     def _truncate(self, text: str, max_len: int) -> str:
         if len(text) <= max_len:
