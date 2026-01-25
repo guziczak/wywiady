@@ -103,8 +103,9 @@ class ActiveQuestionPanel:
         """Renderuje zawartość panelu."""
         self.container.clear()
 
-        # Jeśli brak aktywnego pytania - pokaż placeholder
+        # Jeśli brak aktywnego pytania - pokaż placeholder i resetuj selected
         if not self.context.is_active:
+            self._selected_answer = None  # Reset przy nowym pytaniu
             with self.container:
                 self._render_placeholder()
             return
@@ -315,6 +316,9 @@ class ActiveQuestionPanel:
 
     def _on_context_change(self, context: 'ActiveQuestionContext'):
         """Callback gdy zmieni się kontekst."""
+        # Reset selected answer przy zmianie stanu (nowe pytanie, matched, itp.)
+        if context.state.value in ('idle', 'loading', 'matched'):
+            self._selected_answer = None
         self._refresh_ui()
 
     def _refresh_ui(self):
