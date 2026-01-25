@@ -739,13 +739,12 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     with open(run_bat_path, "w") as f:
         f.write("@echo off\n")
         f.write(f"cd /d \"{install_dir}\"\n")
-        # Wazne: aktywacja ustawia PATH dla bibliotek (np. OpenVINO)
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
         f.write("set WYWIAD_STDOUT_LOG=logs\\stdout.log\n")
-        # Uzywamy pythonw.exe zeby nie wyskakiwalo okno konsoli jesli uruchomione bezposrednio
-        # Ale w bat i tak jest okno, wiec vbs to ukryje.
-        f.write(f"start \"\" /B python {MAIN_SCRIPT}\n")
+        # ZMIANA: Uzywamy zwyklego python (blokujacego), bo VBS i tak ukrywa okno.
+        # Dzieki temu proces CMD zyje tak dlugo jak aplikacja.
+        f.write(f"python {MAIN_SCRIPT}\n")
     
     # 2. run_debug.bat - Do diagnozy (z pause)
     run_debug_path = os.path.join(install_dir, "run_debug.bat")
@@ -770,9 +769,9 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         with open(run_vbs_path, "w", encoding="utf-8") as f:
             f.write('Set WshShell = CreateObject("WScript.Shell")\n')
             f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
-            # Uruchom run_app.bat w trybie ukrytym (0)
-            # Uzywamy cmd /c zeby poprawnie przetworzyc plik bat
-            f.write(f'WshShell.Run "cmd.exe /c ""{run_bat_path}""", 0, False\n')
+            # ZMIANA: Uruchamiamy .bat bezposrednio (potrojne cudzyslowy dla sciezek ze spacjami)
+            # 0 = Hide window, True = Wait (ale tu False zeby nie blokowac VBS)
+            f.write(f'WshShell.Run """{run_bat_path}""", 0, False\n')
             f.write('Set WshShell = Nothing\n')
     except Exception:
         pass
