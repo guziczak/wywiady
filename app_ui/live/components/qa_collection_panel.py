@@ -181,10 +181,16 @@ class QACollectionPanel:
         """Callback: Nowa para = nowa karta 3D."""
         if self._client:
             # Używamy background tasks dla async w sync callbacku
-            asyncio.run_coroutine_threadsafe(
-                self._handle_new_pair_async(pair), 
-                self._client.loop or asyncio.get_event_loop()
-            )
+            # Fix: Client nie ma atrybutu loop, używamy get_running_loop() lub create_task
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._handle_new_pair_async(pair))
+            except RuntimeError:
+                # Fallback jeśli nie ma aktywnego loopa (np. inny wątek)
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_new_pair_async(pair), 
+                    asyncio.get_event_loop()
+                )
 
     async def _handle_new_pair_async(self, pair: 'QAPair'):
         """Async handler dla nowej karty."""
