@@ -18,7 +18,7 @@ import ctypes
 try:
     import winsound
     
-    # Remastered Motif (44.1kHz, Reverb, Smoother)
+    # Ultra Fidelity Motif (Stereo + Chorus + Multi-Harmonic)
     MOTIF = [
         ('E4', 0, 4, 0.65), ('A4', 0, 4, 0.7), ('E5', 0, 1.5, 1.0),
         ('D5', 1.5, 0.5, 0.92), ('C5', 2, 1, 0.98), ('B4', 3, 0.5, 0.90), ('A4', 3.5, 0.5, 0.88),
@@ -36,76 +36,74 @@ try:
 
     def generate_wav_memory():
         sec_per_beat = 60 / TEMPO
-        total_samples = int(17 * sec_per_beat * SR)
-        audio = [0.0] * total_samples
+        total_samples = int(18 * sec_per_beat * SR)
+        audio_l = [0.0] * total_samples
+        audio_r = [0.0] * total_samples
 
         for note, start_beat, dur_beats, vel in MOTIF:
             f = FREQ[note]
             start_sample = int(start_beat * sec_per_beat * SR)
             dur_sec = dur_beats * sec_per_beat
             num_samples = int(dur_sec * SR)
-            phase = 0.0
-            phase2 = 0.0
-            vib_rate = 5.5
-            vib_depth = 0.007
-            note_samples = [0.0] * num_samples
             
+            # Chorus layers
+            layers = [
+                (f, 1.0, 0.7, 0.3, 0),
+                (f * 1.003, 1.0, 0.2, 0.8, 0.5),
+                (f * 0.997, 1.0, 0.5, 0.5, 1.2)
+            ]
+
             for i in range(num_samples):
                 t = i / SR
-                vib_amount = 0.0
-                if t > 0.15:
-                    vib_fade = min(1.0, (t - 0.15) / 0.2)
-                    vib_amount = math.sin(2 * math.pi * vib_rate * t) * f * vib_depth * vib_fade
-                freq_now = f + vib_amount
-                phase += 2 * math.pi * freq_now / SR
-                phase2 += 2 * math.pi * (freq_now * 2) / SR
-                saw = 2 * ((phase / (2 * math.pi)) % 1) - 1
-                harm2 = math.sin(phase2) * 0.4
-                wave = (saw * 0.6) + (harm2 * 0.4)
-                noise = 0.0
-                if t < 0.1:
-                    noise_env = (1.0 - t/0.1)
-                    noise = (random.random() - 0.5) * 0.3 * noise_env
+                # Exponential envelope
                 env = 1.0
-                att_s = int(0.08 * SR)
-                dec_s = int(0.1 * SR)
-                rel_s = int(0.15 * SR)
-                if i < att_s: env = (i / att_s)
-                elif i < att_s + dec_s: env = 1.0 - ((i - att_s) / dec_s) * 0.2
-                elif i > num_samples - rel_s: env = 0.8 * (num_samples - i) / rel_s
-                else: env = 0.8
-                note_samples[i] = (wave + noise) * env * vel * 0.15
+                att_s = int(0.1 * SR)
+                rel_s = int(0.2 * SR)
+                if i < att_s: env = (i / att_s) ** 2
+                elif i > num_samples - rel_s: env = ((num_samples - i) / rel_s) ** 2
+                
+                vib = math.sin(2 * math.pi * 5.6 * t) * (f * 0.008) if t > 0.1 else 0
+                sample_l = 0.0
+                sample_r = 0.0
 
-            last_val = 0.0
-            for i in range(len(note_samples)):
-                val = note_samples[i]
-                filtered = last_val * 0.6 + val * 0.4
-                note_samples[i] = filtered
-                last_val = filtered
+                for freq, detune, pan_l, pan_r, p_off in layers:
+                    phase = 2 * math.pi * (freq + vib) * t + p_off
+                    wave = (math.sin(phase) + math.sin(phase*2)*0.5 + math.sin(phase*3)*0.3 + math.sin(phase*4)*0.1)
+                    s = wave * env * vel * 0.1
+                    sample_l += s * pan_l
+                    sample_r += s * pan_r
+                
+                audio_l[start_sample + i] += sample_l
+                audio_r[start_sample + i] += sample_r
 
-            for i, s in enumerate(note_samples):
-                if start_sample + i < total_samples:
-                    audio[start_sample + i] += s
+        # Reverb
+        def apply_reverb(buf, delay_ms, fb):
+            ds = int(delay_ms * SR / 1000)
+            out = list(buf)
+            for i in range(ds, len(out)):
+                out[i] += out[i-ds] * fb
+            return out
 
-        delay_samples = int(180 * SR / 1000)
-        reverb_buffer = list(audio)
-        for i in range(len(audio)):
-            if i >= delay_samples:
-                reverb_signal = reverb_buffer[i - delay_samples] * 0.35
-                if i > 0: reverb_signal = (reverb_signal + reverb_buffer[i - delay_samples - 1] * 0.35) * 0.5
-                audio[i] += reverb_signal
+        audio_l = apply_reverb(audio_l, 160, 0.4)
+        audio_r = apply_reverb(audio_r, 195, 0.38)
 
-        max_val = max(abs(s) for s in audio) or 1
-        audio_int = [int((s / max_val) * 32767 * 0.9) for s in audio]
+        max_val = 0
+        for i in range(total_samples):
+            max_val = max(max_val, abs(audio_l[i]), abs(audio_r[i]))
+        max_val = max_val or 1
 
         buf = io.BytesIO()
-        data_size = len(audio_int) * 2
+        data_size = total_samples * 4
         buf.write(b'RIFF'); buf.write(struct.pack('<I', 36 + data_size)); buf.write(b'WAVE')
         buf.write(b'fmt '); buf.write(struct.pack('<I', 16)); buf.write(struct.pack('<H', 1))
-        buf.write(struct.pack('<H', 1)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 2))
-        buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
+        buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 4))
+        buf.write(struct.pack('<H', 4)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
         buf.write(struct.pack('<I', data_size))
-        for sample in audio_int: buf.write(struct.pack('<h', sample))
+        
+        for i in range(total_samples):
+            l = int((audio_l[i] / max_val) * 32767 * 0.8)
+            r = int((audio_r[i] / max_val) * 32767 * 0.8)
+            buf.write(struct.pack('<hh', l, r))
         return buf.getvalue()
 
     def play_music():
@@ -736,32 +734,48 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
 
     print_step("Konfiguracja skrotow...")
 
+    # 1. run_app.bat - Produkcyjny starter (bez pause, zeby nie blokowal procesu w tle)
     run_bat_path = os.path.join(install_dir, "run_app.bat")
     with open(run_bat_path, "w") as f:
         f.write("@echo off\n")
+        f.write(f"cd /d \"{install_dir}\"\n")
+        # Wazne: aktywacja ustawia PATH dla bibliotek (np. OpenVINO)
+        f.write("call venv\\Scripts\\activate.bat\n")
+        f.write("set WYWIAD_AUTO_OPEN=1\n")
+        f.write("set WYWIAD_STDOUT_LOG=logs\\stdout.log\n")
+        # Uzywamy pythonw.exe zeby nie wyskakiwalo okno konsoli jesli uruchomione bezposrednio
+        # Ale w bat i tak jest okno, wiec vbs to ukryje.
+        f.write(f"start \"\" /B python {MAIN_SCRIPT}\n")
+    
+    # 2. run_debug.bat - Do diagnozy (z pause)
+    run_debug_path = os.path.join(install_dir, "run_debug.bat")
+    with open(run_debug_path, "w") as f:
+        f.write("@echo off\n")
+        f.write("echo URUCHAMIANIE W TRYBIE DEBUGOWANIA...\n")
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
         f.write("set WYWIAD_STDOUT_LOG=logs\\stdout.log\n")
         f.write(f"python {MAIN_SCRIPT}\n")
+        f.write("if %errorlevel% neq 0 (\n")
+        f.write("    echo.\n")
+        f.write("    echo [!] APLIKACJA ZAKONCZYLA SIE BLEDEM.\n")
+        f.write("    echo Sprawdz plik logs\\stdout.log\n")
+        f.write(")\n")
         f.write("pause\n")
 
+    # 3. run_app.vbs - Wrapper ukrywajacy okno CMD
     run_vbs_path = os.path.join(install_dir, "run_app.vbs")
-    pythonw_path = os.path.join(install_dir, "venv", "Scripts", "pythonw.exe")
-    if os.path.exists(pythonw_path):
-        vbs_cmd = f"\"{pythonw_path}\" \"{MAIN_SCRIPT}\""
-        vbs_cmd = vbs_cmd.replace("\"", "\"\"")
-        try:
-            with open(run_vbs_path, "w", encoding="utf-8") as f:
-                f.write('Set WshShell = CreateObject("WScript.Shell")\n')
-                f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
-                f.write('WshShell.Environment("Process")("WYWIAD_AUTO_OPEN") = "1"\n')
-                f.write('WshShell.Environment("Process")("WYWIAD_STDOUT_LOG") = "logs\\\\stdout.log"\n')
-                f.write(f'WshShell.Run "{vbs_cmd}", 0, False\n')
-        except Exception:
-            run_vbs_path = run_bat_path
-    else:
-        run_vbs_path = run_bat_path
+    try:
+        with open(run_vbs_path, "w", encoding="utf-8") as f:
+            f.write('Set WshShell = CreateObject("WScript.Shell")\n')
+            f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
+            # Uruchom run_app.bat w trybie ukrytym (0)
+            # Uzywamy cmd /c zeby poprawnie przetworzyc plik bat
+            f.write(f'WshShell.Run "cmd.exe /c ""{run_bat_path}""", 0, False\n')
+            f.write('Set WshShell = Nothing\n')
+    except Exception:
+        pass
 
     desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
     shortcut_path = os.path.join(desktop, f"{SHORTCUT_NAME}.lnk")
