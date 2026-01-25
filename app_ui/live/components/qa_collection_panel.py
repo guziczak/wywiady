@@ -91,8 +91,9 @@ class QACollectionPanel:
                 self.three_stage = ThreeStage()
 
             # Staging Area (Hidden from view, but in DOM)
-            # We hide it via CSS, but ensure content is rendered
-            self.staging_container = ui.element('div').classes('hidden-staging fixed top-0 left-0 opacity-0 pointer-events-none')
+            # Use visibility:hidden instead of opacity:0 - opacity affects children!
+            # Position off-screen so CSS3D can still pick it up
+            self.staging_container = ui.element('div').classes('hidden-staging').style('position: absolute; left: -9999px; top: -9999px; visibility: hidden;')
 
         # Capture client context
         self._client = ui.context.client

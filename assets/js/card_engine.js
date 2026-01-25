@@ -29,9 +29,9 @@ export class CardEngine {
         this.renderer.setSize(width, height);
         this.renderer.domElement.style.position = 'absolute';
         this.renderer.domElement.style.top = '0';
-        this.renderer.domElement.style.pointerEvents = 'none'; // Allow clicks to pass through to underlying divs if needed, but usually we want interaction
-        // For CSS3D, the renderer DOM element contains the transformed divs. 
-        // We want pointer-events: auto on the divs themselves (which is default).
+        this.renderer.domElement.style.left = '0';
+        // pointer-events: auto on renderer so cards are clickable
+        this.renderer.domElement.style.pointerEvents = 'auto';
         
         // Clear container and append renderer
         this.container.innerHTML = '';
@@ -69,13 +69,19 @@ export class CardEngine {
             return;
         }
 
-        // Clone/Move logic: CSS3DObject moves the element.
-        // We ensure the element is visible and has pointer events
+        // IMPORTANT: Move element out of hidden staging container into renderer
+        // CSS3DObject does NOT move elements, just applies transforms
+        this.renderer.domElement.appendChild(element);
+        console.log(`[CardEngine] Moved element ${elementId} to renderer, parent:`, element.parentElement);
+
+        // Ensure element is visible and interactive
         element.style.display = 'block';
         element.style.pointerEvents = 'auto';
-        element.style.opacity = '1'; // Force visibility
+        element.style.opacity = '1';
+        element.style.visibility = 'visible';
 
         const object = new CSS3DObject(element);
+        console.log(`[CardEngine] Created CSS3DObject for ${elementId}`);
         
         // Initial Position: Above the camera, slightly random X
         const startX = (Math.random() - 0.5) * 200;
