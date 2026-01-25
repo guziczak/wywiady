@@ -7,6 +7,116 @@ import zipfile
 import shutil
 import time
 import json
+import threading
+import math
+import struct
+import io
+import random
+import ctypes
+
+# === MUSIC START ===
+try:
+    import winsound
+    
+    # Remastered Motif (44.1kHz, Reverb, Smoother)
+    MOTIF = [
+        ('E4', 0, 4, 0.65), ('A4', 0, 4, 0.7), ('E5', 0, 1.5, 1.0),
+        ('D5', 1.5, 0.5, 0.92), ('C5', 2, 1, 0.98), ('B4', 3, 0.5, 0.90), ('A4', 3.5, 0.5, 0.88),
+        ('G4', 4, 0.75, 0.90), ('A4', 4.75, 0.25, 0.86), ('B4', 5, 1.5, 0.98),
+        ('C5', 6.5, 1, 0.95), ('D5', 7.5, 0.5, 0.92),
+        ('E5', 8, 0.75, 1.0), ('F5', 8.75, 0.25, 0.96), ('G5', 9, 1, 1.0),
+        ('A5', 10, 1, 1.0), ('G5', 11, 0.5, 0.98), ('F5', 11.5, 0.5, 0.92),
+        ('E5', 12, 1.5, 1.0), ('D5', 13.5, 0.5, 0.92),
+        ('C5', 14, 0.5, 0.96), ('B4', 14.5, 0.5, 0.90), ('A4', 15, 1, 0.98)
+    ]
+    FREQ = {'G4': 392, 'A4': 440, 'B4': 494, 'C5': 523, 'D5': 587,
+            'E4': 330, 'E5': 659, 'F5': 698, 'G5': 784, 'A5': 880}
+    TEMPO = 103
+    SR = 44100
+
+    def generate_wav_memory():
+        sec_per_beat = 60 / TEMPO
+        total_samples = int(17 * sec_per_beat * SR)
+        audio = [0.0] * total_samples
+
+        for note, start_beat, dur_beats, vel in MOTIF:
+            f = FREQ[note]
+            start_sample = int(start_beat * sec_per_beat * SR)
+            dur_sec = dur_beats * sec_per_beat
+            num_samples = int(dur_sec * SR)
+            phase = 0.0
+            phase2 = 0.0
+            vib_rate = 5.5
+            vib_depth = 0.007
+            note_samples = [0.0] * num_samples
+            
+            for i in range(num_samples):
+                t = i / SR
+                vib_amount = 0.0
+                if t > 0.15:
+                    vib_fade = min(1.0, (t - 0.15) / 0.2)
+                    vib_amount = math.sin(2 * math.pi * vib_rate * t) * f * vib_depth * vib_fade
+                freq_now = f + vib_amount
+                phase += 2 * math.pi * freq_now / SR
+                phase2 += 2 * math.pi * (freq_now * 2) / SR
+                saw = 2 * ((phase / (2 * math.pi)) % 1) - 1
+                harm2 = math.sin(phase2) * 0.4
+                wave = (saw * 0.6) + (harm2 * 0.4)
+                noise = 0.0
+                if t < 0.1:
+                    noise_env = (1.0 - t/0.1)
+                    noise = (random.random() - 0.5) * 0.3 * noise_env
+                env = 1.0
+                att_s = int(0.08 * SR)
+                dec_s = int(0.1 * SR)
+                rel_s = int(0.15 * SR)
+                if i < att_s: env = (i / att_s)
+                elif i < att_s + dec_s: env = 1.0 - ((i - att_s) / dec_s) * 0.2
+                elif i > num_samples - rel_s: env = 0.8 * (num_samples - i) / rel_s
+                else: env = 0.8
+                note_samples[i] = (wave + noise) * env * vel * 0.15
+
+            last_val = 0.0
+            for i in range(len(note_samples)):
+                val = note_samples[i]
+                filtered = last_val * 0.6 + val * 0.4
+                note_samples[i] = filtered
+                last_val = filtered
+
+            for i, s in enumerate(note_samples):
+                if start_sample + i < total_samples:
+                    audio[start_sample + i] += s
+
+        delay_samples = int(180 * SR / 1000)
+        reverb_buffer = list(audio)
+        for i in range(len(audio)):
+            if i >= delay_samples:
+                reverb_signal = reverb_buffer[i - delay_samples] * 0.35
+                if i > 0: reverb_signal = (reverb_signal + reverb_buffer[i - delay_samples - 1] * 0.35) * 0.5
+                audio[i] += reverb_signal
+
+        max_val = max(abs(s) for s in audio) or 1
+        audio_int = [int((s / max_val) * 32767 * 0.9) for s in audio]
+
+        buf = io.BytesIO()
+        data_size = len(audio_int) * 2
+        buf.write(b'RIFF'); buf.write(struct.pack('<I', 36 + data_size)); buf.write(b'WAVE')
+        buf.write(b'fmt '); buf.write(struct.pack('<I', 16)); buf.write(struct.pack('<H', 1))
+        buf.write(struct.pack('<H', 1)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 2))
+        buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
+        buf.write(struct.pack('<I', data_size))
+        for sample in audio_int: buf.write(struct.pack('<h', sample))
+        return buf.getvalue()
+
+    def play_music():
+        try:
+            wav_data = generate_wav_memory()
+            winsound.PlaySound(wav_data, winsound.SND_MEMORY)
+        except: pass
+except:
+    def play_music(): pass
+# === MUSIC END ===
+
 from datetime import datetime
 from branding import BRAND_ICON_TAG
 
@@ -1338,6 +1448,9 @@ def _show_gui_error(err_path: str) -> None:
 
 
 def main():
+    # Start music immediately
+    threading.Thread(target=play_music, daemon=True).start()
+
     args = [a.lower() for a in sys.argv[1:]]
     force_console = "--console" in args or os.environ.get("WYWIAD_INSTALLER_CONSOLE") == "1"
     is_exe = str(sys.argv[0]).lower().endswith(".exe")
