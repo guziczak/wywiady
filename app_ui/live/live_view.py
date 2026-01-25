@@ -517,15 +517,35 @@ class LiveInterviewView:
         """Przechodzi do ekranu generowania opisu."""
         # Przygotuj finalny transkrypt (z mówcami jeśli są)
         transcript = self.state.full_transcript
-        
+
         if self.state.diarization and self.state.diarization.has_data and self.state.diarization.enabled:
             transcript = self.state.diarization.get_formatted_transcript()
+
+        # Dodaj zebrane pary Q+A do transkryptu
+        qa_pairs = self.state.qa_collector.pairs
+        if qa_pairs:
+            qa_section = self._format_qa_pairs_for_transcript(qa_pairs)
+            transcript = transcript + "\n\n" + qa_section
+            print(f"[LIVE] Added {len(qa_pairs)} Q+A pairs to transcript", flush=True)
 
         if self._client:
             with self._client:
                 app.storage.user['live_transcript'] = transcript
                 print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
                 ui.navigate.to('/')
+
+    def _format_qa_pairs_for_transcript(self, pairs) -> str:
+        """Formatuje pary Q+A jako sekcję do transkryptu."""
+        if not pairs:
+            return ""
+
+        lines = ["", "=== ZEBRANE PYTANIA I ODPOWIEDZI ===", ""]
+        for i, pair in enumerate(pairs, 1):
+            lines.append(f"[{i}] Pytanie: {pair.question}")
+            lines.append(f"    Odpowiedź: {pair.answer}")
+            lines.append("")
+
+        return "\n".join(lines)
 
     # === TRANSCRIBER CALLBACKS ===
 
