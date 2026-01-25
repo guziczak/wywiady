@@ -33,9 +33,19 @@ class ThreeStage(ui.element):
     async def _init_client_side(self):
         # Dynamically import the module to guarantee it's loaded
         js_init = f'''
+        console.log("[3D] Starting dynamic import of card_engine.js...");
         import('/assets/js/card_engine.js').then(module => {{
-            window.engine = module.createCardEngine("{self.id}");
-        }}).catch(err => console.error("Failed to load 3D engine:", err));
+            console.log("[3D] Module loaded!", module);
+            if (module.createCardEngine) {{
+                window.engine = module.createCardEngine("{self.id}");
+                console.log("[3D] Engine initialized:", window.engine);
+            }} else {{
+                console.error("[3D] Module does not export createCardEngine!");
+            }}
+        }}).catch(err => {{
+            console.error("[3D] Failed to load 3D engine:", err);
+            console.error(err.message);
+        }});
         '''
         await self.run_method_js(js_init)
         self._initialized = True
