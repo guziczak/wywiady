@@ -18,92 +18,90 @@ import ctypes
 try:
     import winsound
     
-    # Ultra Fidelity Motif (Stereo + Chorus + Multi-Harmonic)
-    MOTIF = [
-        ('E4', 0, 4, 0.65), ('A4', 0, 4, 0.7), ('E5', 0, 1.5, 1.0),
-        ('D5', 1.5, 0.5, 0.92), ('C5', 2, 1, 0.98), ('B4', 3, 0.5, 0.90), ('A4', 3.5, 0.5, 0.88),
-        ('G4', 4, 0.75, 0.90), ('A4', 4.75, 0.25, 0.86), ('B4', 5, 1.5, 0.98),
-        ('C5', 6.5, 1, 0.95), ('D5', 7.5, 0.5, 0.92),
-        ('E5', 8, 0.75, 1.0), ('F5', 8.75, 0.25, 0.96), ('G5', 9, 1, 1.0),
-        ('A5', 10, 1, 1.0), ('G5', 11, 0.5, 0.98), ('F5', 11.5, 0.5, 0.92),
-        ('E5', 12, 1.5, 1.0), ('D5', 13.5, 0.5, 0.92),
-        ('C5', 14, 0.5, 0.96), ('B4', 14.5, 0.5, 0.90), ('A4', 15, 1, 0.98)
+    # PIANO MASTERPIECE ENGINE (Ported from JS)
+    NOTES = {'A0': 27.5, 'A#0': 29.14, 'B0': 30.87}
+    names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    for oct in range(1, 9):
+        for i, name in enumerate(names):
+            freq = 32.703 * (2 ** (oct-1)) * (2 ** (i/12))
+            NOTES[f"{name}{oct}"] = freq
+
+    # Prelude from composition.js
+    COMPOSITION = [
+        ('A2', 0, 4, 0.22), ('A1', 0, 4, 0.18), ('E3', 0.5, 3.5, 0.18),
+        ('A3', 1, 3, 0.2), ('C4', 1.5, 2.5, 0.22), ('E4', 2, 2, 0.25),
+        ('G4', 2.5, 1.5, 0.2), ('E5', 3, 0.5, 0.35), ('A5', 3.5, 0.5, 0.4),
+        ('A4', 4, 1.5, 0.32), ('C4', 4, 1.5, 0.25), ('E4', 4.5, 1, 0.28),
+        ('B4', 5.5, 0.5, 0.28), ('C5', 6, 2, 0.35), ('G4', 6, 2, 0.3),
+        ('E4', 6.5, 1.5, 0.25), ('A5', 7, 0.75, 0.42), ('G5', 7.75, 0.25, 0.38),
+        ('E2', 8, 4, 0.22), ('E1', 8, 4, 0.18), ('B2', 8.5, 3.5, 0.18),
+        ('E3', 9, 3, 0.2), ('G3', 9.5, 2.5, 0.22), ('B3', 9.5, 2.5, 0.2),
+        ('B4', 10, 1, 0.3), ('E4', 10, 1, 0.25), ('G4', 10, 1, 0.22),
+        ('A4', 11, 0.75, 0.28), ('G4', 11.75, 0.25, 0.22), ('E4', 12, 2, 0.32),
+        ('B3', 12, 2, 0.28), ('G3', 12.5, 1.5, 0.25), ('B5', 13, 0.5, 0.4),
+        ('A5', 13.5, 0.5, 0.38), ('G5', 14, 1, 0.35)
     ]
-    FREQ = {'G4': 392, 'A4': 440, 'B4': 494, 'C5': 523, 'D5': 587,
-            'E4': 330, 'E5': 659, 'F5': 698, 'G5': 784, 'A5': 880}
+
     TEMPO = 103
-    SR = 44100
+    SR = 22050 # Slightly lower SR for faster generation of polyphony
 
     def generate_wav_memory():
         sec_per_beat = 60 / TEMPO
-        total_samples = int(18 * sec_per_beat * SR)
-        audio_l = [0.0] * total_samples
-        audio_r = [0.0] * total_samples
-
-        for note, start_beat, dur_beats, vel in MOTIF:
-            f = FREQ[note]
+        total_duration = 16 * sec_per_beat + 3
+        total_samples = int(total_duration * SR)
+        mix = [0.0] * total_samples
+        
+        for note_name, start_beat, dur_beats, vel in COMPOSITION:
+            freq = NOTES.get(note_name, 440)
             start_sample = int(start_beat * sec_per_beat * SR)
             dur_sec = dur_beats * sec_per_beat
-            num_samples = int(dur_sec * SR)
+            ns = int(dur_sec * 2.0 * SR) # Allow sustain
             
-            # Chorus layers
-            layers = [
-                (f, 1.0, 0.7, 0.3, 0),
-                (f * 1.003, 1.0, 0.2, 0.8, 0.5),
-                (f * 0.997, 1.0, 0.5, 0.5, 1.2)
-            ]
-
-            for i in range(num_samples):
+            if start_sample >= total_samples: continue
+            
+            # Simple Piano Synthesis
+            # 3 harmonics + simple decay
+            note_buf = [0.0] * ns
+            w = 2 * math.pi * freq / SR
+            
+            for i in range(ns):
                 t = i / SR
-                # Exponential envelope
-                env = 1.0
-                att_s = int(0.1 * SR)
-                rel_s = int(0.2 * SR)
-                if i < att_s: env = (i / att_s) ** 2
-                elif i > num_samples - rel_s: env = ((num_samples - i) / rel_s) ** 2
+                # Hammer attack
+                att = min(1.0, i / 100)
+                # Exponential decay
+                dec = math.exp(-2.0 * t) 
                 
-                vib = math.sin(2 * math.pi * 5.6 * t) * (f * 0.008) if t > 0.1 else 0
-                sample_l = 0.0
-                sample_r = 0.0
-
-                for freq, detune, pan_l, pan_r, p_off in layers:
-                    phase = 2 * math.pi * (freq + vib) * t + p_off
-                    wave = (math.sin(phase) + math.sin(phase*2)*0.5 + math.sin(phase*3)*0.3 + math.sin(phase*4)*0.1)
-                    s = wave * env * vel * 0.1
-                    sample_l += s * pan_l
-                    sample_r += s * pan_r
+                # Harmonics
+                s = math.sin(w * i) * 1.0 + \
+                    math.sin(w * 2 * i) * 0.5 * math.exp(-t) + \
+                    math.sin(w * 3 * i) * 0.2 * math.exp(-2*t)
                 
-                audio_l[start_sample + i] += sample_l
-                audio_r[start_sample + i] += sample_r
+                note_buf[i] = s * vel * att * dec * 0.3
 
-        # Reverb
-        def apply_reverb(buf, delay_ms, fb):
-            ds = int(delay_ms * SR / 1000)
-            out = list(buf)
-            for i in range(ds, len(out)):
-                out[i] += out[i-ds] * fb
-            return out
+            for i in range(ns):
+                if start_sample + i < total_samples:
+                    mix[start_sample + i] += note_buf[i]
 
-        audio_l = apply_reverb(audio_l, 160, 0.4)
-        audio_r = apply_reverb(audio_r, 195, 0.38)
+        # Simple Reverb
+        ds = int(0.2 * SR)
+        for i in range(ds, total_samples):
+            mix[i] += mix[i-ds] * 0.25
 
-        max_val = 0
-        for i in range(total_samples):
-            max_val = max(max_val, abs(audio_l[i]), abs(audio_r[i]))
-        max_val = max_val or 1
-
+        # Normalize
+        max_val = max(max(abs(x) for x in mix), 0.001)
+        
         buf = io.BytesIO()
-        data_size = total_samples * 4
+        data_size = total_samples * 2
         buf.write(b'RIFF'); buf.write(struct.pack('<I', 36 + data_size)); buf.write(b'WAVE')
         buf.write(b'fmt '); buf.write(struct.pack('<I', 16)); buf.write(struct.pack('<H', 1))
-        buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 4))
-        buf.write(struct.pack('<H', 4)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
+        buf.write(struct.pack('<H', 1)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 2))
+        buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
         buf.write(struct.pack('<I', data_size))
         
-        for i in range(total_samples):
-            l = int((audio_l[i] / max_val) * 32767 * 0.8)
-            r = int((audio_r[i] / max_val) * 32767 * 0.8)
-            buf.write(struct.pack('<hh', l, r))
+        for s in mix:
+            val = int(max(min(s / max_val, 1.0), -1.0) * 32000)
+            buf.write(struct.pack('<h', val))
+            
         return buf.getvalue()
 
     def play_music():

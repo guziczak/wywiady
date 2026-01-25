@@ -6,7 +6,7 @@ import random
 import threading
 
 # Muzyka - climax motif
-# ULTRA FIDELITY EDITION: Stereo + Chorus + Multi-Harmonic Synthesis + Pro Reverb
+# CLEAN VERSION: 44.1kHz Mono, Smoothed Sawtooth (No artifacts, no horror)
 
 MOTIF = [
     ('E4', 0, 4, 0.65), ('A4', 0, 4, 0.7), ('E5', 0, 1.5, 1.0),
@@ -21,15 +21,13 @@ MOTIF = [
 FREQ = {'G4': 392, 'A4': 440, 'B4': 494, 'C5': 523, 'D5': 587,
         'E4': 330, 'E5': 659, 'F5': 698, 'G5': 784, 'A5': 880}
 TEMPO = 103
-SR = 44100
+SR = 44100  # High Quality, ale Mono
 
 def generate_wav_memory():
-    """Generuj WAV Stereo Hi-Fi do pamieci"""
+    """Generuj WAV Mono Clean"""
     sec_per_beat = 60 / TEMPO
-    total_samples = int(18 * sec_per_beat * SR)
-    # Stereo buffers
-    audio_l = [0.0] * total_samples
-    audio_r = [0.0] * total_samples
+    total_samples = int(16 * sec_per_beat * SR)
+    audio = [0.0] * total_samples
 
     for note, start_beat, dur_beats, vel in MOTIF:
         f = FREQ[note]
@@ -37,92 +35,98 @@ def generate_wav_memory():
         dur_sec = dur_beats * sec_per_beat
         num_samples = int(dur_sec * SR)
 
-        # Chorus effect - 3 sub-oscillators with slight detune
-        # (Freq, Detune, PanL, PanR, PhaseOffset)
-        layers = [
-            (f, 1.0, 0.7, 0.3, 0),
-            (f * 1.003, 1.0, 0.2, 0.8, 0.5),
-            (f * 0.997, 1.0, 0.5, 0.5, 1.2)
-        ]
+        phase = 0.0
+        phase2 = 0.0
+        
+        # Wygładzamy parametry vibrato
+        vib_rate = 5.5
+        vib_depth = 0.006
+
+        note_samples = [0.0] * num_samples
 
         for i in range(num_samples):
             t = i / SR
-            
-            # Envelope (Exponential for smoothness)
-            env = 1.0
-            att_t = 0.1
-            rel_t = 0.2
-            att_s = int(att_t * SR)
-            rel_s = int(rel_t * SR)
-            
-            if i < att_s:
-                env = math.pow(i / att_s, 2)
-            elif i > num_samples - rel_s:
-                env = math.pow((num_samples - i) / rel_s, 2)
-            
+
             # Vibrato
-            vib = math.sin(2 * math.pi * 5.6 * t) * (f * 0.008) if t > 0.1 else 0
+            vib_amount = 0.0
+            if t > 0.15:
+                # Płynniejsze wejście vibrato
+                vib_fade = min(1.0, (t - 0.15) / 0.2)
+                vib_amount = math.sin(2 * math.pi * vib_rate * t) * f * vib_depth * vib_fade
 
-            sample_l = 0.0
-            sample_r = 0.0
+            # Minimalny jitter dla naturalności
+            jitter = (random.random() - 0.5) * f * 0.001
 
-            for freq, detune, pan_l, pan_r, p_off in layers:
-                phase = 2 * math.pi * (freq + vib) * t + p_off
-                
-                # Multi-Harmonic synthesis (Violin-like spectrum)
-                # Harmonics: 1, 2, 3, 4
-                wave = (math.sin(phase) * 1.0 + 
-                        math.sin(phase * 2) * 0.5 + 
-                        math.sin(phase * 3) * 0.3 + 
-                        math.sin(phase * 4) * 0.1)
-                
-                s = wave * env * vel * 0.1
-                sample_l += s * pan_l
-                sample_r += s * pan_r
+            freq_now = f + vib_amount + jitter
+            phase += 2 * math.pi * freq_now / SR
+            phase2 += 2 * math.pi * (freq_now * 2) / SR
 
-            audio_l[start_sample + i] += sample_l
-            audio_r[start_sample + i] += sample_r
+            # Sawtooth + 2nd Harmonic (klasyczne brzmienie skrzypiec)
+            saw = 2 * ((phase / (2 * math.pi)) % 1) - 1
+            harm2 = math.sin(phase2) * 0.3
+            wave = saw * 0.7 + harm2
 
-    # Pro Stereo Reverb (Schroeder-inspired)
-    def apply_reverb(buf, delay_ms, fb):
-        ds = int(delay_ms * SR / 1000)
-        out = list(buf)
-        for i in range(ds, len(out)):
-            out[i] += out[i-ds] * fb
-        return out
+            # Bow noise (szum smyczka) - delikatniejszy
+            bow_noise = 0.0
+            if t < 0.08:
+                noise_amount = (1 - t / 0.08) * 0.1
+                bow_noise = (random.random() - 0.5) * noise_amount
 
-    # Różne czasy delaya dla L i R tworzą szeroką panoramę
-    audio_l = apply_reverb(audio_l, 160, 0.4)
-    audio_r = apply_reverb(audio_r, 195, 0.38)
+            # Envelope ADSR
+            env = 1.0
+            att = int(0.04 * SR)
+            decay = int(0.08 * SR)
+            rel = int(0.12 * SR)
 
-    # Mix down to 16-bit PCM Stereo
-    max_val = 0
-    for i in range(total_samples):
-        max_val = max(max_val, abs(audio_l[i]), abs(audio_r[i]))
-    max_val = max_val or 1
-    
+            if i < att:
+                env = (i / att) * 1.1
+            elif i < att + decay:
+                decay_pos = (i - att) / decay
+                env = 1.1 - decay_pos * 0.15
+            elif i > num_samples - rel:
+                env = 0.95 * (num_samples - i) / rel
+            else:
+                env = 0.95
+
+            note_samples[i] = (wave + bow_noise) * env * vel * 0.12
+
+        # Lowpass filter (prosty filtr dolnoprzepustowy)
+        # Usuwa ostre cyfrowe krawędzie ("tekturę")
+        last_val = 0.0
+        for i in range(len(note_samples)):
+            val = note_samples[i]
+            # Mocniejszy filtr dla 44kHz
+            filtered = last_val * 0.7 + val * 0.3
+            note_samples[i] = filtered
+            last_val = filtered
+
+        # Mix do głównego bufora
+        for i, s in enumerate(note_samples):
+            if start_sample + i < total_samples:
+                audio[start_sample + i] += s
+
+    # Normalizacja
+    max_val = max(abs(s) for s in audio) or 1
+    # Konwersja do 16-bit PCM Mono
+    audio_int = [int((s / max_val) * 32767 * 0.9) for s in audio]
+
     buf = io.BytesIO()
-    # RIFF/WAVE Stereo 44.1kHz
-    data_size = total_samples * 2 * 2 # 2 channels * 2 bytes
+    data_size = len(audio_int) * 2
     buf.write(b'RIFF')
     buf.write(struct.pack('<I', 36 + data_size))
     buf.write(b'WAVE')
     buf.write(b'fmt ')
     buf.write(struct.pack('<I', 16))
-    buf.write(struct.pack('<H', 1)) # PCM
-    buf.write(struct.pack('<H', 2)) # Stereo
+    buf.write(struct.pack('<H', 1))   # PCM
+    buf.write(struct.pack('<H', 1))   # Mono
     buf.write(struct.pack('<I', SR))
-    buf.write(struct.pack('<I', SR * 4)) # Byte rate
-    buf.write(struct.pack('<H', 4)) # Block align
-    buf.write(struct.pack('<H', 16)) # Bits per sample
+    buf.write(struct.pack('<I', SR * 2))
+    buf.write(struct.pack('<H', 2))
+    buf.write(struct.pack('<H', 16))
     buf.write(b'data')
     buf.write(struct.pack('<I', data_size))
-
-    for i in range(total_samples):
-        l = int((audio_l[i] / max_val) * 32767 * 0.8)
-        r = int((audio_r[i] / max_val) * 32767 * 0.8)
-        buf.write(struct.pack('<hh', l, r))
-
+    for s in audio_int:
+        buf.write(struct.pack('<h', s))
     return buf.getvalue()
 
 _WAV_CACHE = None
