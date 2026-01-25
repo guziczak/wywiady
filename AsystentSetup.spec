@@ -16,6 +16,10 @@ if os.path.isdir('extension'):
         if name.lower().startswith('icon') and name.lower().endswith(('.png', '.ico')):
             datas.append((os.path.join('extension', name), 'extension'))
 
+# Add bundled repo if exists (Offline Installer)
+if os.path.exists('bundled_repo.zip'):
+    datas.append(('bundled_repo.zip', '.'))
+
 a = Analysis(
     ['installer.py'],
     pathex=[],
