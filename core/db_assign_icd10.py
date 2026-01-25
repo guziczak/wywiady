@@ -22,17 +22,19 @@ def assign_icd10_to_specs():
     # 11: Psychiatria (F00-F99)
     # 12: Onkologia (C00-D48) - dodamy nową spec.
 
+    # Mapowanie zakresów ICD-10 do ID specjalizacji
+    # ID spójne z db_import_icd9_full.py
     mappings = [
-        (1, ["K00", "K01", "K02", "K03", "K04", "K05", "K06", "K07", "K08", "K09", "K10", "K11", "K12", "K13", "K14"]),
-        (2, ["I"]),
-        (3, ["H0", "H1", "H2", "H3", "H4", "H5"]),
-        (4, ["M"]),
-        (6, ["N7", "N8", "N9", "O"]),
-        (7, ["J0", "J1", "J2", "J3", "H6", "H7", "H8", "H9"]),
-        (8, ["G"]),
-        (9, ["N0", "N1", "N2", "N3"]),
-        (10, ["L"]),
-        (11, ["F"]),
+        (1, ["K00", "K01", "K02", "K03", "K04", "K05", "K06", "K07", "K08", "K09", "K10", "K11", "K12", "K13", "K14"]),  # Stomatologia
+        (2, ["I"]),          # Kardiologia
+        (3, ["H0", "H1", "H2", "H3", "H4", "H5"]),  # Okulistyka
+        (4, ["M"]),          # Ortopedia
+        (6, ["N7", "N8", "N9", "O"]),  # Ginekologia + Położnictwo
+        (7, ["J0", "J1", "J2", "J3", "H6", "H7", "H8", "H9"]),  # Laryngologia
+        (8, ["G"]),          # Neurologia
+        (9, ["N0", "N1", "N2", "N3"]),  # Urologia
+        (10, ["L"]),         # Dermatologia
+        (11, ["F"]),         # Psychiatria
     ]
 
     for spec_id, prefixes in mappings:

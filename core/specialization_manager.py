@@ -194,10 +194,12 @@ class SpecializationManager:
 
     def _load_fallback_specializations(self) -> None:
         """Awaryjne specjalizacje gdy brak danych na dysku."""
+        # ID muszą być spójne z db_import_icd9_full.py i db_assign_icd10.py
         defaults = [
             {"id": 1, "name": "Stomatologia", "slug": "stomatologia", "icon": "🦷", "enabled": True},
             {"id": 2, "name": "Kardiologia", "slug": "kardiologia", "icon": "❤️", "enabled": True},
             {"id": 3, "name": "Okulistyka", "slug": "okulistyka", "icon": "👁️", "enabled": True},
+            {"id": 6, "name": "Ginekologia", "slug": "ginekologia", "icon": "🤰", "enabled": True},
         ]
         for data in defaults:
             spec = Specialization.from_dict(data)

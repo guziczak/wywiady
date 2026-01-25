@@ -49,6 +49,10 @@ def seed_icd9_procedures():
         # UKŁAD MOCZOWY (55-59) - Urologia (ID 8)
         ("57.32", "Cystoskopia", "Układ moczowy", None),
 
+        # GINEKOLOGIA (65-75) - ID 6 w db_import_icd9_full.py
+        # Dane ginekologiczne są importowane z oficjalnego ICD-9 (icd9_official.xlsx)
+        # NIE dodawać tutaj ręcznie - użyj: python core/db_import_icd9_full.py
+
         # UKŁAD MIĘŚNIOWO-SZKIELETOWY (76-84) - Ortopedia (ID 9)
         ("81.54", "Całkowita endoprotezoplastyka kolana", "Ortopedia", None),
         ("81.51", "Całkowita endoprotezoplastyka biodra", "Ortopedia", None),
