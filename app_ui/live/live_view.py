@@ -676,21 +676,20 @@ class LiveInterviewView:
     def _on_manual_answer_selected(self, question: str, answer: str):
         """
         Callback: ręcznie wybrano odpowiedź (kliknięcie karty).
-        Dodaje parę Q+A do kolekcji.
+        Para Q+A jest już dodana przez LiveState._on_question_matched (via match()).
+        Tu tylko odświeżamy UI i czyścimy aktywne pytanie.
         """
         print(f"[LIVE] Manual answer selected: Q='{question[:30]}...' A='{answer[:30]}...'", flush=True)
 
-        # Dodaj parę do kolektora
-        started_at = self.state.active_question.started_at
-        self.state.qa_collector.add_from_context(question, answer, started_at)
+        # Para już została dodana przez callback _on_question_matched w LiveState
+        # (wywoływany automatycznie przez match())
 
-        # Odśwież panel Q+A
+        # Odśwież panel Q+A (na wypadek gdyby callback nie zadziałał)
         if self.qa_panel:
             self.qa_panel.refresh()
 
         # Wyczyść aktywne pytanie po chwili (pozwól zobaczyć animację)
         async def _clear_after_delay():
-            import asyncio
             await asyncio.sleep(1.5)
             if self._client:
                 try:
