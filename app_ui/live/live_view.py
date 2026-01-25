@@ -181,6 +181,7 @@ class LiveInterviewView:
                 self.active_question_panel = ActiveQuestionPanel(
                     context=self.state.active_question,
                     on_answer_click=self._on_answer_copied,
+                    on_manual_answer=self._on_manual_answer_selected,
                     on_close=self._on_active_question_closed
                 )
                 self.active_question_panel.create()
@@ -671,6 +672,36 @@ class LiveInterviewView:
         """Callback: skopiowano odpowiedź z panelu aktywnego pytania."""
         print(f"[LIVE] Answer copied: {answer[:30]}...", flush=True)
         # Opcjonalnie: można tu dodać logikę
+
+    def _on_manual_answer_selected(self, question: str, answer: str):
+        """
+        Callback: ręcznie wybrano odpowiedź (kliknięcie karty).
+        Dodaje parę Q+A do kolekcji.
+        """
+        print(f"[LIVE] Manual answer selected: Q='{question[:30]}...' A='{answer[:30]}...'", flush=True)
+
+        # Dodaj parę do kolektora
+        started_at = self.state.active_question.started_at
+        self.state.qa_collector.add_from_context(question, answer, started_at)
+
+        # Odśwież panel Q+A
+        if self.qa_panel:
+            self.qa_panel.refresh()
+
+        # Wyczyść aktywne pytanie po chwili (pozwól zobaczyć animację)
+        async def _clear_after_delay():
+            import asyncio
+            await asyncio.sleep(1.5)
+            if self._client:
+                try:
+                    with self._client:
+                        self.state.active_question.clear(force=True)
+                        if self.active_question_panel:
+                            self.active_question_panel.refresh()
+                except Exception:
+                    pass
+
+        asyncio.create_task(_clear_after_delay())
 
     def _on_active_question_closed(self):
         """Callback: zamknięto panel aktywnego pytania."""

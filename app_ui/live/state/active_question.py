@@ -54,6 +54,9 @@ class ActiveQuestionContext:
     # User control
     pinned: bool = False
 
+    # Odpowiedz source: 'auto' (transkrypcja) lub 'manual' (klik)
+    answer_source: Optional[str] = None
+
     # Callbacks
     _on_state_change: Optional[Callable[['ActiveQuestionContext'], None]] = None
     _on_matched: Optional[Callable[[str, str], None]] = None  # (question, answer)
@@ -80,6 +83,7 @@ class ActiveQuestionContext:
         self.expires_at = self.started_at + timeout
         self.answers = []
         self.pinned = False
+        self.answer_source = None
 
         print(f"[ActiveQ] Activated: '{question[:40]}...' (timeout={timeout}s)", flush=True)
         self._notify()
@@ -115,10 +119,15 @@ class ActiveQuestionContext:
         print(f"[ActiveQ] Waiting for answer...", flush=True)
         self._notify()
 
-    def match(self, answer: str) -> bool:
+    def match(self, answer: str, source: str = 'auto') -> bool:
         """
         Dopasowano odpowiedź pacjenta!
         Przechodzi do stanu MATCHED.
+
+        Args:
+            answer: Dopasowana odpowiedź
+            source: Źródło dopasowania - 'auto' (transkrypcja) lub 'manual' (klik)
+
         Zwraca True jeśli match się udał.
         """
         if not self.question:
@@ -129,8 +138,9 @@ class ActiveQuestionContext:
             return False
 
         self.state = QuestionState.MATCHED
+        self.answer_source = source
 
-        print(f"[ActiveQ] MATCHED! Q: '{self.question[:30]}...' A: '{answer[:30]}...'", flush=True)
+        print(f"[ActiveQ] MATCHED ({source})! Q: '{self.question[:30]}...' A: '{answer[:30]}...'", flush=True)
 
         # Notify o dopasowaniu
         if self._on_matched:
@@ -158,6 +168,7 @@ class ActiveQuestionContext:
         self.pinned = False
         self.started_at = 0.0
         self.expires_at = 0.0
+        self.answer_source = None
 
         if prev_state != QuestionState.IDLE:
             print(f"[ActiveQ] Cleared", flush=True)

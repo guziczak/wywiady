@@ -14,6 +14,8 @@ from nicegui import ui
 from typing import Optional, Callable, TYPE_CHECKING
 import json
 
+from app_ui.live.components.answer_card import AnswerCard
+
 if TYPE_CHECKING:
     from app_ui.live.state.active_question import ActiveQuestionContext, QuestionState
 
@@ -58,10 +60,12 @@ class ActiveQuestionPanel:
         self,
         context: 'ActiveQuestionContext',
         on_answer_click: Optional[Callable[[str], None]] = None,
+        on_manual_answer: Optional[Callable[[str, str], None]] = None,  # (question, answer)
         on_close: Optional[Callable[[], None]] = None
     ):
         self.context = context
         self.on_answer_click = on_answer_click
+        self.on_manual_answer = on_manual_answer
         self.on_close = on_close
 
         # UI refs
@@ -70,6 +74,9 @@ class ActiveQuestionPanel:
         self.state_badge: Optional[ui.badge] = None
         self.answers_container: Optional[ui.element] = None
         self.pin_btn: Optional[ui.button] = None
+
+        # Stan wybranej odpowiedzi (dla manual mode)
+        self._selected_answer: Optional[str] = None
 
         self._client = None
         self._timer = None
@@ -188,47 +195,34 @@ class ActiveQuestionPanel:
             )
 
     def _render_answers(self):
-        """Renderuje podpowiedzi odpowiedzi."""
-        with ui.column().classes('w-full gap-2'):
+        """Renderuje karty odpowiedzi (3 opcje do wyboru)."""
+        with ui.column().classes('w-full gap-3'):
             # Header
             with ui.row().classes('items-center gap-2'):
-                ui.icon('record_voice_over', size='xs').classes('text-slate-400')
-                ui.label('Przykładowe odpowiedzi pacjenta:').classes(
-                    'text-xs text-slate-500 uppercase tracking-wide'
+                ui.icon('touch_app', size='xs').classes('text-green-500')
+                ui.label('Wybierz odpowiedź pacjenta:').classes(
+                    'text-xs text-slate-600 uppercase tracking-wide font-medium'
                 )
 
-            # Chips z odpowiedziami
-            self.answers_container = ui.row().classes('w-full flex-wrap gap-2')
+            # Grid z 3 kartami odpowiedzi
+            self.answers_container = ui.element('div').classes(
+                'grid grid-cols-1 sm:grid-cols-3 gap-3 w-full'
+            )
 
             with self.answers_container:
-                for answer in self.context.answers[:4]:
-                    self._create_answer_chip(answer)
-
-    def _create_answer_chip(self, answer: str):
-        """Tworzy chip z odpowiedzią."""
-        with ui.card().classes(
-            'px-3 py-2 bg-white border border-slate-200 rounded-lg '
-            'cursor-pointer hover:bg-slate-50 hover:border-slate-300 '
-            'transition-all duration-150 group'
-        ).on('click', lambda a=answer: self._handle_answer_click(a)):
-            with ui.row().classes('items-center gap-2'):
-                ui.icon('chat_bubble_outline', size='xs').classes(
-                    'text-slate-400 group-hover:text-blue-500'
-                )
-                # Truncate long answers
-                display = answer if len(answer) <= 50 else answer[:47] + '...'
-                ui.label(display).classes(
-                    'text-sm text-slate-700 group-hover:text-slate-900'
-                )
-                ui.icon('content_copy', size='xs').classes(
-                    'text-slate-300 group-hover:text-blue-400'
-                )
+                for idx, answer in enumerate(self.context.answers[:3]):
+                    AnswerCard(
+                        answer=answer,
+                        on_click=self._handle_answer_select,
+                        selected=self._selected_answer == answer,
+                        index=idx
+                    ).create()
 
     def _render_footer(self, state_name: str):
         """Renderuje footer z hintami."""
         hints = {
             'loading': 'Generuję podpowiedzi odpowiedzi...',
-            'ready': 'Kliknij odpowiedź aby skopiować do schowka',
+            'ready': 'Kliknij odpowiedź LUB poczekaj na pacjenta',
             'waiting': 'Nasłuchuję odpowiedzi pacjenta...',
             'matched': 'Para Q+A została zapisana!',
         }
@@ -239,7 +233,7 @@ class ActiveQuestionPanel:
                 ui.label(hint).classes('text-xs text-slate-400')
 
     def _handle_answer_click(self, answer: str):
-        """Obsługuje kliknięcie w odpowiedź."""
+        """Obsługuje kliknięcie w odpowiedź (kopiowanie do schowka)."""
         # Kopiuj do schowka
         if self._client:
             try:
@@ -258,6 +252,28 @@ class ActiveQuestionPanel:
         # Callback
         if self.on_answer_click:
             self.on_answer_click(answer)
+
+    def _handle_answer_select(self, answer: str):
+        """
+        Obsługuje wybór odpowiedzi (manual mode).
+        Tworzy parę Q+A natychmiast po kliknięciu.
+        """
+        # Zapisz jako wybraną
+        self._selected_answer = answer
+
+        # Dopasuj odpowiedź (manual source)
+        if self.context.match(answer, source='manual'):
+            # Callback do live_view (dodanie pary Q+A)
+            if self.on_manual_answer:
+                self.on_manual_answer(self.context.question, answer)
+
+            # Notyfikacja
+            if self._client:
+                try:
+                    with self._client:
+                        ui.notify('Para Q+A zebrana!', type='positive', position='top', icon='check_circle')
+                except Exception:
+                    pass
 
     def _toggle_pin(self):
         """Przełącza pin."""

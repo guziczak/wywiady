@@ -122,6 +122,49 @@ class QACollector:
         """Zwraca ostatnie N par."""
         return self.pairs[-count:] if self.pairs else []
 
+    def get_by_id(self, pair_id: str) -> Optional[QAPair]:
+        """Zwraca parę po ID."""
+        for pair in self.pairs:
+            if pair.id == pair_id:
+                return pair
+        return None
+
+    def remove(self, pair_id: str) -> Optional[QAPair]:
+        """
+        Usuwa parę po ID.
+        Zwraca usuniętą parę lub None jeśli nie znaleziono.
+        """
+        for i, pair in enumerate(self.pairs):
+            if pair.id == pair_id:
+                removed = self.pairs.pop(i)
+                print(f"[QACollector] Removed pair {pair_id}", flush=True)
+                return removed
+        return None
+
+    def update_answer(self, pair_id: str, new_answer: str) -> bool:
+        """
+        Aktualizuje odpowiedź w parze.
+        Zwraca True jeśli zaktualizowano.
+        """
+        for pair in self.pairs:
+            if pair.id == pair_id:
+                pair.answer = new_answer
+                pair.answer_timestamp = time.time()
+                print(f"[QACollector] Updated pair {pair_id} answer", flush=True)
+                return True
+        return False
+
+    def undo_last(self) -> Optional[QAPair]:
+        """
+        Cofa ostatnią parę (undo).
+        Zwraca cofniętą parę lub None.
+        """
+        if self.pairs:
+            removed = self.pairs.pop()
+            print(f"[QACollector] Undo last pair: {removed.id}", flush=True)
+            return removed
+        return None
+
     def get_stats(self) -> dict:
         """Zwraca statystyki."""
         if not self.pairs:
