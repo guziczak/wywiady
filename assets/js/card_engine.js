@@ -73,6 +73,7 @@ export class CardEngine {
         // We ensure the element is visible and has pointer events
         element.style.display = 'block';
         element.style.pointerEvents = 'auto';
+        element.style.opacity = '1'; // Force visibility
 
         const object = new CSS3DObject(element);
         

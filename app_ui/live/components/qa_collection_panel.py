@@ -136,10 +136,11 @@ class QACollectionPanel:
     def _build_card_element(self, pair: 'QAPair') -> ui.card:
         """Tworzy wizualną reprezentację karty (NiceGUI Element)."""
         # Styl karty identyczny jak wcześniej, ale bez klas animacji CSS (bo Three.js to robi)
+        # Dodajemy opacity-100 aby upewnić się, że jest widoczna po wyjęciu z ukrytego kontenera
         card = ui.card().classes(
             'w-[220px] p-3 bg-white border border-slate-200 '
             'rounded-xl shadow-lg cursor-pointer select-none '
-            'hover:shadow-xl hover:border-blue-300 transition-colors'
+            'hover:shadow-xl hover:border-blue-300 transition-colors opacity-100'
         )
         # Ensure DOM ID matches what ThreeStage expects
         card.props(f'id=c{card.id}')
