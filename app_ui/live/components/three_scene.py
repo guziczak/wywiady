@@ -9,14 +9,14 @@ class ThreeStage(ui.element):
         self._initialized = False
         
         # 1. Setup Import Map for Three.js (Module resolution)
-        # Using unpkg for standard modules. 
-        # Note: CSS3DRenderer is in 'addons' in newer versions.
+        # Using local files downloaded by installer
         import_map = """
         <script type="importmap">
           {
             "imports": {
-              "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-              "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+              "three": "/assets/js/three.module.js",
+              "three/addons/renderers/CSS3DRenderer.js": "/assets/js/CSS3DRenderer.js",
+              "three/addons/libs/tween.module.js": "/assets/js/tween.module.js"
             }
           }
         </script>

@@ -149,6 +149,28 @@ def ensure_pdf_fonts(install_dir):
                 pass
 
 
+def ensure_js_libs(install_dir):
+    js_dir = os.path.join(install_dir, "assets", "js")
+    os.makedirs(js_dir, exist_ok=True)
+    
+    libs = {
+        "three.module.js": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "CSS3DRenderer.js": "https://unpkg.com/three@0.160.0/examples/jsm/renderers/CSS3DRenderer.js",
+        "tween.module.js": "https://unpkg.com/three@0.160.0/examples/jsm/libs/tween.module.js"
+    }
+
+    for fname, url in libs.items():
+        fpath = os.path.join(js_dir, fname)
+        if os.path.exists(fpath) and os.path.getsize(fpath) > 1000:
+            continue
+            
+        print_step(f"Pobieranie biblioteki {fname}...")
+        try:
+            urllib.request.urlretrieve(url, fpath)
+        except Exception as e:
+            log_warn(f"    [WARN] Nie udalo sie pobrac {fname}: {e}")
+
+
 def _human_bytes(num):
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(num)
@@ -598,6 +620,9 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
 
     print_step("Sprawdzanie czcionek PDF...")
     ensure_pdf_fonts(install_dir)
+    
+    print_step("Sprawdzanie bibliotek 3D...")
+    ensure_js_libs(install_dir)
 
     print_step("Konfiguracja skrotow...")
 
