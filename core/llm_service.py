@@ -518,20 +518,35 @@ Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
         self,
         question: str,
         config: Dict,
-        spec_id: int = None
+        spec_id: int = None,
+        spec_ids: list = None
     ) -> List[str]:
         """Generuje 3 przykładowe odpowiedzi pacjenta do pytania lekarza."""
         if not question:
             return []
 
+        # Ustal listę specjalizacji
+        if spec_ids is not None:
+            active_spec_ids = spec_ids
+        elif spec_id is not None:
+            active_spec_ids = [spec_id]
+        elif SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            active_spec_ids = spec_manager.get_active_ids()
+        else:
+            active_spec_ids = [1]
+
         spec_label = ""
         if SPEC_MANAGER_AVAILABLE:
             spec_manager = get_specialization_manager()
-            if spec_id is None:
-                spec_id = spec_manager.get_active().id
-            spec = spec_manager.get_by_id(spec_id)
-            if spec:
-                spec_label = f"Specjalizacja: {spec.name}"
+            names = []
+            for sid in active_spec_ids:
+                spec = spec_manager.get_by_id(sid)
+                if spec:
+                    names.append(spec.name)
+            
+            if names:
+                spec_label = f"Specjalizacja: {', '.join(names)}"
 
         prompt = f"""Jesteś pacjentem w gabinecie lekarskim.
 {spec_label}
