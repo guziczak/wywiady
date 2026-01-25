@@ -663,11 +663,11 @@ class LiveInterviewView:
         answers: List[str] = []
         try:
             if self.app.llm_service:
-                spec_id = self.ai_controller.current_spec_id if self.ai_controller else None
+                spec_ids = self.ai_controller.current_spec_ids if self.ai_controller else None
                 answers = await self.app.llm_service.generate_patient_answers(
                     question,
                     self.app.config,
-                    spec_id=spec_id
+                    spec_ids=spec_ids
                 )
         except Exception as e:
             print(f"[LIVE] Patient answers error: {e}", flush=True)
