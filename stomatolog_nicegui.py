@@ -2058,6 +2058,13 @@ class WywiadApp:
 # === RUN ===
 
 def main():
+    # Muzyka powitalna (jak w px.bat)
+    try:
+        from core.startup_sound import play_music_thread
+        play_music_thread()
+    except Exception as e:
+        print(f"[APP] Nie udalo sie zagrac muzyki: {e}")
+
     # Setup safe exit
     def handle_sigint(signum, frame):
         print("\n[APP] Otrzymano sygnał przerwania. Zamykanie...", flush=True)
