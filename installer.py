@@ -734,19 +734,28 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
 
     print_step("Konfiguracja skrotow...")
 
-    # 1. run_app.bat - Produkcyjny starter (bez pause, zeby nie blokowal procesu w tle)
+    # 1. run_app.bat - Produkcyjny starter (BEZPOSREDNI)
+    # Dodajemy obsluge bledow, zeby okno nie znikalo w razie awarii
     run_bat_path = os.path.join(install_dir, "run_app.bat")
     with open(run_bat_path, "w") as f:
         f.write("@echo off\n")
+        f.write("title Wizyta - Console\n")
         f.write(f"cd /d \"{install_dir}\"\n")
         f.write("call venv\\Scripts\\activate.bat\n")
         f.write("set WYWIAD_AUTO_OPEN=1\n")
         f.write("set WYWIAD_STDOUT_LOG=logs\\stdout.log\n")
-        # ZMIANA: Uzywamy zwyklego python (blokujacego), bo VBS i tak ukrywa okno.
-        # Dzieki temu proces CMD zyje tak dlugo jak aplikacja.
+        f.write("echo Uruchamianie aplikacji Wizyta...\n")
         f.write(f"python {MAIN_SCRIPT}\n")
+        # Jesli python zwroci blad, zatrzymaj okno
+        f.write("if %errorlevel% neq 0 (\n")
+        f.write("    color 4f\n")
+        f.write("    echo.\n")
+        f.write("    echo [!] KRYTYCZNY BLAD APLIKACJI\n")
+        f.write("    echo Sprawdz plik logs\\stdout.log\n")
+        f.write("    pause\n")
+        f.write(")\n")
     
-    # 2. run_debug.bat - Do diagnozy (z pause)
+    # 2. run_debug.bat - (Bez zmian)
     run_debug_path = os.path.join(install_dir, "run_debug.bat")
     with open(run_debug_path, "w") as f:
         f.write("@echo off\n")
@@ -763,14 +772,12 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
         f.write(")\n")
         f.write("pause\n")
 
-    # 3. run_app.vbs - Wrapper ukrywajacy okno CMD
+    # 3. VBS usuwamy ze skrotow (zostawiamy plik jako opcje zapasowa)
     run_vbs_path = os.path.join(install_dir, "run_app.vbs")
     try:
         with open(run_vbs_path, "w", encoding="utf-8") as f:
             f.write('Set WshShell = CreateObject("WScript.Shell")\n')
             f.write(f'WshShell.CurrentDirectory = "{install_dir}"\n')
-            # ZMIANA: Uruchamiamy .bat bezposrednio (potrojne cudzyslowy dla sciezek ze spacjami)
-            # 0 = Hide window, True = Wait (ale tu False zeby nie blokowac VBS)
             f.write(f'WshShell.Run """{run_bat_path}""", 0, False\n')
             f.write('Set WshShell = Nothing\n')
     except Exception:
@@ -780,11 +787,14 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
     shortcut_path = os.path.join(desktop, f"{SHORTCUT_NAME}.lnk")
     icon_path = os.path.join(install_dir, ICON_REL_PATH)
 
+    # PowerShell script to create shortcut pointing DIRECTLY to BAT
+    # WindowStyle 7 = Minimized (pokazuje sie na pasku, ale nie zaslania ekranu)
     ps_script = f"""
     $s=(New-Object -COM WScript.Shell).CreateShortcut('{shortcut_path}');
-    $s.TargetPath='{run_vbs_path}';
+    $s.TargetPath='{run_bat_path}';
     $s.WorkingDirectory='{install_dir}';
     $s.IconLocation='{icon_path}';
+    $s.WindowStyle=7;
     $s.Save()
     """
     subprocess.run(
