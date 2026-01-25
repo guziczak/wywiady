@@ -518,51 +518,29 @@ def run_installer(auto_launch: bool = True, result: dict | None = None):
 
     state_path = os.path.join(install_dir, STATE_FILE)
     state = read_state(state_path)
-    
-    # Check for bundled local repo (Offline Installer Mode)
-    bundled_zip = None
-    if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-        potential_path = os.path.join(base_path, "bundled_repo.zip")
-        if os.path.exists(potential_path):
-            bundled_zip = potential_path
-    elif os.path.exists("bundled_repo.zip"):
-        bundled_zip = os.path.abspath("bundled_repo.zip")
-
-    if bundled_zip:
-        print_step("Wykryto instalator OFFLINE.")
-        log_info(f"    Używam wbudowanych plików źródłowych.")
-        remote_commit = "LOCAL_BUNDLE"
-        skip_download = False # We don't skip "download" phase logic, but we skip actual network call
+    remote_commit = get_remote_commit()
+    if remote_commit:
+        print_step(f"Wersja zdalna: {remote_commit[:7]}")
     else:
-        # Standard Online Mode
-        remote_commit = get_remote_commit()
-        if remote_commit:
-            print_step(f"Wersja zdalna: {remote_commit[:7]}")
-        else:
-            print_step("Nie udalo sie pobrac wersji zdalnej (API)")
-        skip_download = False
-        if remote_commit and state.get("commit") == remote_commit and os.path.exists(MAIN_SCRIPT):
-            print_step("Wersja jest aktualna. Pomijam pobieranie.")
-            skip_download = True
+        print_step("Nie udalo sie pobrac wersji zdalnej (API)")
+    skip_download = False
+    if remote_commit and state.get("commit") == remote_commit and os.path.exists(MAIN_SCRIPT):
+        print_step("Wersja jest aktualna. Pomijam pobieranie.")
+        skip_download = True
 
     zip_path = "repo.zip"
     try:
         if not skip_download:
-            if bundled_zip:
-                print_step("Rozpakowywanie wbudowanych zasobów...")
-                shutil.copy2(bundled_zip, zip_path)
-            else:
-                print_step("Pobieranie najnowszej wersji aplikacji...")
+            print_step("Pobieranie najnowszej wersji aplikacji...")
 
-                def _download_hook(block_num, block_size, total_size):
-                    downloaded = block_num * block_size
-                    print_progress("    Pobieranie", downloaded, total_size)
+            def _download_hook(block_num, block_size, total_size):
+                downloaded = block_num * block_size
+                print_progress("    Pobieranie", downloaded, total_size)
 
-                urllib.request.urlretrieve(REPO_URL, zip_path, reporthook=_download_hook)
-                progress_done()
+            urllib.request.urlretrieve(REPO_URL, zip_path, reporthook=_download_hook)
+            progress_done()
     except Exception as e:
-        print_error(f"Nie udalo sie pobrac/skopiowac plikow: {e}")
+        print_error(f"Nie udalo sie pobrac plikow: {e}")
 
     try:
         if not skip_download:
