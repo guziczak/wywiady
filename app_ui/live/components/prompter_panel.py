@@ -313,33 +313,8 @@ class PrompterPanel:
         # Zachowujemy metodę dla kompatybilności wstecznej
         pass
 
-    def _handle_answer_click(self, answer: str):
-        """Kopiuj odpowiedź pacjenta do schowka."""
-        import json
-        client = self._client
-        if client:
-            try:
-                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(answer)})')
-            except Exception:
-                pass
-            try:
-                with client:
-                    ui.notify("Skopiowano odpowiedź", type='positive', position='top')
-            except Exception:
-                pass
-        else:
-            try:
-                ui.run_javascript(f'navigator.clipboard.writeText({json.dumps(answer)})')
-            except Exception:
-                pass
-            try:
-                ui.notify("Skopiowano odpowiedź", type='positive', position='top')
-            except Exception:
-                pass
-
-    def _clear_answer_context(self):
-        """Czyści wybrane pytanie i odpowiedzi."""
-        self.state.clear_answer_context()
+    # USUNIĘTO: _handle_answer_click i _clear_answer_context
+    # Przeniesione do ActiveQuestionPanel
 
     def _open_config_dialog(self):
         """Otwiera nowoczesny dialog konfiguracji API."""
