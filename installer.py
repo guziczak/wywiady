@@ -18,7 +18,8 @@ import ctypes
 try:
     import winsound
     
-    # MASTERPIECE PIANO ENGINE (Full JS Port)
+    # GRAND PIANO ENGINE (Restored)
+    # 3 Detuned Strings + Stereo Panning + Clean Decay
     NOTES = {'A0': 27.5, 'A#0': 29.14, 'B0': 30.87}
     names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
     for oct in range(1, 9):
@@ -26,6 +27,7 @@ try:
             freq = 32.703 * (2 ** (oct-1)) * (2 ** (i/12))
             NOTES[f"{name}{oct}"] = freq
 
+    # CLIMAX MELODY SOLO (Matching px.bat)
     COMPOSITION = [
         ('E5', 0, 1.5, 1.0), ('D5', 1.5, 0.5, 0.92), ('C5', 2, 1, 0.98), ('B4', 3, 0.5, 0.90), ('A4', 3.5, 0.5, 0.88),
         ('G4', 4, 0.75, 0.90), ('A4', 4.75, 0.25, 0.86), ('B4', 5, 1.5, 0.98), ('C5', 6.5, 1, 0.95), ('D5', 7.5, 0.5, 0.92),
@@ -34,7 +36,7 @@ try:
     ]
 
     TEMPO = 103
-    SR = 44100
+    SR = 44100 # High Quality
 
     def generate_wav_memory():
         sec_per_beat = 60 / TEMPO
@@ -47,53 +49,47 @@ try:
             freq = NOTES.get(note_name, 440)
             start_sample = int(start_beat * sec_per_beat * SR)
             dur_sec = dur_beats * sec_per_beat
-            ns = int(dur_sec * 2.5 * SR) # Long sustain
-            if start_sample >= total_samples: continue
-
-            # 1. PIANO PHYSICS: Inharmonicity
-            B = 0.00004 * ((freq / 261.63) ** 1.4)
+            ns = int(dur_sec * 1.5 * SR) # Sustain
             
-            # 2. HAMMER NOISE (Percussive attack)
-            noise_len = int(0.03 * SR)
-            noise_buf = [(random.random() * 2 - 1) * math.exp(-i/(noise_len/4)) * vel * 0.2 for i in range(noise_len)]
+            if start_sample >= total_samples: continue
+            
+            # Key Tracking Pan (Low notes Left, High notes Right)
+            pan = max(-0.8, min(0.8, (math.log2(freq) - 6) * 0.25))
+            vol_l = (1.0 - pan) * 0.7
+            vol_r = (1.0 + pan) * 0.7
 
-            # 3. PANNING
-            pan = max(-0.6, min(0.6, (math.log2(freq) - 6) * 0.2))
-            vol_l, vol_r = (1.0 - pan) * 0.5, (1.0 + pan) * 0.5
+            # 3 Detuned Oscillators per key (Chorus effect)
+            detunes = [1.0, 1.002, 0.998] 
+            ws = [2 * math.pi * freq * d / SR for d in detunes]
+            harms = [1.0, 0.6, 0.3, 0.1] # Rich harmonics
 
-            note_buf = [0.0] * ns
-            # 3 strings per note
-            for detune in [1.0, 1.001, 0.999]:
-                f_detuned = freq * detune
-                # Harmonics (up to 8)
-                for n in range(1, 9):
-                    h_freq = f_detuned * n * math.sqrt(1 + B * n * n)
-                    if h_freq > SR/2: break
-                    
-                    amp = (vel * 0.25) / (n ** 0.9)
-                    if n == 1: amp *= 1.2
-                    decay = 2.0 + (n * 0.5) + (freq / 400.0)
-                    
-                    w = 2 * math.pi * h_freq / SR
-                    for i in range(min(ns, int(total_samples - start_sample))):
-                        t = i / SR
-                        # ADSR-like
-                        env = math.exp(-decay * t)
-                        if i < 200: env *= (i/200) # Quick attack
-                        note_buf[i] += math.sin(w * i) * amp * env
+            for i in range(ns):
+                if start_sample + i >= total_samples: break
+                
+                t = i / SR
+                att = min(1.0, i / 200) # Smooth attack
+                dec = math.exp(-(1.5 + freq/500.0) * t) # Natural decay
+                
+                signal = 0.0
+                for idx, w in enumerate(ws):
+                    string_sig = 0.0
+                    for h_idx, h_amp in enumerate(harms):
+                        h_num = h_idx + 1
+                        h_dec = math.exp(-t * h_num * 0.5)
+                        string_sig += math.sin(w * h_num * i) * h_amp * h_dec
+                    signal += string_sig
+                
+                val = signal * vel * att * dec * 0.15
+                
+                mix_l[start_sample + i] += val * vol_l
+                mix_r[start_sample + i] += val * vol_r
 
-            # Mix note + hammer noise
-            for i in range(min(ns, total_samples - start_sample)):
-                s = note_buf[i]
-                if i < noise_len: s += noise_buf[i]
-                mix_l[start_sample + i] += s * vol_l
-                mix_r[start_sample + i] += s * vol_r
-
-        # Lush Reverb
-        dl, dr = int(0.18 * SR), int(0.22 * SR)
-        for i in range(max(dl, dr), total_samples):
-            mix_l[i] += mix_r[i-dl] * 0.2
-            mix_r[i] += mix_l[i-dr] * 0.2
+        # Stereo Reverb
+        dl, dr = int(0.12 * SR), int(0.15 * SR)
+        fb = 0.35
+        for i in range(min(dl, dr), total_samples):
+            if i >= dl: mix_l[i] += mix_r[i-dl] * fb * 0.6
+            if i >= dr: mix_r[i] += mix_l[i-dr] * fb * 0.6
 
         # Normalize
         max_val = max(max(abs(x) for x in mix_l), max(abs(x) for x in mix_r), 0.001)
@@ -105,7 +101,9 @@ try:
         buf.write(struct.pack('<H', 4)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
         buf.write(struct.pack('<I', data_size))
         for i in range(total_samples):
-            buf.write(struct.pack('<hh', int(mix_l[i]/max_val * 32000), int(mix_r[i]/max_val * 32000)))
+            l = int(max(min(mix_l[i] / max_val, 1.0), -1.0) * 32000)
+            r = int(max(min(mix_r[i] / max_val, 1.0), -1.0) * 32000)
+            buf.write(struct.pack('<hh', l, r))
         return buf.getvalue()
 
     def play_music():
