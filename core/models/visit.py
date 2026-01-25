@@ -116,7 +116,7 @@ class Visit:
     patient_address: str = ""
     patient_phone: str = ""
     patient_email: str = ""
-    specialization_id: int = 1  # Domyślnie stomatologia
+    specialization_ids: List[int] = field(default_factory=lambda: [1])  # Multi-select specjalizacji
     visit_date: datetime = field(default_factory=datetime.now)
     transcript: str = ""
     subjective: str = ""  # Wywiad (S) - opcjonalnie, jeśli różne od transkrypcji
@@ -174,7 +174,7 @@ class Visit:
             'patient_address': self.patient_address,
             'patient_phone': self.patient_phone,
             'patient_email': self.patient_email,
-            'specialization_id': self.specialization_id,
+            'specialization_ids': self.specialization_ids,
             'visit_date': self.visit_date.isoformat() if self.visit_date else None,
             'transcript': self.transcript,
             'subjective': self.subjective,
@@ -226,6 +226,15 @@ class Visit:
             for p in data.get('procedures', [])
         ]
 
+        # Obsłuż oba formaty: stary (int) i nowy (list)
+        spec_ids = data.get('specialization_ids')
+        if spec_ids is None:
+            # Stary format - konwertuj int na listę
+            old_id = data.get('specialization_id', 1)
+            spec_ids = [old_id] if old_id else [1]
+        elif isinstance(spec_ids, int):
+            spec_ids = [spec_ids]
+
         return cls(
             id=data.get('id', str(uuid.uuid4())),
             patient_id=data.get('patient_id'),
@@ -236,7 +245,7 @@ class Visit:
             patient_address=data.get('patient_address', ''),
             patient_phone=data.get('patient_phone', ''),
             patient_email=data.get('patient_email', ''),
-            specialization_id=data.get('specialization_id', 1),
+            specialization_ids=spec_ids,
             visit_date=visit_date or datetime.now(),
             transcript=data.get('transcript', ''),
             subjective=data.get('subjective', ''),

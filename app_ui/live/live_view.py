@@ -400,13 +400,14 @@ class LiveInterviewView:
         """Rozpoczyna sesję."""
         print("[LIVE] Starting session...", flush=True)
 
-        # Ustaw specjalizację w AI Controller
+        # Ustaw specjalizacje w AI Controller (multi-select)
         if get_specialization_manager:
             spec_manager = get_specialization_manager()
-            spec = spec_manager.get_active()
+            spec_ids = spec_manager.get_active_ids()
             if self.ai_controller:
-                self.ai_controller.set_spec_id(spec.id)
-                print(f"[LIVE] Using specialization: {spec.name} (ID={spec.id})", flush=True)
+                self.ai_controller.set_spec_ids(spec_ids)
+                spec_names = [spec_manager.get_by_id(sid).name for sid in spec_ids]
+                print(f"[LIVE] Using specializations: {', '.join(spec_names)} (IDs={spec_ids})", flush=True)
 
         # Reset stanu
         self.state.reset()

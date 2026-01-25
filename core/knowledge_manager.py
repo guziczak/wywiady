@@ -28,19 +28,50 @@ class KnowledgeManager:
             "icd10": [],
             "procedures": []
         }
-        
+
         with self._get_conn() as conn:
             c = conn.cursor()
-            
+
             # 1. Pobierz ICD-10 przypisane do specjalizacji
             c.execute("SELECT code, description FROM icd10_codes WHERE specialization_id = ?", (spec_id,))
             context["icd10"] = [{"code": r[0], "desc": r[1]} for r in c.fetchall()]
-            
+
             # 2. Pobierz procedury
             c.execute("SELECT code, name FROM procedures WHERE specialization_id = ?", (spec_id,))
             context["icd9"] = [{"code": r[0], "name": r[1]} for r in c.fetchall()]
 
         return context
+
+    def get_context_for_specializations(self, spec_ids: List[int]) -> Dict:
+        """
+        Pobiera i merguje kody ICD-10 i Procedury z wielu specjalizacji.
+        Deduplikuje po kodzie.
+        """
+        if not spec_ids:
+            return {"icd10": [], "icd9": []}
+
+        if len(spec_ids) == 1:
+            return self.get_context_for_specialization(spec_ids[0])
+
+        # Merge z deduplikacją
+        seen_icd10 = set()
+        seen_icd9 = set()
+        merged = {"icd10": [], "icd9": []}
+
+        for spec_id in spec_ids:
+            ctx = self.get_context_for_specialization(spec_id)
+
+            for item in ctx.get("icd10", []):
+                if item["code"] not in seen_icd10:
+                    merged["icd10"].append(item)
+                    seen_icd10.add(item["code"])
+
+            for item in ctx.get("icd9", []):
+                if item["code"] not in seen_icd9:
+                    merged["icd9"].append(item)
+                    seen_icd9.add(item["code"])
+
+        return merged
 
     def export_to_json(self, output_path: str = "knowledge_dump.json"):
         """Eksportuje całą bazę do czytelnego JSONa."""

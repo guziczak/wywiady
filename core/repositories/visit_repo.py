@@ -1,5 +1,6 @@
 """Repozytorium wizyt."""
 
+import json
 from typing import Optional, List, Tuple
 from datetime import datetime, date
 
@@ -24,13 +25,16 @@ class VisitRepository(BaseRepository):
                 (visit.id,)
             ).fetchone()
 
+            # Serializuj specialization_ids do JSON
+            spec_ids_json = json.dumps(visit.specialization_ids)
+
             if existing:
                 # UPDATE
                 conn.execute('''
                     UPDATE visits
                     SET patient_id = ?, patient_name = ?, patient_identifier = ?,
                         patient_birth_date = ?, patient_sex = ?, patient_address = ?,
-                        patient_phone = ?, patient_email = ?, specialization_id = ?,
+                        patient_phone = ?, patient_email = ?, specialization_ids = ?,
                         visit_date = ?, transcript = ?, subjective = ?, objective = ?,
                         assessment = ?, plan = ?, recommendations = ?, medications = ?,
                         tests_ordered = ?, tests_results = ?, referrals = ?,
@@ -46,7 +50,7 @@ class VisitRepository(BaseRepository):
                     visit.patient_address,
                     visit.patient_phone,
                     visit.patient_email,
-                    visit.specialization_id,
+                    spec_ids_json,
                     visit.visit_date.isoformat() if visit.visit_date else None,
                     visit.transcript,
                     visit.subjective,
@@ -76,7 +80,7 @@ class VisitRepository(BaseRepository):
                     INSERT INTO visits (
                         id, patient_id, patient_name, patient_identifier, patient_birth_date,
                         patient_sex, patient_address, patient_phone, patient_email,
-                        specialization_id, visit_date, transcript, subjective, objective,
+                        specialization_ids, visit_date, transcript, subjective, objective,
                         assessment, plan, recommendations, medications, tests_ordered,
                         tests_results, referrals, certificates, additional_notes,
                         audio_path, status, model_used
@@ -91,7 +95,7 @@ class VisitRepository(BaseRepository):
                     visit.patient_address,
                     visit.patient_phone,
                     visit.patient_email,
-                    visit.specialization_id,
+                    spec_ids_json,
                     visit.visit_date.isoformat() if visit.visit_date else None,
                     visit.transcript,
                     visit.subjective,
@@ -322,6 +326,20 @@ class VisitRepository(BaseRepository):
         if isinstance(status, str):
             status = VisitStatus(status)
 
+        # Deserializuj specialization_ids (obsłuż stary format int i nowy JSON list)
+        spec_ids_raw = row.get('specialization_ids') or row.get('specialization_id')
+        if isinstance(spec_ids_raw, str):
+            try:
+                spec_ids = json.loads(spec_ids_raw)
+            except (json.JSONDecodeError, TypeError):
+                spec_ids = [1]
+        elif isinstance(spec_ids_raw, int):
+            spec_ids = [spec_ids_raw]
+        elif isinstance(spec_ids_raw, list):
+            spec_ids = spec_ids_raw
+        else:
+            spec_ids = [1]
+
         return Visit(
             id=row['id'],
             patient_id=row.get('patient_id'),
@@ -332,7 +350,7 @@ class VisitRepository(BaseRepository):
             patient_address=row.get('patient_address', ''),
             patient_phone=row.get('patient_phone', ''),
             patient_email=row.get('patient_email', ''),
-            specialization_id=row.get('specialization_id', 1),
+            specialization_ids=spec_ids,
             visit_date=visit_date or datetime.now(),
             transcript=row.get('transcript', ''),
             subjective=row.get('subjective', ''),

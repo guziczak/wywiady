@@ -156,7 +156,7 @@ class SpecializationManager:
         self._specializations: Dict[int, Specialization] = {}
         self._prompts_cache: Dict[int, SpecPrompts] = {}
         self._locations_cache: Dict[int, LocationSchema] = {}
-        self._active_spec_id: int = 1  # Domyślnie stomatologia
+        self._active_spec_ids: List[int] = [1]  # Domyślnie stomatologia (lista!)
 
         self._load_specializations()
         self._load_active_from_config()
@@ -207,24 +207,44 @@ class SpecializationManager:
             print(f"[SPEC] Loaded fallback: {spec.name} (ID={spec.id})")
 
     def _load_active_from_config(self) -> None:
-        """Ładuje aktywną specjalizację z głównego configa."""
+        """Ładuje aktywne specjalizacje z głównego configa."""
         if CONFIG_FILE.exists():
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                self._active_spec_id = data.get('active_specialization', 1)
-            except:
-                pass
+
+                # Nowy format: lista
+                if 'active_specializations' in data:
+                    self._active_spec_ids = data['active_specializations']
+                # Stary format: pojedynczy int (backward compat)
+                elif 'active_specialization' in data:
+                    self._active_spec_ids = [data['active_specialization']]
+                else:
+                    self._active_spec_ids = [1]
+
+                # Walidacja: usuń nieistniejące ID
+                self._active_spec_ids = [
+                    sid for sid in self._active_spec_ids
+                    if sid in self._specializations
+                ]
+                if not self._active_spec_ids:
+                    self._active_spec_ids = [1]
+
+            except Exception:
+                self._active_spec_ids = [1]
 
     def _save_active_to_config(self) -> None:
-        """Zapisuje aktywną specjalizację do głównego configa."""
+        """Zapisuje aktywne specjalizacje do głównego configa."""
         try:
             data = {}
             if CONFIG_FILE.exists():
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
 
-            data['active_specialization'] = self._active_spec_id
+            # Zapisz nowy format (lista)
+            data['active_specializations'] = self._active_spec_ids
+            # Zachowaj stary klucz dla backward compat (pierwsza z listy)
+            data['active_specialization'] = self._active_spec_ids[0] if self._active_spec_ids else 1
 
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -252,23 +272,77 @@ class SpecializationManager:
         return None
 
     def get_active(self) -> Specialization:
-        """Zwraca aktywną specjalizację."""
-        spec = self.get_by_id(self._active_spec_id)
-        if not spec:
-            # Fallback do pierwszej dostępnej
+        """Zwraca pierwszą aktywną specjalizację (backward compat)."""
+        if self._active_spec_ids:
+            spec = self.get_by_id(self._active_spec_ids[0])
+            if spec:
+                return spec
+        # Fallback do pierwszej dostępnej
+        specs = self.get_all()
+        return specs[0] if specs else Specialization(id=1, name="Stomatologia", slug="stomatologia")
+
+    def get_active_list(self) -> List[Specialization]:
+        """Zwraca listę wszystkich aktywnych specjalizacji."""
+        result = []
+        for spec_id in self._active_spec_ids:
+            spec = self.get_by_id(spec_id)
+            if spec:
+                result.append(spec)
+        if not result:
+            # Fallback
             specs = self.get_all()
-            spec = specs[0] if specs else Specialization(id=1, name="Stomatologia", slug="stomatologia")
-        return spec
+            return [specs[0]] if specs else [Specialization(id=1, name="Stomatologia", slug="stomatologia")]
+        return result
+
+    def get_active_ids(self) -> List[int]:
+        """Zwraca listę ID aktywnych specjalizacji."""
+        return list(self._active_spec_ids)
 
     def set_active(self, spec_id: int) -> bool:
-        """Ustawia aktywną specjalizację."""
+        """Ustawia pojedynczą aktywną specjalizację (backward compat)."""
+        return self.set_active_list([spec_id])
+
+    def set_active_list(self, spec_ids: List[int]) -> bool:
+        """Ustawia listę aktywnych specjalizacji."""
+        # Filtruj tylko istniejące
+        valid_ids = [sid for sid in spec_ids if sid in self._specializations]
+        if not valid_ids:
+            return False
+
+        self._active_spec_ids = valid_ids
+        self._save_active_to_config()
+        names = [self.get_by_id(sid).name for sid in valid_ids]
+        print(f"[SPEC] Active specializations changed to: {', '.join(names)}")
+        return True
+
+    def toggle_active(self, spec_id: int) -> bool:
+        """
+        Przełącza specjalizację (dodaje/usuwa z listy aktywnych).
+        Gwarantuje że zawsze jest min. 1 aktywna.
+        Zwraca True jeśli spec jest teraz aktywna, False jeśli została usunięta.
+        """
         if spec_id not in self._specializations:
             return False
 
-        self._active_spec_id = spec_id
-        self._save_active_to_config()
-        print(f"[SPEC] Active specialization changed to: {self.get_active().name}")
-        return True
+        if spec_id in self._active_spec_ids:
+            # Usuwamy tylko jeśli zostanie min 1
+            if len(self._active_spec_ids) > 1:
+                self._active_spec_ids.remove(spec_id)
+                self._save_active_to_config()
+                print(f"[SPEC] Removed: {self.get_by_id(spec_id).name}")
+                return False
+            else:
+                print(f"[SPEC] Cannot remove last specialization")
+                return True  # Nadal aktywna
+        else:
+            self._active_spec_ids.append(spec_id)
+            self._save_active_to_config()
+            print(f"[SPEC] Added: {self.get_by_id(spec_id).name}")
+            return True
+
+    def is_active(self, spec_id: int) -> bool:
+        """Sprawdza czy specjalizacja jest aktywna."""
+        return spec_id in self._active_spec_ids
 
     def get_prompts(self, spec_id: Optional[int] = None) -> SpecPrompts:
         """Zwraca prompty dla specjalizacji."""
@@ -331,15 +405,26 @@ class SpecializationManager:
         transcript: str,
         icd_context: str,
         proc_context: str,
-        spec_id: Optional[int] = None
+        spec_id: Optional[int] = None,
+        spec_ids: Optional[List[int]] = None
     ) -> str:
         """
         Buduje pełny prompt do generowania opisu wizyty.
 
         Używa promptów specyficznych dla specjalizacji.
+        Obsługuje multi-select: spec_ids ma priorytet nad spec_id.
         """
-        prompts = self.get_prompts(spec_id)
-        spec = self.get_by_id(spec_id) if spec_id else self.get_active()
+        # Ustal listę specjalizacji
+        if spec_ids is not None:
+            ids = spec_ids
+        elif spec_id is not None:
+            ids = [spec_id]
+        else:
+            ids = self._active_spec_ids
+
+        # Pobierz połączone prompty
+        prompts = self.get_merged_prompts(ids)
+        spec = self.get_by_id(ids[0]) if ids else self.get_active()
 
         prompt = f"""{prompts.description_system}
 
@@ -391,11 +476,24 @@ Odpowiedz TYLKO poprawnym kodem JSON."""
         self,
         transcript: str,
         exclude_questions: Optional[List[str]] = None,
-        spec_id: Optional[int] = None
+        spec_id: Optional[int] = None,
+        spec_ids: Optional[List[int]] = None
     ) -> str:
-        """Buduje prompt do generowania sugestii pytań."""
-        prompts = self.get_prompts(spec_id)
-        spec = self.get_by_id(spec_id) if spec_id else self.get_active()
+        """
+        Buduje prompt do generowania sugestii pytań.
+        Obsługuje multi-select: spec_ids ma priorytet nad spec_id.
+        """
+        # Ustal listę specjalizacji
+        if spec_ids is not None:
+            ids = spec_ids
+        elif spec_id is not None:
+            ids = [spec_id]
+        else:
+            ids = self._active_spec_ids
+
+        # Pobierz połączone prompty
+        prompts = self.get_merged_prompts(ids)
+        spec = self.get_by_id(ids[0]) if ids else self.get_active()
 
         exclude_section = ""
         if exclude_questions:
@@ -428,6 +526,62 @@ Odpowiedź zwróć TYLKO jako listę JSON stringów, np.:
 """
 
         return prompt
+
+    def get_merged_prompts(self, spec_ids: Optional[List[int]] = None) -> SpecPrompts:
+        """
+        Zwraca połączone prompty z wielu specjalizacji.
+        Używa pierwszej specjalizacji jako bazowej, dodaje focus_areas i examples z pozostałych.
+        """
+        if spec_ids is None:
+            spec_ids = self._active_spec_ids
+
+        if not spec_ids:
+            return SpecPrompts()
+
+        # Bazowy prompt z pierwszej specjalizacji
+        base = self.get_prompts(spec_ids[0])
+
+        if len(spec_ids) == 1:
+            return base
+
+        # Merge z pozostałych
+        all_focus_areas = list(base.suggestions_focus_areas)
+        all_examples = list(base.suggestions_examples)
+        all_terms = list(base.validation_terms)
+        all_abbrevs = dict(base.validation_abbreviations)
+        location_instructions = [base.description_location] if base.description_location else []
+
+        for spec_id in spec_ids[1:]:
+            prompts = self.get_prompts(spec_id)
+            # Dodaj unikalne focus_areas
+            for area in prompts.suggestions_focus_areas:
+                if area not in all_focus_areas:
+                    all_focus_areas.append(area)
+            # Dodaj unikalne examples
+            for ex in prompts.suggestions_examples:
+                if ex not in all_examples:
+                    all_examples.append(ex)
+            # Dodaj terms
+            for term in prompts.validation_terms:
+                if term not in all_terms:
+                    all_terms.append(term)
+            # Merge abbreviations
+            all_abbrevs.update(prompts.validation_abbreviations)
+            # Dodaj location instructions
+            if prompts.description_location and prompts.description_location not in location_instructions:
+                location_instructions.append(prompts.description_location)
+
+        return SpecPrompts(
+            description_system=base.description_system,
+            description_context=base.description_context,
+            description_location=" ".join(location_instructions),
+            description_output=base.description_output,
+            suggestions_system=base.suggestions_system,
+            suggestions_focus_areas=all_focus_areas,
+            suggestions_examples=all_examples,
+            validation_terms=all_terms,
+            validation_abbreviations=all_abbrevs
+        )
 
     def clear_cache(self) -> None:
         """Czyści cache promptów i lokalizacji."""

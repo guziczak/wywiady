@@ -4,7 +4,7 @@ Smart triggers dla regeneracji sugestii i walidacji.
 """
 
 import asyncio
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 from enum import Enum
 from nicegui import ui, app
 
@@ -63,9 +63,9 @@ class AIController:
         
         # Main event loop reference (set during create_ui)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        
-        # ID specjalizacji (do kontekstowych sugestii)
-        self.current_spec_id: Optional[int] = None
+
+        # ID specjalizacji (do kontekstowych sugestii) - multi-select
+        self.current_spec_ids: Optional[List[int]] = None
 
     def on_regen_start(self, callback: callable):
         """Callback gdy zaczyna się regeneracja."""
@@ -79,9 +79,9 @@ class AIController:
         """Ustawia referencję do głównego event loop."""
         self._loop = loop
 
-    def set_spec_id(self, spec_id: int):
-        """Ustawia ID aktywnej specjalizacji."""
-        self.current_spec_id = spec_id
+    def set_spec_ids(self, spec_ids: List[int]):
+        """Ustawia listę aktywnych specjalizacji (multi-select)."""
+        self.current_spec_ids = spec_ids
 
     # === SMART TRIGGERS ===
 
@@ -277,7 +277,7 @@ class AIController:
                 transcript,
                 self.config,
                 exclude_questions=exclude,
-                spec_id=self.current_spec_id
+                spec_ids=self.current_spec_ids
             )
 
             if suggestions:

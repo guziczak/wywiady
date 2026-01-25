@@ -1,10 +1,10 @@
 """
 Przełącznik specjalizacji medycznych.
 
-Komponent UI pozwalający na szybką zmianę aktywnej specjalizacji.
+Komponent UI pozwalający na wybór wielu specjalizacji jednocześnie (multi-select).
 """
 
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from functools import lru_cache
 from pathlib import Path
 import re
@@ -14,11 +14,11 @@ from core.specialization_manager import get_specialization_manager, Specializati
 
 
 class SpecializationSwitcher:
-    """Przełącznik specjalizacji w headerze."""
+    """Przełącznik specjalizacji w headerze (multi-select)."""
 
     def __init__(
         self,
-        on_change: Optional[Callable[[Specialization], None]] = None,
+        on_change: Optional[Callable[[List[Specialization]], None]] = None,
         compact: bool = True
     ):
         self.spec_manager = get_specialization_manager()
@@ -26,9 +26,8 @@ class SpecializationSwitcher:
         self.compact = compact
         self.button = None
         self.menu = None
-        self.button_icon = None
+        self.button_icons = None
         self.button_label = None
-        self.dropdown = None
         self.item_checks = {}
 
     @staticmethod
@@ -73,119 +72,164 @@ class SpecializationSwitcher:
             f'font-size:{max(12, size - 6)}px">{icon_text}</span>'
         )
 
+    def _get_button_label(self, active_specs: List[Specialization]) -> str:
+        """Generuje tekst przycisku dla wybranych specjalizacji."""
+        if not active_specs:
+            return "Wybierz specjalizację"
+        if len(active_specs) == 1:
+            return active_specs[0].name
+        elif len(active_specs) == 2:
+            return f"{active_specs[0].name}, {active_specs[1].name}"
+        else:
+            return f"{active_specs[0].name} +{len(active_specs) - 1}"
+
+    def _get_button_icons_html(self, active_specs: List[Specialization]) -> str:
+        """Generuje HTML z ikonami wybranych specjalizacji."""
+        if not active_specs:
+            return ""
+        # Pokaż max 3 ikony
+        icons = [self._get_icon_html(spec, 18) for spec in active_specs[:3]]
+        if len(active_specs) > 3:
+            icons.append(f'<span style="font-size:12px;color:white;">+{len(active_specs) - 3}</span>')
+        return ''.join(icons)
+
     def create(self) -> None:
         """Tworzy komponent przełącznika."""
-        active_spec = self.spec_manager.get_active()
+        active_specs = self.spec_manager.get_active_list()
 
         if self.compact:
-            self._create_compact(active_spec)
+            self._create_compact(active_specs)
         else:
-            self._create_expanded(active_spec)
+            self._create_expanded(active_specs)
 
-    def _create_compact(self, active_spec: Specialization) -> None:
-        """Kompaktowy widok - dropdown button."""
+    def _create_compact(self, active_specs: List[Specialization]) -> None:
+        """Kompaktowy widok - dropdown button z checkboxami."""
         specs = self.spec_manager.get_all()
-        button_label = active_spec.name if active_spec else "Specjalizacja"
+        button_label = self._get_button_label(active_specs)
 
-        # Button + Menu (bardziej stabilne etykiety w trybie kompaktowym)
         with ui.button().props('flat dense').classes('text-white bg-white/10 hover:bg-white/20') as self.button:
-            with ui.row().classes('items-center gap-2'):
-                self.button_icon = ui.html(self._get_icon_html(active_spec, 20), sanitize=False)
-                self.button_label = ui.label(button_label).classes('text-white max-w-[160px] truncate')
+            with ui.row().classes('items-center gap-1'):
+                self.button_icons = ui.html(self._get_button_icons_html(active_specs), sanitize=False)
+                self.button_label = ui.label(button_label).classes('text-white max-w-[200px] truncate')
                 ui.icon('arrow_drop_down').classes('text-white/70')
 
-            with ui.menu().props('auto-close').classes('bg-white text-gray-900') as self.menu:
+            with ui.menu().classes('bg-white text-gray-900 min-w-[200px]') as self.menu:
+                # Header
+                with ui.item().props('disable').classes('bg-gray-100 text-gray-600'):
+                    ui.label('Wybierz specjalizacje').classes('text-xs uppercase tracking-wide')
+
+                ui.separator()
+
                 if not specs:
                     ui.item('Brak specjalizacji').props('disabled').classes('text-gray-700')
                 else:
                     for spec in specs:
-                        is_active = spec.id == active_spec.id
-                        with ui.item(on_click=lambda s=spec: self._on_select(s)).classes('text-gray-900'):
-                            with ui.row().classes('items-center gap-2 w-full'):
-                                ui.html(self._get_icon_html(spec, 18), sanitize=False)
-                                ui.label(spec.name)
-                                check = ui.icon('check', size='sm').classes('ml-auto text-green-600')
-                                check.set_visibility(is_active)
-                                self.item_checks[spec.id] = check
+                        is_active = self.spec_manager.is_active(spec.id)
+                        self._create_menu_item(spec, is_active)
+
         if self.menu and self.button:
             self.button.on('click', lambda: self.menu.open())
 
-    def _create_expanded(self, active_spec: Specialization) -> None:
-        """Rozwinięty widok - chips/tabs."""
-        with ui.row().classes('items-center gap-1'):
+    def _create_menu_item(self, spec: Specialization, is_active: bool) -> None:
+        """Tworzy pozycję menu z checkboxem."""
+        with ui.item(on_click=lambda s=spec: self._on_toggle(s)).classes('text-gray-900 hover:bg-gray-100'):
+            with ui.row().classes('items-center gap-2 w-full'):
+                # Checkbox (wizualny)
+                check = ui.icon(
+                    'check_box' if is_active else 'check_box_outline_blank',
+                    size='sm'
+                ).classes('text-blue-600' if is_active else 'text-gray-400')
+                self.item_checks[spec.id] = check
+
+                # Ikona specjalizacji
+                ui.html(self._get_icon_html(spec, 18), sanitize=False)
+
+                # Nazwa
+                ui.label(spec.name).classes('flex-grow')
+
+    def _create_expanded(self, active_specs: List[Specialization]) -> None:
+        """Rozwinięty widok - chips z checkboxami."""
+        active_ids = [s.id for s in active_specs]
+
+        with ui.row().classes('items-center gap-1 flex-wrap'):
             for spec in self.spec_manager.get_all():
-                is_active = spec.id == active_spec.id
-                btn_classes = 'rounded-full px-3 py-1 text-sm'
+                is_active = spec.id in active_ids
+                btn_classes = 'rounded-full px-3 py-1 text-sm transition-all'
 
                 if is_active:
-                    btn_classes += f' bg-white text-gray-800 font-bold'
+                    btn_classes += ' bg-white text-gray-800 font-bold shadow-md'
                 else:
                     btn_classes += ' bg-white/10 text-white hover:bg-white/20'
 
-                with ui.button(on_click=lambda s=spec: self._on_select(s)).props('flat dense unelevated').classes(btn_classes):
-                    with ui.row().classes('items-center gap-2'):
+                with ui.button(on_click=lambda s=spec: self._on_toggle(s)).props('flat dense unelevated').classes(btn_classes):
+                    with ui.row().classes('items-center gap-1'):
+                        if is_active:
+                            ui.icon('check', size='xs').classes('text-green-600')
                         ui.html(self._get_icon_html(spec, 16), sanitize=False)
                         ui.label(spec.name)
 
-    def _on_select(self, spec: Specialization) -> None:
-        """Obsługa wyboru specjalizacji."""
-        if spec.id == self.spec_manager.get_active().id:
-            return  # Już aktywna
+    def _on_toggle(self, spec: Specialization) -> None:
+        """Obsługa przełączenia specjalizacji (multi-select)."""
+        is_now_active = self.spec_manager.toggle_active(spec.id)
 
-        self.spec_manager.set_active(spec.id)
-
-        # Aktualizuj UI
-        if self.button_icon:
-            self.button_icon.set_content(self._get_icon_html(spec, 20))
-        if self.button_label:
-            self.button_label.text = spec.name
-        # Aktualizuj znaczniki aktywnej pozycji w menu
-        for spec_id, icon in self.item_checks.items():
+        # Aktualizuj checkbox w menu
+        if spec.id in self.item_checks:
+            icon = self.item_checks[spec.id]
             try:
-                icon.set_visibility(spec_id == spec.id)
+                icon._props['name'] = 'check_box' if is_now_active else 'check_box_outline_blank'
+                icon.classes(remove='text-gray-400 text-blue-600')
+                icon.classes(add='text-blue-600' if is_now_active else 'text-gray-400')
+                icon.update()
             except Exception:
                 pass
-        if self.menu:
-            self.menu.close()
 
-        # Callback
+        # Aktualizuj przycisk
+        active_specs = self.spec_manager.get_active_list()
+        if self.button_icons:
+            self.button_icons.set_content(self._get_button_icons_html(active_specs))
+        if self.button_label:
+            self.button_label.text = self._get_button_label(active_specs)
+
+        # Callback z listą aktywnych specjalizacji
         if self.on_change:
-            self.on_change(spec)
+            self.on_change(active_specs)
 
-        ui.notify(f'Specjalizacja: {spec.name}', type='info')
+        # Notyfikacja
+        if is_now_active:
+            ui.notify(f'Dodano: {spec.name}', type='positive', position='bottom')
+        else:
+            ui.notify(f'Usunięto: {spec.name}', type='info', position='bottom')
 
     def refresh(self) -> None:
         """Odświeża stan przełącznika."""
-        active_spec = self.spec_manager.get_active()
-        if self.button_icon:
-            self.button_icon.set_content(self._get_icon_html(active_spec, 20))
+        active_specs = self.spec_manager.get_active_list()
+        active_ids = [s.id for s in active_specs]
+
+        if self.button_icons:
+            self.button_icons.set_content(self._get_button_icons_html(active_specs))
         if self.button_label:
-            self.button_label.text = active_spec.name
+            self.button_label.text = self._get_button_label(active_specs)
+
         for spec_id, icon in self.item_checks.items():
             try:
-                icon.set_visibility(spec_id == active_spec.id)
+                is_active = spec_id in active_ids
+                icon._props['name'] = 'check_box' if is_active else 'check_box_outline_blank'
+                icon.classes(remove='text-gray-400 text-blue-600')
+                icon.classes(add='text-blue-600' if is_active else 'text-gray-400')
+                icon.update()
             except Exception:
                 pass
 
-    def _on_select_id(self, spec_id: str) -> None:
-        """Backward compat (nieużywane w dropdown button)."""
-        try:
-            spec = next((s for s in self.spec_manager.get_all() if str(s.id) == str(spec_id)), None)
-            if spec:
-                self._on_select(spec)
-        except Exception:
-            pass
-
 
 def create_spec_switcher(
-    on_change: Optional[Callable[[Specialization], None]] = None,
+    on_change: Optional[Callable[[List[Specialization]], None]] = None,
     compact: bool = True
 ) -> SpecializationSwitcher:
     """
-    Tworzy i zwraca przełącznik specjalizacji.
+    Tworzy i zwraca przełącznik specjalizacji (multi-select).
 
     Args:
-        on_change: Callback wywoływany po zmianie specjalizacji
+        on_change: Callback wywoływany po zmianie specjalizacji (otrzymuje listę)
         compact: True = dropdown, False = chips
 
     Returns:

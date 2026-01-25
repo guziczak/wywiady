@@ -164,23 +164,32 @@ class LLMService:
         transcript: str,
         icd10_codes: Dict, # Deprecated, kept for compat but unused
         config: Dict,
-        spec_id: int = None  # None = uĹĽyj aktywnej specjalizacji
+        spec_id: int = None,  # Backward compat - pojedyncza specjalizacja
+        spec_ids: list = None  # Multi-select - lista specjalizacji
     ) -> Tuple[Dict[str, Any], str]:
         """
-        GĹ‚Ăłwna metoda generujÄ…ca opis.
-        UĹĽywa dynamicznych promptĂłw ze SpecializationManager jeĹ›li dostÄ™pny.
+        Główna metoda generująca opis.
+        Używa dynamicznych promptów ze SpecializationManager jeśli dostępny.
+        Obsługuje multi-select specjalizacji (spec_ids ma priorytet nad spec_id).
         """
 
-        # Pobierz aktywnÄ… specjalizacjÄ™ jeĹ›li nie podano
-        if spec_id is None and SPEC_MANAGER_AVAILABLE:
+        # Ustal listę specjalizacji
+        if spec_ids is not None:
+            active_spec_ids = spec_ids
+        elif spec_id is not None:
+            active_spec_ids = [spec_id]
+        elif SPEC_MANAGER_AVAILABLE:
             spec_manager = get_specialization_manager()
-            spec_id = spec_manager.get_active().id
-        elif spec_id is None:
-            spec_id = 1  # Fallback do stomatologii
+            active_spec_ids = spec_manager.get_active_ids()
+        else:
+            active_spec_ids = [1]  # Fallback do stomatologii
 
-        # 1. Pobierz wiedzÄ™ z bazy
+        # 1. Pobierz wiedzę z bazy (merge jeśli multi-select)
         km = KnowledgeManager()
-        context_data = km.get_context_for_specialization(spec_id)
+        if len(active_spec_ids) == 1:
+            context_data = km.get_context_for_specialization(active_spec_ids[0])
+        else:
+            context_data = km.get_context_for_specializations(active_spec_ids)
 
         # Ogranicz kontekst dla promptu
         icd10_list = context_data.get("icd10", [])[:300]
@@ -196,7 +205,7 @@ class LLMService:
                 transcript=transcript,
                 icd_context=icd_context,
                 proc_context=proc_context,
-                spec_id=spec_id
+                spec_ids=active_spec_ids
             )
         else:
             # Fallback
@@ -437,18 +446,31 @@ Zwroc TYLKO poprawny JSON z kluczami:
         transcript: str,
         config: Dict,
         exclude_questions: Optional[List[str]] = None,
-        spec_id: int = None
+        spec_id: int = None,
+        spec_ids: list = None
     ) -> List[str]:
-        """Generuje sugestie pytaĹ„ uzupeĹ‚niajÄ…cych."""
+        """
+        Generuje sugestie pytań uzupełniających.
+        Obsługuje multi-select specjalizacji (spec_ids ma priorytet nad spec_id).
+        """
+
+        # Ustal listę specjalizacji
+        if spec_ids is not None:
+            active_spec_ids = spec_ids
+        elif spec_id is not None:
+            active_spec_ids = [spec_id]
+        elif SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            active_spec_ids = spec_manager.get_active_ids()
+        else:
+            active_spec_ids = [1]
 
         if SPEC_MANAGER_AVAILABLE:
             spec_manager = get_specialization_manager()
-            if spec_id is None:
-                spec_id = spec_manager.get_active().id
             prompt = spec_manager.build_suggestions_prompt(
                 transcript=transcript,
                 exclude_questions=exclude_questions,
-                spec_id=spec_id
+                spec_ids=active_spec_ids
             )
         else:
             exclude_section = ""
