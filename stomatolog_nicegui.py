@@ -1730,11 +1730,15 @@ class WywiadApp:
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
                 self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
-            
+                # Domyślnie zaznacz wszystkie wiersze
+                self.diagnosis_grid.run_grid_method('selectAll')
+
             if self.procedure_grid:
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
                 self.procedure_grid.run_grid_method('setRowData', procedury)
+                # Domyślnie zaznacz wszystkie wiersze
+                self.procedure_grid.run_grid_method('selectAll')
 
             # Status Update
             if self.record_status:
@@ -1793,27 +1797,37 @@ class WywiadApp:
             if self.generate_button:
                 self.generate_button.props(remove='loading')
 
-    def _copy_results_json(self):
-        """Kopiuje wyniki jako JSON do schowka."""
+    async def _copy_results_json(self):
+        """Kopiuje zaznaczone wyniki jako JSON do schowka."""
         if not hasattr(self, 'diagnosis_grid') or not hasattr(self, 'procedure_grid'):
             return
-            
-        data = {
-            "diagnozy": self.diagnosis_grid.options.get('rowData', []),
-            "procedury": self.procedure_grid.options.get('rowData', [])
-        }
-        
-        self.copy_to_clipboard(json.dumps(data, indent=2, ensure_ascii=False), "Pełny Raport JSON")
 
-    def _open_save_visit_dialog(self):
-        """Otwiera dialog zapisywania wizyty."""
+        # Pobierz tylko zaznaczone wiersze
+        selected_diagnoses = await self.diagnosis_grid.get_selected_rows()
+        selected_procedures = await self.procedure_grid.get_selected_rows()
+
+        data = {
+            "diagnozy": selected_diagnoses,
+            "procedury": selected_procedures
+        }
+
+        self.copy_to_clipboard(json.dumps(data, indent=2, ensure_ascii=False), "Wybrane diagnozy i procedury")
+
+    async def _open_save_visit_dialog(self):
+        """Otwiera dialog zapisywania wizyty z zaznaczonymi elementami."""
         if not self.last_generation_result:
             ui.notify("Najpierw wygeneruj opis", type='warning')
             return
 
         transcript = self.transcript_area.value if self.transcript_area else ""
-        diagnoses = self.diagnosis_grid.options.get('rowData', []) if self.diagnosis_grid else []
-        procedures = self.procedure_grid.options.get('rowData', []) if self.procedure_grid else []
+
+        # Pobierz tylko zaznaczone wiersze
+        diagnoses = await self.diagnosis_grid.get_selected_rows() if self.diagnosis_grid else []
+        procedures = await self.procedure_grid.get_selected_rows() if self.procedure_grid else []
+
+        if not diagnoses and not procedures:
+            ui.notify("Zaznacz przynajmniej jedną diagnozę lub procedurę", type='warning')
+            return
 
         try:
             from app_ui.components.visit_save_dialog import open_save_visit_dialog

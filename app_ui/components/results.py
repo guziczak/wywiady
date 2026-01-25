@@ -1,9 +1,71 @@
 from nicegui import ui
 import asyncio
 
+_GRID_CHECKBOX_STYLES_INJECTED = False
+
+def _inject_grid_checkbox_styles():
+    """Wstrzykuje style dla lepszej widoczności checkboxów w AG Grid."""
+    global _GRID_CHECKBOX_STYLES_INJECTED
+    if _GRID_CHECKBOX_STYLES_INJECTED:
+        return
+    _GRID_CHECKBOX_STYLES_INJECTED = True
+
+    ui.add_head_html('''
+    <style>
+    /* Większe i bardziej widoczne checkboxy w AG Grid */
+    .ag-theme-balham .ag-checkbox-input-wrapper {
+        width: 20px !important;
+        height: 20px !important;
+    }
+
+    .ag-theme-balham .ag-checkbox-input-wrapper input {
+        width: 18px !important;
+        height: 18px !important;
+        cursor: pointer;
+    }
+
+    .ag-theme-balham .ag-checkbox-input-wrapper::after {
+        width: 18px !important;
+        height: 18px !important;
+        border: 2px solid #3b82f6 !important;
+        border-radius: 4px;
+    }
+
+    .ag-theme-balham .ag-checkbox-input-wrapper.ag-checked::after {
+        background-color: #3b82f6 !important;
+        border-color: #3b82f6 !important;
+    }
+
+    /* Podświetlenie zaznaczonego wiersza */
+    .ag-theme-balham .ag-row-selected {
+        background-color: rgba(59, 130, 246, 0.15) !important;
+    }
+
+    .ag-theme-balham .ag-row-selected:hover {
+        background-color: rgba(59, 130, 246, 0.25) !important;
+    }
+
+    /* Header checkbox */
+    .ag-theme-balham .ag-header-select-all {
+        margin-right: 8px;
+    }
+
+    /* Pinned column z checkboxem */
+    .ag-theme-balham .ag-pinned-left-cols-container .ag-cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    </style>
+    ''')
+
+
 def create_results_section(app):
     """Tworzy sekcję wyników (generowanie opisu)."""
-    
+
+    # Wstrzyknij style dla checkboxów
+    _inject_grid_checkbox_styles()
+
     # === GENERATION ===
     with ui.card().classes('w-full items-center gap-4'):
         ui.label('Generowanie opisu').classes('font-bold')
@@ -31,28 +93,60 @@ def create_results_section(app):
             ui.separator()
 
             # Tabela Diagnoz
-            ui.label('Diagnozy (ICD-10)').classes('font-medium text-gray-600')
+            with ui.row().classes('w-full items-center gap-2'):
+                ui.icon('medical_services', size='sm').classes('text-blue-600')
+                ui.label('Diagnozy (ICD-10)').classes('font-medium text-gray-700')
+                ui.label('— zaznacz które uwzględnić').classes('text-sm text-gray-400')
+
             app.diagnosis_grid = ui.aggrid({
                 'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'kod', 'checkboxSelection': True},
-                    {'headerName': 'Nazwa', 'field': 'nazwa'},
-                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab'},
-                    {'headerName': 'Opis', 'field': 'opis_tekstowy'}
+                    {
+                        'headerName': '',
+                        'field': 'selected',
+                        'checkboxSelection': True,
+                        'headerCheckboxSelection': True,
+                        'width': 50,
+                        'maxWidth': 50,
+                        'pinned': 'left'
+                    },
+                    {'headerName': 'Kod', 'field': 'kod', 'width': 100},
+                    {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
+                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
+                    {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
                 ],
-                'rowData': []
-            }).classes('h-48 w-full')
+                'rowData': [],
+                'rowSelection': 'multiple',
+                'suppressRowClickSelection': True,
+                'rowMultiSelectWithClick': True,
+            }).classes('h-48 w-full ag-theme-balham')
 
             # Tabela Procedur
-            ui.label('Procedury (ICD-9 / NFZ)').classes('font-medium text-gray-600')
+            with ui.row().classes('w-full items-center gap-2'):
+                ui.icon('healing', size='sm').classes('text-green-600')
+                ui.label('Procedury (ICD-9 / NFZ)').classes('font-medium text-gray-700')
+                ui.label('— zaznacz które uwzględnić').classes('text-sm text-gray-400')
+
             app.procedure_grid = ui.aggrid({
                 'columnDefs': [
-                    {'headerName': 'Kod', 'field': 'kod', 'checkboxSelection': True},
-                    {'headerName': 'Nazwa', 'field': 'nazwa'},
-                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab'},
-                    {'headerName': 'Opis', 'field': 'opis_tekstowy'}
+                    {
+                        'headerName': '',
+                        'field': 'selected',
+                        'checkboxSelection': True,
+                        'headerCheckboxSelection': True,
+                        'width': 50,
+                        'maxWidth': 50,
+                        'pinned': 'left'
+                    },
+                    {'headerName': 'Kod', 'field': 'kod', 'width': 100},
+                    {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
+                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
+                    {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
                 ],
-                'rowData': []
-            }).classes('h-64 w-full')
+                'rowData': [],
+                'rowSelection': 'multiple',
+                'suppressRowClickSelection': True,
+                'rowMultiSelectWithClick': True,
+            }).classes('h-64 w-full ag-theme-balham')
             
             # Kopiowanie i zapisywanie
             with ui.row().classes('w-full justify-end gap-2'):
