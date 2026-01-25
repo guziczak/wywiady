@@ -141,6 +141,8 @@ class QACollectionPanel:
             'rounded-xl shadow-lg cursor-pointer select-none '
             'hover:shadow-xl hover:border-blue-300 transition-colors'
         )
+        # Ensure DOM ID matches what ThreeStage expects
+        card.props(f'id=c{card.id}')
         
         # Ważne: ID elementu musi być unikalne i znane, NiceGUI generuje je automatycznie.
         # Handler kliknięcia

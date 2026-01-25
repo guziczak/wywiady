@@ -2551,6 +2551,9 @@ pause
     except Exception:
         pass
 
+    # Serve static assets (JS/CSS)
+    app.add_static_files('/assets', 'assets')
+
     ui.run(
         title='Wizyta v2',
         port=port,
