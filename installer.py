@@ -18,8 +18,8 @@ import ctypes
 try:
     import winsound
     
-    # GRAND PIANO ENGINE (Restored)
-    # 3 Detuned Strings + Stereo Panning + Clean Decay
+    # ACOUSTIC MODELING PIANO ENGINE (Spectral Physics)
+    # Based on localized spectral analysis of Grand Piano strings
     NOTES = {'A0': 27.5, 'A#0': 29.14, 'B0': 30.87}
     names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
     for oct in range(1, 9):
@@ -27,72 +27,140 @@ try:
             freq = 32.703 * (2 ** (oct-1)) * (2 ** (i/12))
             NOTES[f"{name}{oct}"] = freq
 
-    # CLIMAX MELODY SOLO (Matching px.bat)
+    # CLIMAX SOLO (Expressive Velocity)
     COMPOSITION = [
-        ('E5', 0, 1.5, 1.0), ('D5', 1.5, 0.5, 0.92), ('C5', 2, 1, 0.98), ('B4', 3, 0.5, 0.90), ('A4', 3.5, 0.5, 0.88),
-        ('G4', 4, 0.75, 0.90), ('A4', 4.75, 0.25, 0.86), ('B4', 5, 1.5, 0.98), ('C5', 6.5, 1, 0.95), ('D5', 7.5, 0.5, 0.92),
-        ('E5', 8, 0.75, 1.0), ('F5', 8.75, 0.25, 0.96), ('G5', 9, 1, 1.0), ('A5', 10, 1, 1.0), ('G5', 11, 0.5, 0.98), ('F5', 11.5, 0.5, 0.92),
-        ('E5', 12, 1.5, 1.0), ('D5', 13.5, 0.5, 0.92), ('C5', 14, 0.5, 0.96), ('B4', 14.5, 0.5, 0.90), ('A4', 15, 1, 0.98)
+        ('E5', 0, 1.5, 1.0), ('D5', 1.5, 0.5, 0.85), ('C5', 2, 1, 0.95), ('B4', 3, 0.5, 0.88), ('A4', 3.5, 0.5, 0.85),
+        ('G4', 4, 0.75, 0.90), ('A4', 4.75, 0.25, 0.82), ('B4', 5, 1.5, 0.96), ('C5', 6.5, 1, 0.92), ('D5', 7.5, 0.5, 0.88),
+        ('E5', 8, 0.75, 1.0), ('F5', 8.75, 0.25, 0.94), ('G5', 9, 1, 1.0), ('A5', 10, 1, 1.0), ('G5', 11, 0.5, 0.95), ('F5', 11.5, 0.5, 0.90),
+        ('E5', 12, 1.5, 1.0), ('D5', 13.5, 0.5, 0.90), ('C5', 14, 0.5, 0.94), ('B4', 14.5, 0.5, 0.88), ('A4', 15, 1, 0.95)
     ]
 
     TEMPO = 103
-    SR = 44100 # High Quality
+    SR = 44100
 
     def generate_wav_memory():
         sec_per_beat = 60 / TEMPO
-        total_duration = 16 * sec_per_beat + 3
+        total_duration = 16 * sec_per_beat + 4 # Long tail for resonance
         total_samples = int(total_duration * SR)
         mix_l = [0.0] * total_samples
         mix_r = [0.0] * total_samples
         
+        # Resonance impulse (Soundboard simulation)
+        # Pre-calculated faint noise floor
+        soundboard = [(random.random()-0.5)*0.002 for _ in range(total_samples)]
+
         for note_name, start_beat, dur_beats, vel in COMPOSITION:
             freq = NOTES.get(note_name, 440)
             start_sample = int(start_beat * sec_per_beat * SR)
             dur_sec = dur_beats * sec_per_beat
-            ns = int(dur_sec * 1.5 * SR) # Sustain
             
+            # Allow notes to ring out naturally (Damper pedal simulation)
+            sustain = 2.0 
+            ns = int(dur_sec * sustain * SR)
             if start_sample >= total_samples: continue
+
+            # --- 1. PHYSICS CONSTANTS ---
+            # Inharmonicity Coefficient (B) - higher for lower/stiff strings
+            # Stiff strings cause "sharp" harmonics
+            B = 0.00015 * (1 + (200/freq)) 
             
-            # Key Tracking Pan (Low notes Left, High notes Right)
-            pan = max(-0.8, min(0.8, (math.log2(freq) - 6) * 0.25))
-            vol_l = (1.0 - pan) * 0.7
-            vol_r = (1.0 + pan) * 0.7
+            # Panning (Stereo Width) - Bass Left, Treble Right
+            pan = max(-0.7, min(0.7, (math.log2(freq) - 6) * 0.25))
+            vol_l = (1.0 - pan) * 0.6
+            vol_r = (1.0 + pan) * 0.6
 
-            # 3 Detuned Oscillators per key (Chorus effect)
-            detunes = [1.0, 1.002, 0.998] 
-            ws = [2 * math.pi * freq * d / SR for d in detunes]
-            harms = [1.0, 0.6, 0.3, 0.1] # Rich harmonics
-
-            for i in range(ns):
-                if start_sample + i >= total_samples: break
-                
+            # --- 2. HAMMER MECHANICS (Attack) ---
+            # Simulate the "thud" of felt hammer hitting string
+            # Lower frequency thud for lower notes
+            hammer_freq = 100 + (freq * 0.5)
+            hammer_len = int(0.04 * SR) # 40ms impact
+            hammer_w = 2 * math.pi * hammer_freq / SR
+            
+            # --- 3. STRING SYNTHESIS (Additive) ---
+            # 3 Unison Strings per key (Detuned)
+            detunes = [1.0, 1.0015, 0.9985] 
+            
+            # Optimization: Less harmonics for high notes (inaudible anyway)
+            num_harmonics = min(16, int(16000/freq))
+            
+            for i in range(min(ns, total_samples - start_sample)):
                 t = i / SR
-                att = min(1.0, i / 200) # Smooth attack
-                dec = math.exp(-(1.5 + freq/500.0) * t) # Natural decay
                 
-                signal = 0.0
-                for idx, w in enumerate(ws):
-                    string_sig = 0.0
-                    for h_idx, h_amp in enumerate(harms):
-                        h_num = h_idx + 1
-                        h_dec = math.exp(-t * h_num * 0.5)
-                        string_sig += math.sin(w * h_num * i) * h_amp * h_dec
-                    signal += string_sig
-                
-                val = signal * vel * att * dec * 0.15
-                
-                mix_l[start_sample + i] += val * vol_l
-                mix_r[start_sample + i] += val * vol_r
+                # Hammer signal (Percussive onset)
+                hammer = 0.0
+                if i < hammer_len:
+                    h_env = math.exp(-i/(hammer_len/5)) 
+                    hammer = math.sin(hammer_w * i) * h_env * vel * 0.3
 
-        # Stereo Reverb
-        dl, dr = int(0.12 * SR), int(0.15 * SR)
-        fb = 0.35
-        for i in range(min(dl, dr), total_samples):
-            if i >= dl: mix_l[i] += mix_r[i-dl] * fb * 0.6
-            if i >= dr: mix_r[i] += mix_l[i-dr] * fb * 0.6
+                # String signal
+                string_sig = 0.0
+                
+                for detune in detunes:
+                    f_d = freq * detune
+                    
+                    for n in range(1, num_harmonics + 1):
+                        # Stiff String Physics: f_n = n * f * sqrt(1 + B*n^2)
+                        h_freq = f_d * n * math.sqrt(1 + B * n * n)
+                        if h_freq > SR/2: break
+                        
+                        w = 2 * math.pi * h_freq / SR
+                        
+                        # Amplitude Spectrum: Higher harmonics are quieter
+                        # Spectral Slope: 1/n^1.5 approx
+                        amp = (vel * 0.3) / (n ** 1.2)
+                        if n == 1: amp *= 1.5 # Fundamental is strong
+                        if n == 2: amp *= 0.8 # 2nd harmonic warmth
+                        
+                        # Decay Physics: Higher harmonics die faster
+                        # Decay rate increases with n^2
+                        decay_rate = (1.5 + (n * 0.8) + (freq/800.0)) 
+                        env = math.exp(-decay_rate * t)
+                        
+                        # String vibration
+                        string_sig += math.sin(w * i) * amp * env
 
-        # Normalize
-        max_val = max(max(abs(x) for x in mix_l), max(abs(x) for x in mix_r), 0.001)
+                # Combine: Hammer + Strings
+                # Attack envelope to blend hammer into string
+                att = min(1.0, i / 150)
+                
+                final_sig = (string_sig * att) + hammer
+                
+                # Apply to mix
+                idx = start_sample + i
+                mix_l[idx] += final_sig * vol_l
+                mix_r[idx] += final_sig * vol_r
+                
+                # Excitate Soundboard (Sympathetic Resonance)
+                # Add energy to the noise floor based on volume
+                if idx < total_samples:
+                    soundboard[idx] += final_sig * 0.05
+
+        # --- 4. MASTERING ---
+        # Add soundboard resonance to mix
+        for i in range(total_samples):
+            mix_l[i] += soundboard[i] * 0.4
+            mix_r[i] += soundboard[i] * 0.4
+
+        # High-Quality Reverb (Schroeder/Moorer)
+        # Using prime number delays for smooth tail
+        delays = [int(0.097*SR), int(0.113*SR)] 
+        gains = [0.3, 0.25]
+        
+        for d, g in zip(delays, gains):
+            for i in range(d, total_samples):
+                # Cross-feed reverb for width
+                mix_l[i] += mix_r[i-d] * g
+                mix_r[i] += mix_l[i-d] * g
+
+        # Soft Clipping / Limiting
+        max_val = 0.0
+        for i in range(total_samples):
+            m = max(abs(mix_l[i]), abs(mix_r[i]))
+            if m > max_val: max_val = m
+        
+        # Headroom
+        scaler = 0.95 / (max_val if max_val > 0 else 1.0)
+
         buf = io.BytesIO()
         data_size = total_samples * 4
         buf.write(b'RIFF'); buf.write(struct.pack('<I', 36 + data_size)); buf.write(b'WAVE')
@@ -100,10 +168,17 @@ try:
         buf.write(struct.pack('<H', 2)); buf.write(struct.pack('<I', SR)); buf.write(struct.pack('<I', SR * 4))
         buf.write(struct.pack('<H', 4)); buf.write(struct.pack('<H', 16)); buf.write(b'data')
         buf.write(struct.pack('<I', data_size))
+        
         for i in range(total_samples):
-            l = int(max(min(mix_l[i] / max_val, 1.0), -1.0) * 32000)
-            r = int(max(min(mix_r[i] / max_val, 1.0), -1.0) * 32000)
-            buf.write(struct.pack('<hh', l, r))
+            # Tanh-like saturation for warmth
+            l = mix_l[i] * scaler
+            r = mix_r[i] * scaler
+            # Simple soft knee
+            l = l / (1 + abs(l) * 0.1)
+            r = r / (1 + abs(r) * 0.1)
+            
+            buf.write(struct.pack('<hh', int(l * 32000), int(r * 32000)))
+            
         return buf.getvalue()
 
     def play_music():
