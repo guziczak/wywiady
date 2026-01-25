@@ -149,6 +149,8 @@ export class CardEngine {
 }
 
 // Global factory for NiceGUI to call
-window.createCardEngine = (containerId) => {
+export function createCardEngine(containerId) {
     return new CardEngine(containerId);
-};
+}
+
+window.createCardEngine = createCardEngine;

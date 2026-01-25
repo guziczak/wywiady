@@ -24,15 +24,20 @@ class ThreeStage(ui.element):
         ui.add_head_html(import_map)
         
         # 2. Load our Engine
-        # type="module" allows using 'import' inside the file
-        ui.add_head_html('<script type="module" src="/assets/js/card_engine.js"></script>')
+        # We will load it dynamically in _init_client_side to ensure order
+        # ui.add_head_html('<script type="module" src="/assets/js/card_engine.js"></script>')
 
         # 3. Initialize on Client
         self.on('mount', self._init_client_side)
 
     async def _init_client_side(self):
-        # Create global instance bound to this container ID
-        await self.run_method_js(f'window.engine = window.createCardEngine("{self.id}")')
+        # Dynamically import the module to guarantee it's loaded
+        js_init = f'''
+        import('/assets/js/card_engine.js').then(module => {{
+            window.engine = module.createCardEngine("{self.id}");
+        }}).catch(err => console.error("Failed to load 3D engine:", err));
+        '''
+        await self.run_method_js(js_init)
         self._initialized = True
 
     async def run_method_js(self, code: str):
