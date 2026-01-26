@@ -77,6 +77,34 @@ def _force_grid_setup(grid, column_defs):
         pass
 
 
+def _render_diagnosis_grid(app, column_defs, row_data):
+    app.diagnosis_grid = ui.aggrid({
+        'columnDefs': column_defs,
+        'rowData': row_data,
+        'rowSelection': 'multiple',
+        'suppressRowClickSelection': True,
+        'rowMultiSelectWithClick': True,
+        'headerHeight': 32,
+        'rowHeight': 32,
+    }, theme='balham').classes('w-full ag-theme-balham').style('height: 12rem; width: 100%;')
+    app.diagnosis_grid.on('gridReady', lambda _: _force_grid_setup(app.diagnosis_grid, column_defs))
+    return app.diagnosis_grid
+
+
+def _render_procedure_grid(app, column_defs, row_data):
+    app.procedure_grid = ui.aggrid({
+        'columnDefs': column_defs,
+        'rowData': row_data,
+        'rowSelection': 'multiple',
+        'suppressRowClickSelection': True,
+        'rowMultiSelectWithClick': True,
+        'headerHeight': 32,
+        'rowHeight': 32,
+    }, theme='balham').classes('w-full ag-theme-balham').style('height: 16rem; width: 100%;')
+    app.procedure_grid.on('gridReady', lambda _: _force_grid_setup(app.procedure_grid, column_defs))
+    return app.procedure_grid
+
+
 def create_results_section(app):
     """Tworzy sekcję wyników (generowanie opisu)."""
 
@@ -115,30 +143,24 @@ def create_results_section(app):
                 ui.label('Diagnozy (ICD-10)').classes('font-medium text-gray-700')
                 ui.label('— zaznacz które uwzględnić').classes('text-sm text-gray-400')
 
-            app.diagnosis_grid = ui.aggrid({
-                'columnDefs': [
-                    {
-                        'headerName': '',
-                        'field': 'selected',
-                        'checkboxSelection': True,
-                        'headerCheckboxSelection': True,
-                        'width': 50,
-                        'maxWidth': 50,
-                        'pinned': 'left'
-                    },
-                    {'headerName': 'Kod', 'field': 'kod', 'width': 100},
-                    {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
-                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
-                    {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
-                ],
-                'rowData': [],
-                'rowSelection': 'multiple',
-                'suppressRowClickSelection': True,
-                'rowMultiSelectWithClick': True,
-                'headerHeight': 32,
-                'rowHeight': 32,
-            }).classes('h-48 w-full ag-theme-balham')
-            app.diagnosis_grid.on('gridReady', lambda _: _force_grid_setup(app.diagnosis_grid, app.diagnosis_grid.options.get('columnDefs', [])))
+            diagnosis_column_defs = [
+                {
+                    'headerName': '',
+                    'field': 'selected',
+                    'checkboxSelection': True,
+                    'headerCheckboxSelection': True,
+                    'width': 50,
+                    'maxWidth': 50,
+                    'pinned': 'left'
+                },
+                {'headerName': 'Kod', 'field': 'kod', 'width': 100},
+                {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
+                {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
+                {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
+            ]
+            app.diagnosis_grid_container = ui.element('div').classes('w-full')
+            with app.diagnosis_grid_container:
+                _render_diagnosis_grid(app, diagnosis_column_defs, [])
 
             # Tabela Procedur
             with ui.row().classes('w-full items-center gap-2'):
@@ -146,30 +168,24 @@ def create_results_section(app):
                 ui.label('Procedury (ICD-9 / NFZ)').classes('font-medium text-gray-700')
                 ui.label('— zaznacz które uwzględnić').classes('text-sm text-gray-400')
 
-            app.procedure_grid = ui.aggrid({
-                'columnDefs': [
-                    {
-                        'headerName': '',
-                        'field': 'selected',
-                        'checkboxSelection': True,
-                        'headerCheckboxSelection': True,
-                        'width': 50,
-                        'maxWidth': 50,
-                        'pinned': 'left'
-                    },
-                    {'headerName': 'Kod', 'field': 'kod', 'width': 100},
-                    {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
-                    {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
-                    {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
-                ],
-                'rowData': [],
-                'rowSelection': 'multiple',
-                'suppressRowClickSelection': True,
-                'rowMultiSelectWithClick': True,
-                'headerHeight': 32,
-                'rowHeight': 32,
-            }).classes('h-64 w-full ag-theme-balham')
-            app.procedure_grid.on('gridReady', lambda _: _force_grid_setup(app.procedure_grid, app.procedure_grid.options.get('columnDefs', [])))
+            procedure_column_defs = [
+                {
+                    'headerName': '',
+                    'field': 'selected',
+                    'checkboxSelection': True,
+                    'headerCheckboxSelection': True,
+                    'width': 50,
+                    'maxWidth': 50,
+                    'pinned': 'left'
+                },
+                {'headerName': 'Kod', 'field': 'kod', 'width': 100},
+                {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
+                {'headerName': 'Lokalizacja / Ząb', 'field': 'zab', 'width': 140},
+                {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
+            ]
+            app.procedure_grid_container = ui.element('div').classes('w-full')
+            with app.procedure_grid_container:
+                _render_procedure_grid(app, procedure_column_defs, [])
             
             # Kopiowanie i zapisywanie
             with ui.row().classes('w-full justify-end gap-2'):

@@ -177,7 +177,7 @@ try:
     from app_ui.components.header import create_header
     from app_ui.components.settings import create_settings_section
     from app_ui.components.recording import create_recording_section
-    from app_ui.components.results import create_results_section
+from app_ui.components.results import create_results_section, _render_diagnosis_grid, _render_procedure_grid
     from app_ui.live import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
@@ -1774,30 +1774,40 @@ class WywiadApp:
             print(f"[UI] Loading {len(diagnozy)} diagnoses into grid (Spec: {spec_name})...", flush=True)
 
             # Aktualizuj dane i kolumny JEDNYM rzutem (unika race condition)
-            if self.diagnosis_grid:
+            if getattr(self, 'diagnosis_grid_container', None):
+                self.diagnosis_grid_container.clear()
+                with self.diagnosis_grid_container:
+                    _render_diagnosis_grid(self, new_column_defs, diagnozy)
+            elif self.diagnosis_grid:
                 self.diagnosis_grid.options['columnDefs'] = new_column_defs
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
                 self.diagnosis_grid.run_grid_method('setColumnDefs', new_column_defs)
-                # Wymuś załadowanie danych przez API (fix dla "No Rows To Show")
+                # Wymus załadowanie danych przez API (fix dla "No Rows To Show")
                 self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
                 self.diagnosis_grid.run_grid_method('refreshHeader')
                 # Dopasuj szerokosci po przerysowaniu
                 ui.timer(0.05, lambda: self.diagnosis_grid.run_grid_method('sizeColumnsToFit'), once=True)
-                # Opóźnij selectAll, aby grid zdążył się przerysować
+            if self.diagnosis_grid:
+                # Opoznij selectAll, aby grid zdazyl sie przerysowac
                 ui.timer(0.1, lambda: self.diagnosis_grid.run_grid_method('selectAll'), once=True)
 
-            if self.procedure_grid:
+            if getattr(self, 'procedure_grid_container', None):
+                self.procedure_grid_container.clear()
+                with self.procedure_grid_container:
+                    _render_procedure_grid(self, new_column_defs, procedury)
+            elif self.procedure_grid:
                 self.procedure_grid.options['columnDefs'] = new_column_defs
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
                 self.procedure_grid.run_grid_method('setColumnDefs', new_column_defs)
-                # Wymuś załadowanie danych przez API
+                # Wymus zaladowanie danych przez API
                 self.procedure_grid.run_grid_method('setRowData', procedury)
                 self.procedure_grid.run_grid_method('refreshHeader')
                 # Dopasuj szerokosci po przerysowaniu
                 ui.timer(0.05, lambda: self.procedure_grid.run_grid_method('sizeColumnsToFit'), once=True)
-                # Opóźnij selectAll
+            if self.procedure_grid:
+                # Opoznij selectAll
                 ui.timer(0.1, lambda: self.procedure_grid.run_grid_method('selectAll'), once=True)
 
             # Status Update
