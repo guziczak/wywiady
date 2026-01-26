@@ -177,7 +177,7 @@ try:
     from app_ui.components.header import create_header
     from app_ui.components.settings import create_settings_section
     from app_ui.components.recording import create_recording_section
-from app_ui.components.results import create_results_section, _render_diagnosis_grid, _render_procedure_grid
+    from app_ui.components.results import create_results_section, _render_diagnosis_grid, _render_procedure_grid
     from app_ui.live import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
