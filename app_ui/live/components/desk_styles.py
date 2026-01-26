@@ -37,6 +37,9 @@ def inject_desk_styles() -> None:
     height: calc(100vh - 128px);
     padding: 12px 16px 18px;
     overflow: hidden;
+    --live-hud-height: 72px;
+    --live-dock-height: 64px;
+    --live-overlay-gap: 12px;
 }
 
 @media (max-width: 900px) {
@@ -141,27 +144,33 @@ def inject_desk_styles() -> None:
 }
 
 .live-overlay--spotlight {
-    top: 16px;
+    top: calc(var(--live-hud-height) + var(--live-overlay-gap));
     left: 16px;
     width: min(560px, 92vw);
 }
 
 .live-overlay--transcript {
     left: 16px;
-    bottom: 86px;
+    bottom: calc(var(--live-dock-height) + var(--live-overlay-gap));
     width: min(420px, 94vw);
-    height: min(var(--overlay-height, min(45vh, 420px)), calc(100% - 300px));
-    max-height: calc(100% - 300px);
+    height: min(
+        var(--overlay-height, min(45vh, 420px)),
+        calc(100% - (var(--live-hud-height) + var(--live-dock-height) + 32px))
+    );
+    max-height: calc(100% - (var(--live-hud-height) + var(--live-dock-height) + 32px));
     min-height: 220px;
     overflow: hidden;
 }
 
 .live-overlay--drawer {
     right: 16px;
-    bottom: 86px;
+    bottom: calc(var(--live-dock-height) + var(--live-overlay-gap));
     width: min(460px, 94vw);
-    height: min(var(--overlay-height, min(60vh, 520px)), calc(100% - 300px));
-    max-height: calc(100% - 300px);
+    height: min(
+        var(--overlay-height, min(60vh, 520px)),
+        calc(100% - (var(--live-hud-height) + var(--live-dock-height) + 32px))
+    );
+    max-height: calc(100% - (var(--live-hud-height) + var(--live-dock-height) + 32px));
     min-height: 260px;
     overflow: hidden;
     transform: translateY(12px);
@@ -541,6 +550,10 @@ def inject_desk_styles() -> None:
     opacity: 1;
     transform: translate(-50%, -12px);
 }
+
+.prompter-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
 """.strip()
 
     ui.add_head_html(
@@ -559,6 +572,47 @@ def inject_desk_styles() -> None:
             style.textContent = cssText;
           }}
         }})();
+        </script>
+        """
+    )
+
+    ui.add_head_html(
+        """
+        <script>
+        (function() {
+          if (window.__liveDeskLayoutInit) return;
+          window.__liveDeskLayoutInit = true;
+
+          const update = () => {
+            const shell = document.querySelector('.live-desk-shell');
+            if (!shell) return;
+            const hud = shell.querySelector('.qa-desk-hud');
+            const dock = shell.querySelector('.live-desk-dock');
+            const hudH = hud ? hud.getBoundingClientRect().height : 0;
+            const dockH = dock ? dock.getBoundingClientRect().height : 0;
+            shell.style.setProperty('--live-hud-height', `${Math.ceil(hudH)}px`);
+            shell.style.setProperty('--live-dock-height', `${Math.ceil(dockH)}px`);
+          };
+
+          const attach = () => {
+            const shell = document.querySelector('.live-desk-shell');
+            if (!shell) return;
+            const hud = shell.querySelector('.qa-desk-hud');
+            const dock = shell.querySelector('.live-desk-dock');
+            if (window.ResizeObserver) {
+              const ro = new ResizeObserver(() => update());
+              if (hud) ro.observe(hud);
+              if (dock) ro.observe(dock);
+              if (shell) ro.observe(shell);
+            }
+            update();
+          };
+
+          window.addEventListener('resize', () => update(), { passive: true });
+          document.addEventListener('DOMContentLoaded', attach);
+          setTimeout(attach, 0);
+          setTimeout(attach, 500);
+        })();
         </script>
         """
     )

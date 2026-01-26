@@ -241,25 +241,25 @@ class PrompterPanel:
         with ui.column().classes('w-full gap-4'):
             # === KARTY SUGESTII ===
             if self.state.status == SessionStatus.IDLE:
-                with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
+                with ui.element('div').classes('w-full grid prompter-grid gap-3'):
                     for _ in range(3):
                         EmptyStateCard("Naciśnij START").create()
             else:
                 suggestions = self.state.suggestions
 
                 if not suggestions and not self._is_loading:
-                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
+                    with ui.element('div').classes('w-full grid prompter-grid gap-3'):
                         PlaceholderCard("Analizuję rozmowę...").create()
                         PlaceholderCard("Szukam pytań...").create()
                         PlaceholderCard("Czekam na kontekst...").create()
                 elif self._is_loading and not suggestions:
-                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
+                    with ui.element('div').classes('w-full grid prompter-grid gap-3'):
                         for _ in range(3):
                             PlaceholderCard("Generuję...").create()
                 elif any(s.question == "Brak konfiguracji AI" for s in suggestions):
                     self._render_config_error_card()
                 else:
-                    with ui.element('div').classes('w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
+                    with ui.element('div').classes('w-full grid prompter-grid gap-3'):
                         for idx in range(3):
                             if idx < len(suggestions):
                                 suggestion = suggestions[idx]

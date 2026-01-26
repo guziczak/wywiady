@@ -350,7 +350,7 @@ export class CardEngine {
         const jitter = (this._pseudoRandom(index * 3.1) - 0.5) * 10;
         const targetX = Math.cos(angle) * radius + jitter;
         const targetZ = Math.sin(angle) * radius + jitter;
-        const targetY = Math.min(index * 0.35, 6);
+        const targetY = Math.min(index * 1.1, 18);
         const targetRot = {
             x: -Math.PI / 2,
             y: (this._pseudoRandom(index * 5.7) - 0.5) * 0.08,

@@ -212,7 +212,7 @@ class LiveInterviewView:
                 self.active_question_panel.create()
 
             # === TRANSCRIPT (TAPE) ===
-            self._transcript_overlay = ui.element('div').classes('live-overlay live-overlay--transcript flex flex-col gap-2')
+            self._transcript_overlay = ui.element('div').classes('live-overlay live-overlay--transcript flex flex-col gap-2 min-h-0')
             with self._transcript_overlay:
                 with ui.element('div').classes('overlay-header'):
                     ui.label('Transkrypt').classes('overlay-title')
@@ -225,7 +225,7 @@ class LiveInterviewView:
                     self.transcript_panel.container.classes(add='live-panel live-transcript-panel flex-1 min-h-0')
 
             # === PROMPTER (DRAWER) ===
-            self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer flex flex-col gap-2')
+            self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer flex flex-col gap-2 min-h-0')
             with self._prompter_overlay:
                 with ui.element('div').classes('overlay-header'):
                     ui.label('Sufler').classes('overlay-title')
