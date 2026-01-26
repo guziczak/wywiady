@@ -26,7 +26,7 @@ export class CardEngine {
         };
         this.focusMetrics = {
             scale: 1.08,
-            tilt: 0.35,
+            tilt: 0,
         };
         this.hoverState = {
             activeId: null,
@@ -390,10 +390,16 @@ export class CardEngine {
         const focusX = rect ? -Math.min(260, rect.width * 0.28) : -220;
         const focusZ = rect ? Math.min(260, rect.height * 0.32) : 220;
         const focusY = Math.max(home.y + (this.cardMetrics?.lift ?? 10) * 4, 70);
-        const tilt = this.focusMetrics?.tilt ?? 0.35;
+        const temp = new THREE.Object3D();
+        temp.position.set(focusX, focusY, focusZ);
+        if (this.camera) {
+            temp.lookAt(this.camera.position);
+        }
+        const tilt = this.focusMetrics?.tilt ?? 0;
+        const rotX = temp.rotation.x + tilt;
         return {
             position: { x: focusX, y: focusY, z: focusZ },
-            rotation: { x: -Math.PI / 2 + tilt, y: 0, z: 0 },
+            rotation: { x: rotX, y: temp.rotation.y, z: 0 },
             scale: { x: this.focusMetrics.scale, y: this.focusMetrics.scale, z: this.focusMetrics.scale },
         };
     }
