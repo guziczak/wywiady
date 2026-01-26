@@ -1,4 +1,4 @@
-"""
+﻿"""
 Live Interview View - Refactored
 Główny widok Live Interview z komponentami i smart AI triggers.
 """
@@ -8,7 +8,7 @@ import asyncio
 from typing import Optional, List
 
 from app_ui.components.header import create_header
-from app_ui.live.live_state import LiveState, SessionStatus
+from app_ui.live.live_state import LiveState, SessionStatus, Suggestion
 from app_ui.live.live_ai_controller import AIController
 from app_ui.live.components.transcript_panel import TranscriptPanel
 from app_ui.live.components.prompter_panel import PrompterPanel
@@ -942,43 +942,85 @@ class LiveInterviewView:
 
     # === CARD INTERACTION ===
 
-    def _on_card_click(self, question: str):
+    def _on_card_click(self, suggestion):
         """
-        Callback: kliknięcie w kartę sugestii.
+        Callback: klikniecie w karte sugestii.
 
-        NOWA ARCHITEKTURA:
-        1. Aktywuje pytanie w ActiveQuestionContext (ODDZIELONY od sugestii)
-        2. Ładuje odpowiedzi asynchronicznie
-        3. Kopiuje pytanie do schowka
-        4. Triggeruje regenerację sugestii Z OPÓŹNIENIEM (8s)
+        Typy kart:
+        - question: uruchamia Q+A (aktywne pytanie + odpowiedzi)
+        - script/check: wsparcie lekarza (kopiuj/odhacz)
         """
-        print(f"[LIVE] Card clicked: {question[:30]}...", flush=True)
+        # Unwrap
+        if isinstance(suggestion, Suggestion):
+            text = suggestion.question
+            kind = suggestion.kind or "question"
+        elif isinstance(suggestion, dict):
+            text = (suggestion.get("text") or suggestion.get("question") or "").strip()
+            kind = (suggestion.get("type") or suggestion.get("kind") or "question").strip().lower()
+        else:
+            text = str(suggestion)
+            kind = "question"
 
-        # === 1. AKTYWUJ PYTANIE W NOWYM KONTEKŚCIE ===
-        # To NIE znika przy regeneracji sugestii!
-        self.state.start_question(question, [])
+        if not text:
+            return
 
-        # === 2. ZAŁADUJ ODPOWIEDZI ===
-        asyncio.create_task(self._load_patient_answers(question))
+        print(f"[LIVE] Card clicked ({kind}): {text[:30]}...", flush=True)
 
-        # === 3. KOPIUJ DO SCHOWKA ===
-        import json
-        client = ui.context.client or self._client
-        if client:
-            try:
-                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(question)})')
-            except Exception:
-                pass
-            try:
-                with client:
-                    ui.notify("Skopiowano pytanie!", type='positive', position='top')
-            except Exception:
-                pass
+        if kind == "question":
+            # 1. Aktywuj pytanie
+            self.state.start_question(text, [])
 
-        # === 4. TRIGGER AI Z OPÓŹNIENIEM ===
-        # Regeneracja sugestii po 8s - daje czas na przeczytanie odpowiedzi
+            # 2. Zaladuj odpowiedzi
+            asyncio.create_task(self._load_patient_answers(text))
+
+            # 3. Kopiuj pytanie
+            import json
+            client = ui.context.client or self._client
+            if client:
+                try:
+                    client.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
+                except Exception:
+                    pass
+                try:
+                    with client:
+                        ui.notify("Skopiowano pytanie!", type='positive', position='top')
+                except Exception:
+                    pass
+        else:
+            # Script / checklista: wsparcie lekarza
+            import json
+            client = ui.context.client or self._client
+            if client:
+                if kind == "script":
+                    try:
+                        client.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
+                    except Exception:
+                        pass
+                    try:
+                        with client:
+                            ui.notify("Skopiowano skrypt!", type='positive', position='top')
+                    except Exception:
+                        pass
+                elif kind == "check":
+                    try:
+                        with client:
+                            ui.notify("Odhaczone.", type='positive', position='top')
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        client.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
+                    except Exception:
+                        pass
+                    try:
+                        with client:
+                            ui.notify("Skopiowano.", type='positive', position='top')
+                    except Exception:
+                        pass
+
+        # Trigger AI (regeneracja i oznaczenie uzycia)
         if self.ai_controller:
-            self.ai_controller.on_card_clicked(question)
+            self.ai_controller.on_card_clicked(suggestion)
 
     async def _load_patient_answers(self, question: str) -> None:
         """
@@ -1096,3 +1138,5 @@ class LiveInterviewView:
         """Callback: AI skończyło generować."""
         if self.prompter_panel:
             self.prompter_panel.set_loading(False)
+
+

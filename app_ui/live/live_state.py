@@ -1,4 +1,4 @@
-"""
+﻿"""
 Live Interview State Management
 Centralne zarządzanie stanem transkrypcji i sugestii.
 
@@ -32,6 +32,15 @@ class SessionStatus(Enum):
     PAUSED = "paused"
 
 
+class ConversationMode(Enum):
+    """Tryb rozmowy (intencja wizyty)."""
+    SYMPTOM = "symptom"
+    DECISION = "decision"
+    FOLLOWUP = "followup"
+    ADMIN = "admin"
+    GENERAL = "general"
+
+
 class PrompterMode(Enum):
     """Tryb panelu promptera."""
     SUGGESTIONS = "suggestions"  # Normalne karty sugestii
@@ -54,6 +63,8 @@ class Suggestion:
     question: str
     used: bool = False
     clicked_at: Optional[float] = None
+    kind: str = "question"  # question | script | check
+    tag: Optional[str] = None
 
 
 @dataclass
@@ -165,12 +176,18 @@ class LiveState:
         self.analyze_speakers_preference: bool = True  # Zapamiętana preferencja
         self._recording_start_time: Optional[float] = None
 
+        # Tryb rozmowy (intencja)
+        self.conversation_mode: ConversationMode = ConversationMode.GENERAL
+        self.conversation_mode_confidence: float = 0.0
+        self.conversation_mode_reason: str = ""
+
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
         self._on_suggestions_change: Optional[Callable] = None
         self._on_status_change: Optional[Callable] = None
         self._on_diarization_change: Optional[Callable] = None
         self._on_mode_change: Optional[Callable] = None
+        self._on_conversation_mode_change: Optional[Callable] = None
         self._on_qa_pair_created: Optional[Callable[[QAPair], None]] = None
         self._on_active_question_change: Optional[Callable] = None
 
@@ -215,6 +232,10 @@ class LiveState:
     def on_mode_change(self, callback: Callable):
         """Rejestruje callback na zmianę trybu panelu."""
         self._on_mode_change = callback
+
+    def on_conversation_mode_change(self, callback: Callable):
+        """Rejestruje callback na zmianę trybu rozmowy."""
+        self._on_conversation_mode_change = callback
 
     def on_qa_pair_created(self, callback: Callable[['QAPair'], None]):
         """Rejestruje callback na utworzenie pary Q+A."""
@@ -280,7 +301,7 @@ class LiveState:
 
     # === SUGGESTIONS MANAGEMENT ===
 
-    def set_suggestions(self, questions: List[str]):
+    def set_suggestions(self, questions: List):
         """
         Ustawia nowe sugestie (wykluczając już użyte).
 
@@ -288,11 +309,32 @@ class LiveState:
         Aktywne pytanie żyje w osobnym kontekście (self.active_question)
         i nie jest niszczone przez regenerację sugestii.
         """
-        self.suggestions = [
-            Suggestion(question=q)
-            for q in questions
-            if q not in self.asked_questions
-        ][:3]  # Max 3 sugestie
+        normalized: List[Suggestion] = []
+        for item in questions:
+            if isinstance(item, Suggestion):
+                normalized.append(item)
+                continue
+            if isinstance(item, dict):
+                text = (item.get("text") or item.get("question") or "").strip()
+                if not text:
+                    continue
+                kind = (item.get("type") or item.get("kind") or "question").strip().lower()
+                tag = item.get("tag")
+                normalized.append(Suggestion(question=text, kind=kind, tag=tag))
+                continue
+            if isinstance(item, str):
+                text = item.strip()
+                if not text:
+                    continue
+                normalized.append(Suggestion(question=text))
+
+        filtered: List[Suggestion] = []
+        for s in normalized:
+            if s.kind == "question" and s.question in self.asked_questions:
+                continue
+            filtered.append(s)
+
+        self.suggestions = filtered[:3]  # Max 3 sugestie
         self._words_since_last_regen = 0
 
         # USUNIĘTO problematyczny kod który czyścił selected_question!
@@ -304,20 +346,39 @@ class LiveState:
 
         self._notify_suggestions_change()
 
-    def mark_suggestion_used(self, question: str):
-        """Oznacza sugestię jako użytą."""
+    def mark_suggestion_used(self, suggestion):
+        """Oznacza sugestiÄ™ jako uĹĽytÄ…."""
         import time
+        if isinstance(suggestion, Suggestion):
+            question = suggestion.question
+            kind = suggestion.kind
+        else:
+            question = str(suggestion)
+            kind = "question"
+
         for s in self.suggestions:
             if s.question == question:
                 s.used = True
                 s.clicked_at = time.time()
+                if not s.kind:
+                    s.kind = kind
                 break
-        self.asked_questions.append(question)
+
+        if kind == "question" and question:
+            if question not in self.asked_questions:
+                self.asked_questions.append(question)
         self._notify_suggestions_change()
 
     def get_active_suggestions(self) -> List[Suggestion]:
         """Zwraca nieużyte sugestie."""
         return [s for s in self.suggestions if not s.used]
+
+    @property
+    def checklist_progress(self) -> tuple:
+        """Zwraca (done, total) dla kart typu check."""
+        items = [s for s in self.suggestions if s.kind == "check"]
+        done = len([s for s in items if s.used])
+        return done, len(items)
 
     def set_answer_context(self, question: Optional[str], answers: List[str]):
         """Ustawia wybrane pytanie i przykładowe odpowiedzi pacjenta."""
@@ -369,6 +430,7 @@ class LiveState:
         self.prompter_mode = PrompterMode.SUGGESTIONS
         self.interview_stats = None
         self._recording_start_time = None
+        self.set_conversation_mode(ConversationMode.GENERAL, 0.0, "reset")
 
         # Reset nowych komponentów
         self.active_question.clear(force=True)
@@ -654,3 +716,25 @@ class LiveState:
                 self._on_mode_change()
             except Exception as e:
                 print(f"[LiveState] Mode callback error: {e}")
+
+    def set_conversation_mode(self, mode: ConversationMode, confidence: float = 0.0, reason: str = ""):
+        """Ustawia tryb rozmowy (intencja)."""
+        if isinstance(mode, str):
+            try:
+                mode = ConversationMode(mode)
+            except Exception:
+                mode = ConversationMode.GENERAL
+
+        if mode == self.conversation_mode and abs(confidence - self.conversation_mode_confidence) < 0.01:
+            return
+
+        self.conversation_mode = mode
+        self.conversation_mode_confidence = confidence
+        self.conversation_mode_reason = reason or ""
+
+        if self._on_conversation_mode_change:
+            try:
+                self._on_conversation_mode_change()
+            except Exception as e:
+                print(f"[LiveState] Conversation mode callback error: {e}")
+

@@ -514,6 +514,167 @@ Format JSON: ["Pytanie 1?", "Pytanie 2?", "Pytanie 3?"]"""
             print(f"[LLM] Suggestion error: {e}", flush=True)
             return []
 
+    async def classify_conversation_mode(
+        self,
+        transcript: str,
+        config: Dict,
+        spec_ids: list = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Klasyfikuje tryb rozmowy (intencja wizyty).
+        Zwraca JSON: {"mode": "decision|symptom|followup|admin|general", "confidence": 0..1, "reason": "..."}.
+        """
+        if not transcript:
+            return None
+
+        spec_label = ""
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            names = []
+            if spec_ids:
+                for sid in spec_ids:
+                    spec = spec_manager.get_by_id(sid)
+                    if spec:
+                        names.append(spec.name)
+            else:
+                active = spec_manager.get_active()
+                if active:
+                    names.append(active.name)
+            if names:
+                spec_label = f"Specjalizacja: {', '.join(names)}"
+
+        prompt = f"""Jestes asystentem lekarza. Okresl TRYB rozmowy na podstawie transkryptu.
+Mozliwe tryby:
+- symptom: rozmowa objawowa/diagnostyczna (dolegliwosci)
+- decision: rozmowa poradnicza/wybor opcji (np. decyzja o metodzie)
+- followup: kontrola po leczeniu / wizyta kontrolna
+- admin: formalnosci (zaswiadczenia, recepty, skierowania)
+- general: niejasne / brak danych
+
+{spec_label}
+Transkrypt:
+{transcript}
+
+Zwróć WYŁĄCZNIE poprawny JSON:
+{{"mode":"decision","confidence":0.0,"reason":"krotkie uzasadnienie"}}
+"""
+
+        gemini_key = config.get("api_key", "")
+        loop = asyncio.get_event_loop()
+
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
+            else:
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
+                else:
+                    return None
+
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+            data = json.loads(cleaned)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            print(f"[LLM] Intent classify error: {e}", flush=True)
+        return None
+
+    async def generate_decision_cards(
+        self,
+        transcript: str,
+        config: Dict,
+        spec_ids: list = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Generuje 3 karty wsparcia w trybie poradniczym.
+        Zwraca listę dictów: {"type": "check|script|question", "text": "..."}.
+        """
+        if not transcript:
+            return []
+
+        spec_label = ""
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            names = []
+            if spec_ids:
+                for sid in spec_ids:
+                    spec = spec_manager.get_by_id(sid)
+                    if spec:
+                        names.append(spec.name)
+            else:
+                active = spec_manager.get_active()
+                if active:
+                    names.append(active.name)
+            if names:
+                spec_label = f"Specjalizacja: {', '.join(names)}"
+
+        prompt = f"""Jestes asystentem lekarza. Rozmowa jest w trybie PORADNICZYM/DECYZYJNYM.
+Wygeneruj DOKLADNIE 3 karty wsparcia:
+- type: "check" (rzecz do sprawdzenia/odhaczenia),
+- type: "script" (krotki fragment, co lekarz ma powiedziec),
+- type: "question" (pytanie tylko jesli konieczne).
+
+{spec_label}
+Transkrypt:
+{transcript}
+
+Zwróć WYŁĄCZNIE JSON w formacie:
+[
+  {{"type":"check","text":"..."}},
+  {{"type":"script","text":"..."}},
+  {{"type":"check","text":"..."}}
+]
+"""
+
+        gemini_key = config.get("api_key", "")
+        loop = asyncio.get_event_loop()
+
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
+            else:
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
+                else:
+                    return []
+
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+            data = json.loads(cleaned)
+            if not isinstance(data, list):
+                return []
+
+            cards: List[Dict[str, Any]] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                text = (item.get("text") or "").strip()
+                ctype = (item.get("type") or "").strip().lower()
+                if not text or ctype not in ("check", "script", "question"):
+                    continue
+                cards.append({"type": ctype, "text": text})
+
+            return cards[:3]
+        except Exception as e:
+            print(f"[LLM] Decision cards error: {e}", flush=True)
+            return []
+
     async def generate_patient_answers(
         self,
         question: str,

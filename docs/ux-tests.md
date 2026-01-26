@@ -1,4 +1,4 @@
-# UX manual checks (LIVE)
+﻿# UX manual checks (LIVE)
 
 Krotka lista kontrolna do recznego sprawdzenia jakosci UX po zmianach.
 
@@ -27,3 +27,4 @@ Krotka lista kontrolna do recznego sprawdzenia jakosci UX po zmianach.
 ## 6. Cleanup
 - Zamkniecie karty Live nie zostawia bledow w konsoli.
 - Timery i panele zwalniaja sie po rozlaczeniu.
+\n- Dla trybu poradniczego pojawia sie Checklista (badge Check x/y).\n

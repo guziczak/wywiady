@@ -1,4 +1,4 @@
-"""
+﻿"""
 Live Interview AI Controller
 Smart triggers dla regeneracji sugestii i walidacji.
 """
@@ -6,7 +6,9 @@ Smart triggers dla regeneracji sugestii i walidacji.
 import asyncio
 from typing import Optional, List, TYPE_CHECKING
 from enum import Enum
-from nicegui import ui, app
+
+from app_ui.live.intent_router import IntentRouter
+from app_ui.live.live_state import ConversationMode, Suggestion
 
 if TYPE_CHECKING:
     from app_ui.live.live_state import LiveState
@@ -48,6 +50,7 @@ class AIController:
         self.state = state
         self.llm_service = llm_service
         self.config = config
+        self.intent_router = IntentRouter(llm_service=llm_service, config=config)
 
         # Debounce tasks
         self._regen_task: Optional[asyncio.Task] = None
@@ -119,24 +122,31 @@ class AIController:
         # Zawsze scheduluj walidację
         self._schedule_validation()
 
-    def on_card_clicked(self, question: str):
+    def on_card_clicked(self, suggestion):
         """
-        Wywoływane gdy user kliknie kartę z pytaniem.
+        Wywolywane gdy user kliknie karte sugestii.
 
-        ZMIANA UX: Opóźniona regeneracja (8s) zamiast natychmiastowej!
-        Pozwala userowi zobaczyć odpowiedzi pacjenta zanim sugestie się zmienią.
+        Dla pytan: opozniona regeneracja (czas na odpowiedzi).
+        Dla skryptow/checklisty: szybsza regeneracja.
         """
-        print(f"[AI] Trigger: card clicked - '{question[:30]}...'", flush=True)
+        if isinstance(suggestion, Suggestion):
+            text = suggestion.question
+            kind = suggestion.kind or "question"
+        else:
+            text = str(suggestion)
+            kind = "question"
 
-        # Oznacz jako użyte
-        self.state.mark_suggestion_used(question)
+        print(f"[AI] Trigger: card clicked ({kind}) - '{text[:30]}...'", flush=True)
 
-        # ZMIANA: Opóźniona regeneracja (nie natychmiastowa!)
-        # Daje userowi czas na przeczytanie odpowiedzi
+        # Oznacz jako uzyte
+        self.state.mark_suggestion_used(suggestion)
+
+        # Opozniona regeneracja
+        delay = self.CARD_CLICK_REGEN_DELAY if kind == "question" else 2.5
         self._schedule_regeneration(
             TriggerReason.CARD_CLICKED,
-            immediate=False,  # ← KLUCZOWA ZMIANA!
-            delay=self.CARD_CLICK_REGEN_DELAY
+            immediate=False,
+            delay=delay
         )
 
     def force_regeneration(self):
@@ -255,42 +265,76 @@ class AIController:
     # === AI OPERATIONS ===
 
     async def _do_regeneration(self, reason: TriggerReason):
-        """Wykonuje regenerację sugestii."""
+        """Wykonuje regeneracje sugestii."""
         if self._on_regen_start:
             self._on_regen_start()
 
         print(f"[AI] Generating suggestions (reason: {reason.value})...", flush=True)
 
+        transcript = self.state.full_transcript
+
+        # 1) Intent routing (mode)
+        try:
+            intent = await self.intent_router.classify(transcript, spec_ids=self.current_spec_ids)
+            if intent:
+                self.state.set_conversation_mode(intent.mode, intent.confidence, intent.reason)
+        except Exception as e:
+            print(f"[AI] Intent routing error: {e}", flush=True)
+
+        mode = self.state.conversation_mode
+
+        # 2) Jeśli brak LLM - uzyj fallback (tylko tryb poradniczy)
         if not self.llm_service:
-            print(f"[AI] No LLM service available", flush=True)
+            fallback = self._fallback_cards_for_mode(mode)
+            if fallback:
+                self.state.set_suggestions(fallback)
             if self._on_regen_end:
                 self._on_regen_end()
             return
 
         try:
-            # Pobierz kontekst
-            transcript = self.state.full_transcript
-            exclude = self.state.asked_questions
-
-            # Generuj sugestie z wykluczeniem użytych
-            suggestions = await self.llm_service.generate_suggestions(
-                transcript,
-                self.config,
-                exclude_questions=exclude,
-                spec_ids=self.current_spec_ids
-            )
-
-            if suggestions:
-                self.state.set_suggestions(suggestions[:3])
-                print(f"[AI] Generated {len(suggestions)} suggestions", flush=True)
+            if mode == ConversationMode.DECISION:
+                cards = await self.llm_service.generate_decision_cards(
+                    transcript,
+                    self.config,
+                    spec_ids=self.current_spec_ids
+                )
+                if not cards:
+                    cards = self._fallback_cards_for_mode(mode)
+                if cards:
+                    self.state.set_suggestions(cards)
+                    print(f"[AI] Generated {len(cards)} decision cards", flush=True)
+                else:
+                    print("[AI] No decision cards returned", flush=True)
             else:
-                print(f"[AI] No suggestions returned", flush=True)
+                exclude = self.state.asked_questions
+                suggestions = await self.llm_service.generate_suggestions(
+                    transcript,
+                    self.config,
+                    exclude_questions=exclude,
+                    spec_ids=self.current_spec_ids
+                )
+
+                if suggestions:
+                    self.state.set_suggestions(suggestions[:3])
+                    print(f"[AI] Generated {len(suggestions)} suggestions", flush=True)
+                else:
+                    print("[AI] No suggestions returned", flush=True)
 
         except Exception as e:
             print(f"[AI] Generation error: {e}", flush=True)
         finally:
             if self._on_regen_end:
                 self._on_regen_end()
+
+    def _fallback_cards_for_mode(self, mode: ConversationMode):
+        if mode == ConversationMode.DECISION:
+            return [
+                {"type": "check", "text": "Preferencje pacjenta (skutecznosc / wygoda)"},
+                {"type": "check", "text": "Plany na najblizsze miesiace / czas stosowania"},
+                {"type": "script", "text": "Omowie krotko dostepne opcje i roznice."},
+            ]
+        return []
 
     async def _do_validation(self):
         """Wykonuje walidację segmentu przez AI."""
@@ -410,3 +454,7 @@ class AIController:
                 self._validation_task.cancel()
             except:
                 pass
+
+
+
+
