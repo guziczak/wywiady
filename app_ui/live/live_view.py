@@ -1139,14 +1139,32 @@ class LiveInterviewView:
                 self._script_expand_label.text = self._script_cache[key]
             return
 
+        client = self._client
         if self._script_expand_btn:
-            self._script_expand_btn.props('loading=true')
+            if client:
+                try:
+                    with client:
+                        self._script_expand_btn.props('loading=true')
+                except Exception:
+                    self._script_expand_btn.props('loading=true')
+            else:
+                self._script_expand_btn.props('loading=true')
 
         if not self.app.llm_service:
-            if self._script_expand_label:
-                self._script_expand_label.text = "Brak konfiguracji AI."
-            if self._script_expand_btn:
-                self._script_expand_btn.props('loading=false')
+            if client:
+                try:
+                    with client:
+                        if self._script_expand_label:
+                            self._script_expand_label.text = "Brak konfiguracji AI."
+                        if self._script_expand_btn:
+                            self._script_expand_btn.props('loading=false')
+                except Exception:
+                    pass
+            else:
+                if self._script_expand_label:
+                    self._script_expand_label.text = "Brak konfiguracji AI."
+                if self._script_expand_btn:
+                    self._script_expand_btn.props('loading=false')
             return
 
         transcript = self.state.full_transcript or ""
@@ -1168,7 +1186,6 @@ class LiveInterviewView:
         if self._script_dialog_key != key:
             return
 
-        client = ui.context.client or self._client
         if client:
             try:
                 with client:
