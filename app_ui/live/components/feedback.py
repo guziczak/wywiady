@@ -5,16 +5,8 @@ Live feedback (sound + haptics) for the /live desk.
 from nicegui import ui
 
 
-_FEEDBACK_INJECTED = False
-
-
 def inject_feedback_script() -> None:
     """Injects a tiny feedback helper for sound + haptics (singleton)."""
-    global _FEEDBACK_INJECTED
-    if _FEEDBACK_INJECTED:
-        return
-    _FEEDBACK_INJECTED = True
-
     ui.add_head_html(
         '''
         <script>

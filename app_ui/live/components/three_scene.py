@@ -83,16 +83,37 @@ class ThreeStage(ui.element):
                     diag = json.loads(result) if result else {}
                 self._init_ok = bool(diag.get("engineCreated"))
             except Exception:
-                self._init_ok = False
+                self._init_ok = None
         except Exception as e:
             print(f"[ThreeStage] Init error: {e}")
-            self._init_ok = False
+            self._init_ok = None
 
         self._initialized = True
         print("[ThreeStage] Initialization complete, _initialized=True")
 
     def is_ready(self) -> bool:
         """Returns True when JS engine initialized correctly."""
+        return bool(self._init_ok)
+
+    async def probe_ready(self) -> bool:
+        """Probe for engine readiness if init timing out."""
+        probe_js = '''
+        (function() {
+            const ok = !!(window.engine && typeof window.engine.addCard === 'function');
+            return JSON.stringify({engineExists: ok});
+        })()
+        '''
+        try:
+            result = await ui.run_javascript(probe_js, timeout=5.0)
+            if isinstance(result, dict):
+                diag = result
+            else:
+                diag = json.loads(result) if result else {}
+            self._init_ok = bool(diag.get("engineExists"))
+        except Exception:
+            # Leave as None if still inconclusive
+            if self._init_ok is not True:
+                self._init_ok = None
         return bool(self._init_ok)
 
     async def run_method_js(self, code: str):
@@ -125,7 +146,9 @@ class ThreeStage(ui.element):
                 if self._init_ok is not None:
                     break
 
-        if not self._init_ok:
+        if self._init_ok is None:
+            await self.probe_ready()
+        if self._init_ok is False:
             print("[ThreeStage] Engine not ready; skipping add_card")
             return
 

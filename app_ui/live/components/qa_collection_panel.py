@@ -48,11 +48,13 @@ class QACollectionPanel:
         self._engine_check_timer = None
         self._engine_checks = 0
         self._use_fallback = False
+        self._probe_task = None
 
         # UI helpers
         self.filter_mode: str = "all"
         self.filter_buttons = {}
         self.stack_overview: Optional[ui.element] = None
+        self.stack_tooltip = None
         
         # Śledzimy dodane ID, by nie dodawać duplikatów przy odświeżaniu
         self._added_card_ids = set()
@@ -119,6 +121,7 @@ class QACollectionPanel:
 
                     # Stack overview mini-map
                     self.stack_overview = ui.element('div').classes('qa-stack-overview')
+                    self.stack_tooltip = self.stack_overview.tooltip('0/10')
                     self._render_stack_overview()
                     self._sync_filter_buttons()
 
@@ -189,15 +192,64 @@ class QACollectionPanel:
                 self._engine_status.set_visibility(False)
             if self._engine_check_timer:
                 self._engine_check_timer.cancel()
+            if self._use_fallback:
+                self._switch_to_3d()
             return
 
+        # Periodically probe engine readiness
+        if self._engine_checks % 4 == 0:
+            if not self._probe_task or self._probe_task.done():
+                self._probe_task = asyncio.create_task(self._probe_engine_ready())
+
         # After a few checks, switch to fallback
-        if self._engine_checks >= 5:
+        if self._engine_checks >= 20:
             if self._engine_check_timer:
                 self._engine_check_timer.cancel()
             if self._engine_status_label:
                 self._engine_status_label.text = '3D offline - fallback 2D'
             self._activate_fallback()
+
+    async def _probe_engine_ready(self):
+        if not self.three_stage:
+            return
+        ready = await self.three_stage.probe_ready()
+        if ready:
+            if self._engine_status:
+                self._engine_status.set_visibility(False)
+            if self._engine_check_timer:
+                self._engine_check_timer.cancel()
+            if self._use_fallback:
+                self._switch_to_3d()
+
+    def _switch_to_3d(self):
+        """Switch from fallback to 3D if engine becomes ready late."""
+        if not self.three_stage or not self.three_stage.is_ready():
+            return
+        if not self._use_fallback:
+            return
+
+        self._use_fallback = False
+        if self.fallback_container:
+            self.fallback_container.set_visibility(False)
+
+        async def _migrate():
+            # Re-add existing cards to 3D engine
+            for pair_id, card_el in list(self._pair_element_map.items()):
+                try:
+                    await self.three_stage.add_card(card_el)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.02)
+            self._apply_filter()
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_migrate())
+        except RuntimeError:
+            asyncio.run_coroutine_threadsafe(
+                _migrate(),
+                asyncio.get_event_loop()
+            )
 
     def _activate_fallback(self):
         """Aktywuje fallback 2D, gdy 3D nie wystartowalo."""
@@ -282,6 +334,11 @@ class QACollectionPanel:
                 ui.label('ZEBRANE')
             # Card content
             with ui.column().classes('gap-2 w-full'):
+                with ui.element('div').classes('qa-card-preview'):
+                    ui.label('Pytanie').classes('qa-card-preview-title')
+                    ui.label(pair.question).classes('qa-card-preview-text')
+                    ui.label('Odpowiedź').classes('qa-card-preview-title qa-card-preview-title--answer')
+                    ui.label(pair.answer if (pair.answer or '').strip() else 'Brak odpowiedzi').classes('qa-card-preview-text')
                 with ui.row().classes('w-full items-center justify-between'):
                     if order_index:
                         ui.badge(f'#{order_index}').classes('qa-card-index')
@@ -424,6 +481,11 @@ class QACollectionPanel:
         current, target = self.state.qa_progress
         total = min(max(target, 10), 12)
         effective_current = min(current, total)
+        if self.stack_tooltip:
+            try:
+                self.stack_tooltip.text = f"{current}/{target}"
+            except Exception:
+                pass
         with self.stack_overview:
             for idx in range(total):
                 filled = idx < effective_current
