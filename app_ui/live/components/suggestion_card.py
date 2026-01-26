@@ -39,9 +39,9 @@ class SuggestionCard:
         # Style bazowe (równe karty w siatce)
         is_primary = self.variant == "primary"
         base_classes = (
-            'w-full min-h-[140px] '
+            'w-full min-h-[120px] '
             'flex flex-col items-start justify-between '
-            'p-4 rounded-xl '
+            'p-3 rounded-xl '
             'transition-all duration-200 ease-out '
         )
 
@@ -101,7 +101,7 @@ class SuggestionCard:
 
         # Tekst pytania
         text_color = 'text-gray-400' if self.used else 'text-slate-800'
-        text_size = 'text-base sm:text-lg' if self.variant == "primary" else 'text-sm sm:text-base'
+        text_size = 'text-sm sm:text-base' if self.variant == "primary" else 'text-xs sm:text-sm'
         with ui.column().classes('flex-grow justify-center w-full'):
             ui.label(self.question).classes(
                 f'{text_color} {text_size} '
@@ -112,13 +112,13 @@ class SuggestionCard:
         if not self.used:
             with ui.row().classes('w-full justify-between items-center mt-3 pt-2 border-t border-gray-100'):
                 ui.label('Kliknij aby skopiować').classes(
-                    'text-xs text-gray-400 font-light'
+                    'text-[11px] text-gray-400 font-light'
                 )
                 ui.icon('content_copy', size='xs').classes('text-gray-300')
         else:
             with ui.row().classes('w-full justify-center mt-3 pt-2 border-t border-gray-100'):
                 ui.icon('check', size='xs').classes('text-green-500 mr-1')
-                ui.label('Użyte').classes('text-xs text-green-500 font-light')
+                ui.label('Użyte').classes('text-[11px] text-green-500 font-light')
 
     def _handle_click(self):
         """Obsługuje kliknięcie."""
@@ -142,7 +142,7 @@ class PlaceholderCard:
     def create(self) -> ui.card:
         """Tworzy placeholder."""
         with ui.card().classes(
-            'w-full min-h-[140px] '
+            'w-full min-h-[120px] '
             'flex items-center justify-center '
             'bg-gray-50 border-2 border-dashed border-gray-200 '
             'rounded-xl'
@@ -150,7 +150,7 @@ class PlaceholderCard:
             with ui.column().classes('items-center gap-2'):
                 ui.spinner(size='sm', color='gray')
                 ui.label(self.message).classes(
-                    'text-gray-400 text-sm font-light italic text-center'
+                    'text-gray-400 text-[11px] font-light italic text-center'
                 )
 
         return card
@@ -165,7 +165,7 @@ class EmptyStateCard:
     def create(self) -> ui.card:
         """Tworzy empty state."""
         with ui.card().classes(
-            'w-full min-h-[140px] '
+            'w-full min-h-[120px] '
             'flex items-center justify-center '
             'bg-slate-50 border-2 border-slate-200 '
             'rounded-xl'
@@ -173,7 +173,7 @@ class EmptyStateCard:
             with ui.column().classes('items-center gap-2'):
                 ui.icon('mic_none', size='lg').classes('text-slate-300')
                 ui.label(self.message).classes(
-                    'text-slate-400 text-sm font-light text-center'
+                    'text-slate-400 text-[11px] font-light text-center'
                 )
 
         return card

@@ -96,6 +96,13 @@ def inject_desk_styles() -> None:
     display: flex;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    row-gap: 8px;
+}
+
+.qa-desk-hud > .qa-hud-card {
+    max-width: 100%;
 }
 
 .qa-hud-card {
@@ -348,6 +355,7 @@ def inject_desk_styles() -> None:
     background: linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 245, 230, 0.96) 100%);
     border: 1px solid rgba(148, 163, 184, 0.35);
     box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+    overflow: visible;
 }
 
 .qa-card-visual:hover {

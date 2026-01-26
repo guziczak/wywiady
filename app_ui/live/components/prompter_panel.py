@@ -75,7 +75,7 @@ class PrompterPanel:
             'border-t-4 border-blue-500 '
             'rounded-none rounded-b-xl '
             'shadow-lg '
-            'p-4 sm:p-6'
+            'p-3 sm:p-4'
         )
 
         with self.container:
@@ -158,14 +158,14 @@ class PrompterPanel:
             with ui.row().classes('items-center gap-2'):
                 ui.icon('psychology', size='sm').classes('text-blue-600')
                 ui.label('AI Asystent').classes(
-                    'text-lg font-semibold text-gray-700'
+                    'text-base font-semibold text-gray-700'
                 )
 
             # Kontrolki
             with ui.row().classes('items-center gap-3'):
                 # Status badge
                 self.status_badge = ui.badge('GOTOWY', color='gray').classes(
-                    'text-xs'
+                    'text-[11px]'
                 ).props('aria-live="polite"')
 
                 # Przycisk START/STOP
@@ -174,7 +174,7 @@ class PrompterPanel:
                     icon='mic',
                     color='green',
                     on_click=self._handle_toggle
-                ).props('size=md').classes('min-w-[100px]')
+                ).props('size=sm').classes('min-w-[88px]')
 
                 # Przycisk Zakończ
                 self.finish_btn = ui.button(
@@ -182,12 +182,12 @@ class PrompterPanel:
                     icon='check_circle',
                     color='blue',
                     on_click=self._handle_finish_click
-                ).props('outline size=md')
+                ).props('outline size=sm')
 
     def _create_content_container(self):
         """Tworzy kontener na treść (karty/confirmation/summary)."""
         self.cards_container = ui.element('div').classes(
-            'w-full min-h-[160px] transition-all-smooth'
+            'w-full min-h-[140px] transition-all-smooth'
         )
 
         with self.cards_container:

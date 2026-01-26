@@ -20,6 +20,13 @@ export class CardEngine {
             amp: 10,
             speed: 0.0006,
         };
+        this.hoverState = {
+            activeId: null,
+            leaveTimer: null,
+            switchLockUntil: 0,
+            lockMs: 180,
+            releaseMs: 140,
+        };
         
         this.init();
         this.animate();
@@ -55,6 +62,12 @@ export class CardEngine {
 
         // 5. Resize Handler
         window.addEventListener('resize', () => this.onWindowResize());
+        this.container.addEventListener('pointerleave', () => {
+            if (this.hoverState.activeId) {
+                this._dropCard(this.hoverState.activeId, true);
+                this.hoverState.activeId = null;
+            }
+        }, { passive: true });
         
         this.isInitialized = true;
         console.log('[CardEngine] Initialized 3D Stage');
@@ -110,21 +123,9 @@ export class CardEngine {
         this.cards.set(elementId, object);
 
         // Animate to Center (The "Deal")
-        // Target: Center of desk (0, 0, 0)
         // Use a gentle spiral stack for more natural piling
         const index = this.cards.size;
-        const angle = index * 0.55;
-        const radius = 20 + Math.min(index, 16) * 2.2;
-        const jitter = (Math.random() - 0.5) * 10;
-        const targetX = Math.cos(angle) * radius + jitter;
-        const targetZ = Math.sin(angle) * radius + jitter;
-        const targetY = Math.min(index * 0.35, 6); // subtle stack height
-
-        const targetRot = {
-            x: -Math.PI / 2,
-            y: (Math.random() - 0.5) * 0.08,
-            z: (Math.random() - 0.5) * 0.12,
-        };
+        const { targetX, targetY, targetZ, targetRot } = this._computeStackTransform(index);
 
         object.userData.home = {
             x: targetX,
@@ -195,11 +196,44 @@ export class CardEngine {
     setCardVisible(elementId, visible = true) {
         const object = this.cards.get(elementId);
         if (!object) return;
+        if (!visible && this.hoverState.activeId === elementId) {
+            this._dropCard(elementId, true);
+            this.hoverState.activeId = null;
+        }
         object.visible = !!visible;
         if (object.element) {
             object.element.style.display = visible ? 'block' : 'none';
             object.element.style.opacity = visible ? '1' : '0';
         }
+    }
+
+    restackVisible(elementIds = []) {
+        if (!Array.isArray(elementIds)) return;
+        const ids = elementIds.filter((id) => this.cards.has(id));
+        ids.forEach((elementId, idx) => {
+            const object = this.cards.get(elementId);
+            if (!object) return;
+            const { targetX, targetY, targetZ, targetRot } = this._computeStackTransform(idx + 1);
+            object.userData.home = {
+                x: targetX,
+                y: targetY,
+                z: targetZ,
+                rx: targetRot.x,
+                ry: targetRot.y,
+                rz: targetRot.z,
+            };
+            if (object.userData.hovered) {
+                this._dropCard(elementId, true);
+            }
+            new TWEEN.Tween(object.position)
+                .to({ x: targetX, y: targetY, z: targetZ }, 520)
+                .easing(TWEEN.Easing.Cubic.Out)
+                .start();
+            new TWEEN.Tween(object.rotation)
+                .to(targetRot, 520)
+                .easing(TWEEN.Easing.Cubic.Out)
+                .start();
+        });
     }
 
     setFocus(level = 0) {
@@ -211,13 +245,56 @@ export class CardEngine {
     }
 
     _attachCardInteractions(element, elementId) {
-        element.addEventListener('pointerenter', () => {
-            this._liftCard(elementId);
+        element.addEventListener('pointerenter', (event) => {
+            this._onCardEnter(elementId, event);
         }, { passive: true });
 
-        element.addEventListener('pointerleave', () => {
-            this._dropCard(elementId);
+        element.addEventListener('pointerleave', (event) => {
+            this._onCardLeave(elementId, event);
         }, { passive: true });
+    }
+
+    _onCardEnter(elementId, event) {
+        const now = performance.now();
+        if (this.hoverState.leaveTimer) {
+            clearTimeout(this.hoverState.leaveTimer);
+            this.hoverState.leaveTimer = null;
+        }
+        if (this.hoverState.activeId && this.hoverState.activeId !== elementId) {
+            if (now < this.hoverState.switchLockUntil) {
+                return;
+            }
+            this._dropCard(this.hoverState.activeId, true);
+        }
+        this.hoverState.activeId = elementId;
+        this.hoverState.switchLockUntil = now + this.hoverState.lockMs;
+        this._liftCard(elementId);
+    }
+
+    _onCardLeave(elementId, event) {
+        if (this.hoverState.activeId !== elementId) return;
+        const object = this.cards.get(elementId);
+        if (event && object && object.element) {
+            const rect = object.element.getBoundingClientRect();
+            const margin = 24;
+            if (
+                event.clientX >= rect.left - margin &&
+                event.clientX <= rect.right + margin &&
+                event.clientY >= rect.top - margin &&
+                event.clientY <= rect.bottom + margin
+            ) {
+                return;
+            }
+        }
+        if (this.hoverState.leaveTimer) {
+            clearTimeout(this.hoverState.leaveTimer);
+        }
+        this.hoverState.leaveTimer = setTimeout(() => {
+            if (this.hoverState.activeId === elementId) {
+                this._dropCard(elementId, true);
+                this.hoverState.activeId = null;
+            }
+        }, this.hoverState.releaseMs);
     }
 
     _liftCard(elementId) {
@@ -227,24 +304,30 @@ export class CardEngine {
         if (!home) return;
         object.userData.hovered = true;
 
-        const liftPos = { x: home.x, y: home.y + 28, z: home.z - 22 };
-        const liftRot = { x: home.rx + 0.08, y: home.ry, z: home.rz };
+        const focusPull = 0.55;
+        const liftPos = {
+            x: home.x * (1 - focusPull),
+            y: home.y + 32,
+            z: home.z * (1 - focusPull) + 180,
+        };
+        const liftRot = { x: -Math.PI / 2, y: 0, z: 0 };
 
         object.userData.hoverTween?.stop?.();
         const posTween = new TWEEN.Tween(object.position)
-            .to(liftPos, 220)
+            .to(liftPos, 240)
             .easing(TWEEN.Easing.Cubic.Out);
         const rotTween = new TWEEN.Tween(object.rotation)
-            .to(liftRot, 220)
+            .to(liftRot, 240)
             .easing(TWEEN.Easing.Cubic.Out);
         posTween.start();
         rotTween.start();
         object.userData.hoverTween = posTween;
     }
 
-    _dropCard(elementId) {
+    _dropCard(elementId, force = false) {
         const object = this.cards.get(elementId);
-        if (!object || !object.userData.hovered) return;
+        if (!object) return;
+        if (!force && !object.userData.hovered) return;
         const home = object.userData.home;
         if (!home) return;
         object.userData.hovered = false;
@@ -259,6 +342,26 @@ export class CardEngine {
         posTween.start();
         rotTween.start();
         object.userData.hoverTween = posTween;
+    }
+
+    _computeStackTransform(index) {
+        const angle = index * 0.55;
+        const radius = 20 + Math.min(index, 16) * 2.2;
+        const jitter = (this._pseudoRandom(index * 3.1) - 0.5) * 10;
+        const targetX = Math.cos(angle) * radius + jitter;
+        const targetZ = Math.sin(angle) * radius + jitter;
+        const targetY = Math.min(index * 0.35, 6);
+        const targetRot = {
+            x: -Math.PI / 2,
+            y: (this._pseudoRandom(index * 5.7) - 0.5) * 0.08,
+            z: (this._pseudoRandom(index * 8.3) - 0.5) * 0.12,
+        };
+        return { targetX, targetY, targetZ, targetRot };
+    }
+
+    _pseudoRandom(seed) {
+        const x = Math.sin(seed) * 10000;
+        return x - Math.floor(x);
     }
 
     _attachMotionHandlers() {

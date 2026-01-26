@@ -13,6 +13,7 @@ Funkcje:
 from nicegui import ui
 from typing import Optional, TYPE_CHECKING
 import asyncio
+import json
 
 from app_ui.live.components.three_scene import ThreeStage
 
@@ -455,6 +456,13 @@ class QACollectionPanel:
         else:
             visible_ids = {p.id for p in self.state.qa_pairs}
 
+        ordered_elements = []
+        for pair in self.state.qa_pairs:
+            if pair.id in visible_ids:
+                card_el = self._pair_element_map.get(pair.id)
+                if card_el:
+                    ordered_elements.append(f"c{card_el.id}")
+
         for pair_id, card_el in self._pair_element_map.items():
             is_visible = pair_id in visible_ids
             if self._use_fallback:
@@ -473,6 +481,15 @@ class QACollectionPanel:
                         )
                 except Exception:
                     pass
+
+        if not self._use_fallback and self._client:
+            try:
+                with self._client:
+                    ui.run_javascript(
+                        f"window.engine && window.engine.restackVisible({json.dumps(ordered_elements)});"
+                    )
+            except Exception:
+                pass
 
     def _render_stack_overview(self) -> None:
         if not self.stack_overview:

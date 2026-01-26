@@ -96,14 +96,14 @@ class TranscriptPanel:
 
             # Scrollable content area
             with ui.scroll_area().classes(
-                'w-full h-full pt-8 pb-4 px-6'
+                'w-full h-full pt-7 pb-3 px-5'
             ) as scroll:
                 self._scroll_id = f'transcript-scroll-{id(scroll)}'
                 scroll.props(f'id="{self._scroll_id}"')
 
                 # HTML content z aria-live
                 self.html_element = ui.html('', sanitize=False).classes(
-                    'text-lg leading-relaxed'
+                    'text-base leading-relaxed'
                 ).props(
                     'aria-live="polite" '
                     'aria-label="Transkrypcja rozmowy"'
