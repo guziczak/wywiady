@@ -1778,6 +1778,8 @@ class WywiadApp:
                 self.diagnosis_grid.options['columnDefs'] = new_column_defs
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
+                # Wymuś załadowanie danych przez API (fix dla "No Rows To Show")
+                self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
                 # Opóźnij selectAll, aby grid zdążył się przerysować
                 ui.timer(0.1, lambda: self.diagnosis_grid.run_grid_method('selectAll'), once=True)
 
@@ -1785,6 +1787,8 @@ class WywiadApp:
                 self.procedure_grid.options['columnDefs'] = new_column_defs
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
+                # Wymuś załadowanie danych przez API
+                self.procedure_grid.run_grid_method('setRowData', procedury)
                 # Opóźnij selectAll
                 ui.timer(0.1, lambda: self.procedure_grid.run_grid_method('selectAll'), once=True)
 
