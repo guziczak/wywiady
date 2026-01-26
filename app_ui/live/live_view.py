@@ -191,6 +191,9 @@ class LiveInterviewView:
         self._script_dialog_key = None
         self._script_expand_label = None
         self._script_expand_btn = None
+        self._script_base_label = None
+        self._script_copy_btn = None
+        self._script_dialog_payload = None
         self._script_cache = {}
 
     def create_ui(self):
@@ -274,6 +277,9 @@ class LiveInterviewView:
                 self._create_model_info_bar()
                 if self.pipeline_panel and self.pipeline_panel.container:
                     self.pipeline_panel.container.classes(add='live-panel live-pipeline-panel')
+
+            # === SCRIPT DIALOG (GLOBAL) ===
+            self._create_script_dialog()
 
             # === DOCK ===
             with ui.element('div').classes('live-desk-dock') as self._dock:
@@ -1036,36 +1042,26 @@ class LiveInterviewView:
     def _normalize_script_key(self, text: str) -> str:
         return " ".join((text or "").lower().split())
 
-    def _open_script_dialog(self, script_text: str):
-        """Otwiera dialog ze skryptem i opcja rozwiniecia."""
-        if not script_text:
+    def _create_script_dialog(self):
+        """Tworzy globalny dialog skryptu (nie usuwany przy re-renderze kart)."""
+        if self._script_dialog:
             return
 
-        key = self._normalize_script_key(script_text)
-        self._script_dialog_key = key
-        expanded = self._script_cache.get(key)
-
-        if self._script_dialog:
-            try:
-                self._script_dialog.close()
-            except Exception:
-                pass
-
-        with ui.dialog() as self._script_dialog, ui.card().classes('w-[560px] max-w-[92vw] p-4'):
+        with ui.dialog().props('persistent') as self._script_dialog, ui.card().classes('w-[560px] max-w-[92vw] p-4'):
             with ui.row().classes('w-full justify-between items-center mb-3'):
                 ui.label('Skrypt rozmowy').classes('text-lg font-semibold text-slate-800')
                 ui.button(icon='close', on_click=self._script_dialog.close).props('flat dense round')
 
             with ui.column().classes('w-full gap-2'):
                 ui.label('Skrypt bazowy').classes('text-xs text-slate-500 uppercase tracking-wide')
-                ui.label(script_text).classes(
+                self._script_base_label = ui.label("").classes(
                     'text-sm text-slate-700 p-2 bg-slate-50 rounded border border-slate-200 whitespace-pre-wrap'
                 )
 
             with ui.column().classes('w-full gap-2 mt-3'):
                 ui.label('Gadanka (AI)').classes('text-xs text-slate-500 uppercase tracking-wide')
                 self._script_expand_label = ui.label(
-                    expanded or "Kliknij Rozwin, aby wygenerowac gadanke."
+                    "Kliknij Rozwin, aby wygenerowac gadanke."
                 ).classes(
                     'text-sm text-slate-700 p-2 bg-white rounded border border-slate-200 min-h-[80px] whitespace-pre-wrap'
                 )
@@ -1074,15 +1070,44 @@ class LiveInterviewView:
                 self._script_expand_btn = ui.button(
                     'Rozwin',
                     icon='auto_fix_high',
-                    on_click=lambda: asyncio.create_task(self._expand_script(script_text))
+                    on_click=self._handle_script_expand_click
                 ).props('outline size=sm')
-                ui.button(
+                self._script_copy_btn = ui.button(
                     'Skopiuj',
                     icon='content_copy',
-                    on_click=lambda: self._copy_script_text(script_text)
+                    on_click=self._handle_script_copy_click
                 ).props('color=primary size=sm')
 
-        self._script_dialog.open()
+    def _handle_script_expand_click(self):
+        if self._script_dialog_payload:
+            asyncio.create_task(self._expand_script(self._script_dialog_payload))
+
+    def _handle_script_copy_click(self):
+        if self._script_dialog_payload:
+            self._copy_script_text(self._script_dialog_payload)
+
+    def _open_script_dialog(self, script_text: str):
+        """Otwiera dialog ze skryptem i opcja rozwiniecia."""
+        if not script_text:
+            return
+
+        if not self._script_dialog:
+            self._create_script_dialog()
+
+        key = self._normalize_script_key(script_text)
+        self._script_dialog_key = key
+        self._script_dialog_payload = script_text
+        expanded = self._script_cache.get(key)
+
+        if self._script_base_label:
+            self._script_base_label.text = script_text
+        if self._script_expand_label:
+            self._script_expand_label.text = expanded or "Kliknij Rozwin, aby wygenerowac gadanke."
+        if self._script_expand_btn:
+            self._script_expand_btn.props('loading=false')
+
+        if self._script_dialog:
+            self._script_dialog.open()
 
     def _copy_script_text(self, script_text: str):
         """Kopiuje skrypt (rozszerzony jesli dostepny)."""
@@ -1115,7 +1140,7 @@ class LiveInterviewView:
             return
 
         if self._script_expand_btn:
-            self._script_expand_btn.props('loading')
+            self._script_expand_btn.props('loading=true')
 
         if not self.app.llm_service:
             if self._script_expand_label:
@@ -1143,16 +1168,31 @@ class LiveInterviewView:
         if self._script_dialog_key != key:
             return
 
-        if result:
-            self._script_cache[key] = result
-            if self._script_expand_label:
-                self._script_expand_label.text = result
+        client = ui.context.client or self._client
+        if client:
+            try:
+                with client:
+                    if result:
+                        self._script_cache[key] = result
+                        if self._script_expand_label:
+                            self._script_expand_label.text = result
+                    else:
+                        if self._script_expand_label:
+                            self._script_expand_label.text = "Nie udalo sie wygenerowac."
+                    if self._script_expand_btn:
+                        self._script_expand_btn.props('loading=false')
+            except Exception:
+                pass
         else:
-            if self._script_expand_label:
-                self._script_expand_label.text = "Nie udalo sie wygenerowac."
-
-        if self._script_expand_btn:
-            self._script_expand_btn.props('loading=false')
+            if result:
+                self._script_cache[key] = result
+                if self._script_expand_label:
+                    self._script_expand_label.text = result
+            else:
+                if self._script_expand_label:
+                    self._script_expand_label.text = "Nie udalo sie wygenerowac."
+            if self._script_expand_btn:
+                self._script_expand_btn.props('loading=false')
 
     async def _load_patient_answers(self, question: str) -> None:
         """
