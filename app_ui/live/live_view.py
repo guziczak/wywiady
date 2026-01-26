@@ -222,7 +222,7 @@ class LiveInterviewView:
                 self.transcript_panel = TranscriptPanel(self.state)
                 self.transcript_panel.create()
                 if self.transcript_panel.container:
-                    self.transcript_panel.container.classes(add='live-panel live-transcript-panel flex-1')
+                    self.transcript_panel.container.classes(add='live-panel live-transcript-panel flex-1 min-h-0')
 
             # === PROMPTER (DRAWER) ===
             self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer flex flex-col gap-2')
@@ -242,7 +242,7 @@ class LiveInterviewView:
                 )
                 self.prompter_panel.create()
                 if self.prompter_panel.container:
-                    self.prompter_panel.container.classes(add='live-panel live-prompter-panel flex-1')
+                    self.prompter_panel.container.classes(add='live-panel live-prompter-panel flex-1 min-h-0')
 
             # === PIPELINE (FLOATING CHIP) ===
             self._pipeline_overlay = ui.element('div').classes('live-overlay live-overlay--pipeline')

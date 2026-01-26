@@ -75,7 +75,8 @@ class PrompterPanel:
             'border-t-4 border-blue-500 '
             'rounded-none rounded-b-xl '
             'shadow-lg '
-            'p-3 sm:p-4'
+            'p-3 sm:p-4 '
+            'h-full flex flex-col min-h-0'
         )
 
         with self.container:
@@ -187,7 +188,8 @@ class PrompterPanel:
     def _create_content_container(self):
         """Tworzy kontener na treść (karty/confirmation/summary)."""
         self.cards_container = ui.element('div').classes(
-            'w-full min-h-[140px] transition-all-smooth'
+            'w-full min-h-[140px] transition-all-smooth '
+            'flex-1 min-h-0 overflow-y-auto pr-1'
         )
 
         with self.cards_container:

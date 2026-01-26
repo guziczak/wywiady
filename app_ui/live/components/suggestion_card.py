@@ -101,7 +101,7 @@ class SuggestionCard:
 
         # Tekst pytania
         text_color = 'text-gray-400' if self.used else 'text-slate-800'
-        text_size = 'text-sm sm:text-base' if self.variant == "primary" else 'text-xs sm:text-sm'
+        text_size = 'text-sm sm:text-base'
         with ui.column().classes('flex-grow justify-center w-full'):
             ui.label(self.question).classes(
                 f'{text_color} {text_size} '
