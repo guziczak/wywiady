@@ -12,52 +12,69 @@ def _inject_grid_checkbox_styles():
 
     ui.add_head_html('''
     <style>
+    /* Ujednolicone wysokosci naglowka/wierszy (fallback dla roznych theme) */
+    .nicegui-aggrid {
+        --ag-header-height: 32px;
+        --ag-row-height: 32px;
+    }
+
     /* Większe i bardziej widoczne checkboxy w AG Grid */
-    .ag-theme-balham .ag-checkbox-input-wrapper {
+    .nicegui-aggrid .ag-checkbox-input-wrapper {
         width: 20px !important;
         height: 20px !important;
     }
 
-    .ag-theme-balham .ag-checkbox-input-wrapper input {
+    .nicegui-aggrid .ag-checkbox-input-wrapper input {
         width: 18px !important;
         height: 18px !important;
         cursor: pointer;
     }
 
-    .ag-theme-balham .ag-checkbox-input-wrapper::after {
+    .nicegui-aggrid .ag-checkbox-input-wrapper::after {
         width: 18px !important;
         height: 18px !important;
         border: 2px solid #3b82f6 !important;
         border-radius: 4px;
     }
 
-    .ag-theme-balham .ag-checkbox-input-wrapper.ag-checked::after {
+    .nicegui-aggrid .ag-checkbox-input-wrapper.ag-checked::after {
         background-color: #3b82f6 !important;
         border-color: #3b82f6 !important;
     }
 
     /* Podświetlenie zaznaczonego wiersza */
-    .ag-theme-balham .ag-row-selected {
+    .nicegui-aggrid .ag-row-selected {
         background-color: rgba(59, 130, 246, 0.15) !important;
     }
 
-    .ag-theme-balham .ag-row-selected:hover {
+    .nicegui-aggrid .ag-row-selected:hover {
         background-color: rgba(59, 130, 246, 0.25) !important;
     }
 
     /* Header checkbox */
-    .ag-theme-balham .ag-header-select-all {
+    .nicegui-aggrid .ag-header-select-all {
         margin-right: 8px;
     }
 
     /* Pinned column z checkboxem */
-    .ag-theme-balham .ag-pinned-left-cols-container .ag-cell {
+    .nicegui-aggrid .ag-pinned-left-cols-container .ag-cell {
         display: flex;
         align-items: center;
         justify-content: center;
     }
     </style>
     ''')
+
+
+def _force_grid_setup(grid, column_defs):
+    """Wymusza ustawienie kolumn i odswiezenie naglowkow po inicjalizacji."""
+    try:
+        grid.run_grid_method('setColumnDefs', column_defs)
+        grid.run_grid_method('refreshHeader')
+        # Upewnij sie, ze kolumny dostana szerokosc po renderze
+        ui.timer(0.05, lambda: grid.run_grid_method('sizeColumnsToFit'), once=True)
+    except Exception:
+        pass
 
 
 def create_results_section(app):
@@ -118,7 +135,10 @@ def create_results_section(app):
                 'rowSelection': 'multiple',
                 'suppressRowClickSelection': True,
                 'rowMultiSelectWithClick': True,
+                'headerHeight': 32,
+                'rowHeight': 32,
             }).classes('h-48 w-full ag-theme-balham')
+            app.diagnosis_grid.on('gridReady', lambda _: _force_grid_setup(app.diagnosis_grid, app.diagnosis_grid.options.get('columnDefs', [])))
 
             # Tabela Procedur
             with ui.row().classes('w-full items-center gap-2'):
@@ -146,7 +166,10 @@ def create_results_section(app):
                 'rowSelection': 'multiple',
                 'suppressRowClickSelection': True,
                 'rowMultiSelectWithClick': True,
+                'headerHeight': 32,
+                'rowHeight': 32,
             }).classes('h-64 w-full ag-theme-balham')
+            app.procedure_grid.on('gridReady', lambda _: _force_grid_setup(app.procedure_grid, app.procedure_grid.options.get('columnDefs', [])))
             
             # Kopiowanie i zapisywanie
             with ui.row().classes('w-full justify-end gap-2'):

@@ -1778,8 +1778,12 @@ class WywiadApp:
                 self.diagnosis_grid.options['columnDefs'] = new_column_defs
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
+                self.diagnosis_grid.run_grid_method('setColumnDefs', new_column_defs)
                 # Wymuś załadowanie danych przez API (fix dla "No Rows To Show")
                 self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
+                self.diagnosis_grid.run_grid_method('refreshHeader')
+                # Dopasuj szerokosci po przerysowaniu
+                ui.timer(0.05, lambda: self.diagnosis_grid.run_grid_method('sizeColumnsToFit'), once=True)
                 # Opóźnij selectAll, aby grid zdążył się przerysować
                 ui.timer(0.1, lambda: self.diagnosis_grid.run_grid_method('selectAll'), once=True)
 
@@ -1787,8 +1791,12 @@ class WywiadApp:
                 self.procedure_grid.options['columnDefs'] = new_column_defs
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
+                self.procedure_grid.run_grid_method('setColumnDefs', new_column_defs)
                 # Wymuś załadowanie danych przez API
                 self.procedure_grid.run_grid_method('setRowData', procedury)
+                self.procedure_grid.run_grid_method('refreshHeader')
+                # Dopasuj szerokosci po przerysowaniu
+                ui.timer(0.05, lambda: self.procedure_grid.run_grid_method('sizeColumnsToFit'), once=True)
                 # Opóźnij selectAll
                 ui.timer(0.1, lambda: self.procedure_grid.run_grid_method('selectAll'), once=True)
 
