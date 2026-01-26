@@ -46,16 +46,17 @@ class IntentRouter:
         self._pending_mode: Optional[ConversationMode] = None
         self._pending_streak = 0
 
-    async def classify(self, transcript: str, spec_ids: Optional[List[int]] = None) -> IntentResult:
+    async def classify(self, transcript: str, spec_ids: Optional[List[int]] = None, force: bool = False) -> IntentResult:
         if not transcript or len(transcript.strip()) < 20:
             return self._last_result
 
         now = time.time()
-        if (
-            len(transcript) - self._last_eval_len < self.MIN_CHAR_DELTA
-            and (now - self._last_eval_time) < self.COOLDOWN_SECONDS
-        ):
-            return self._last_result
+        if not force:
+            if (
+                len(transcript) - self._last_eval_len < self.MIN_CHAR_DELTA
+                and (now - self._last_eval_time) < self.COOLDOWN_SECONDS
+            ):
+                return self._last_result
 
         self._last_eval_len = len(transcript)
         self._last_eval_time = now

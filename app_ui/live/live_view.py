@@ -72,6 +72,8 @@ class LiveInterviewView:
             llm_service=self.app.llm_service,
             config=self.app.config
         )
+        # Trigger AI routing when a Q+A pair is created (manual answers too)
+        self.state.on_qa_pair_created(self._on_qa_pair_created)
 
         # Streaming transcriber
         self.transcriber = None
@@ -1098,6 +1100,14 @@ class LiveInterviewView:
                     pass
 
         asyncio.create_task(_clear_after_delay())
+
+    def _on_qa_pair_created(self, pair):
+        """Callback: utworzono parę Q+A (manual lub auto)."""
+        try:
+            if self.ai_controller:
+                self.ai_controller.on_qa_pair_created(pair.question, pair.answer)
+        except Exception as e:
+            print(f"[LIVE] QA pair routing error: {e}", flush=True)
 
     def _on_active_question_closed(self):
         """Callback: zamknięto panel aktywnego pytania."""

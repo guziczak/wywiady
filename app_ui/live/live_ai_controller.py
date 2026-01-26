@@ -4,6 +4,7 @@ Smart triggers dla regeneracji sugestii i walidacji.
 """
 
 import asyncio
+import time
 from typing import Optional, List, TYPE_CHECKING
 from enum import Enum
 
@@ -45,6 +46,7 @@ class AIController:
     # Q+A matching configuration
     QA_TIMEOUT_SECONDS = 120.0        # Okno czasowe na odpowiedź (zwiększone z 60s)
     QA_MIN_WORDS = 3                  # Minimalna liczba słów w odpowiedzi (zmniejszone z 5)
+    MANUAL_OVERRIDE_TTL = 90.0        # Jak długo utrzymać tryb z ręcznej pary Q+A
 
     def __init__(self, state: 'LiveState', llm_service, config):
         self.state = state
@@ -69,6 +71,12 @@ class AIController:
 
         # ID specjalizacji (do kontekstowych sugestii) - multi-select
         self.current_spec_ids: Optional[List[int]] = None
+
+        # Manual Q+A context (np. wybrane odpowiedzi nieobecne w transkrypcji)
+        self._manual_mode_override: Optional[ConversationMode] = None
+        self._manual_mode_until: float = 0.0
+        self._manual_context: Optional[str] = None
+        self._manual_context_until: float = 0.0
 
     def on_regen_start(self, callback: callable):
         """Callback gdy zaczyna się regeneracja."""
@@ -149,9 +157,71 @@ class AIController:
             delay=delay
         )
 
+    def on_qa_pair_created(self, question: str, answer: str):
+        """Reakcja na ręcznie wybraną parę Q+A (np. z kart odpowiedzi)."""
+        if not question and not answer:
+            return
+
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._handle_qa_pair(question, answer),
+                self._loop
+            )
+        else:
+            try:
+                asyncio.create_task(self._handle_qa_pair(question, answer))
+            except RuntimeError:
+                print(f"[AI] Cannot handle Q+A - no event loop", flush=True)
+
+    async def _handle_qa_pair(self, question: str, answer: str):
+        """Wymusza intent routing na bazie ręcznej pary Q+A."""
+        text_parts = []
+        if question:
+            text_parts.append(f"Pytanie: {question}")
+        if answer:
+            text_parts.append(f"Odpowiedz: {answer}")
+        combined = "\n".join(text_parts).strip()
+        if not combined:
+            return
+
+        now = time.time()
+        self._manual_context = combined
+        self._manual_context_until = now + self.MANUAL_OVERRIDE_TTL
+
+        try:
+            intent = await self.intent_router.classify(
+                combined,
+                spec_ids=self.current_spec_ids,
+                force=True
+            )
+        except Exception as e:
+            print(f"[AI] Intent routing error (QA): {e}", flush=True)
+            intent = None
+
+        if intent:
+            # Dla trybu DECISION zawsze wymus (mini-gra/checklista)
+            if intent.mode == ConversationMode.DECISION:
+                self._manual_mode_override = intent.mode
+                self._manual_mode_until = now + self.MANUAL_OVERRIDE_TTL
+                self.state.set_conversation_mode(intent.mode, intent.confidence, f"qa:{intent.reason}")
+            else:
+                # Aktualizuj tryb tylko przy mocniejszej pewności
+                if intent.confidence >= 0.65 and intent.mode != ConversationMode.GENERAL:
+                    self._manual_mode_override = intent.mode
+                    self._manual_mode_until = now + self.MANUAL_OVERRIDE_TTL
+                    self.state.set_conversation_mode(intent.mode, intent.confidence, f"qa:{intent.reason}")
+
+        # Wymus szybka regeneracja
+        self._schedule_regeneration(TriggerReason.MANUAL, immediate=True)
+
     def force_regeneration(self):
         """Wymusza regenerację (np. na starcie sesji)."""
         print(f"[AI] Trigger: manual/initial", flush=True)
+        # Reset manual overrides at session start
+        self._manual_mode_override = None
+        self._manual_mode_until = 0.0
+        self._manual_context = None
+        self._manual_context_until = 0.0
         self._schedule_regeneration(TriggerReason.INITIAL, immediate=True)
 
     # === SCHEDULING ===
@@ -224,7 +294,6 @@ class AIController:
                 await asyncio.sleep(delay)
 
             # Sprawdź cooldown
-            import time
             now = time.time()
             if now - self._last_regen_time < self.REGEN_COOLDOWN:
                 remaining = self.REGEN_COOLDOWN - (now - self._last_regen_time)
@@ -273,15 +342,39 @@ class AIController:
 
         transcript = self.state.full_transcript
 
-        # 1) Intent routing (mode)
-        try:
-            intent = await self.intent_router.classify(transcript, spec_ids=self.current_spec_ids)
-            if intent:
-                self.state.set_conversation_mode(intent.mode, intent.confidence, intent.reason)
-        except Exception as e:
-            print(f"[AI] Intent routing error: {e}", flush=True)
+        # Manual override/context (np. wybrane odpowiedzi nieobecne w transkrypcji)
+        now = time.time()
+        manual_override = None
+        if self._manual_mode_override and now <= self._manual_mode_until:
+            manual_override = self._manual_mode_override
+        else:
+            self._manual_mode_override = None
 
-        mode = self.state.conversation_mode
+        manual_context = None
+        if self._manual_context and now <= self._manual_context_until:
+            manual_context = self._manual_context
+        else:
+            self._manual_context = None
+
+        if manual_context:
+            if transcript:
+                transcript_for_llm = f"{transcript}\n\n[Manual Q+A]\n{manual_context}"
+            else:
+                transcript_for_llm = manual_context
+        else:
+            transcript_for_llm = transcript
+
+        # 1) Intent routing (mode)
+        if manual_override:
+            mode = manual_override
+        else:
+            try:
+                intent = await self.intent_router.classify(transcript_for_llm, spec_ids=self.current_spec_ids)
+                if intent:
+                    self.state.set_conversation_mode(intent.mode, intent.confidence, intent.reason)
+            except Exception as e:
+                print(f"[AI] Intent routing error: {e}", flush=True)
+            mode = self.state.conversation_mode
 
         # 2) Jeśli brak LLM - uzyj fallback (tylko tryb poradniczy)
         if not self.llm_service:
@@ -295,7 +388,7 @@ class AIController:
         try:
             if mode == ConversationMode.DECISION:
                 cards = await self.llm_service.generate_decision_cards(
-                    transcript,
+                    transcript_for_llm,
                     self.config,
                     spec_ids=self.current_spec_ids
                 )
@@ -309,7 +402,7 @@ class AIController:
             else:
                 exclude = self.state.asked_questions
                 suggestions = await self.llm_service.generate_suggestions(
-                    transcript,
+                    transcript_for_llm,
                     self.config,
                     exclude_questions=exclude,
                     spec_ids=self.current_spec_ids
