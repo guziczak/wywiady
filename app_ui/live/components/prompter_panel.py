@@ -80,6 +80,7 @@ class PrompterPanel:
         on_finish: Optional[Callable[[bool], None]] = None,  # callback(analyze_speakers)
         on_continue: Optional[Callable[[], None]] = None,    # nowy callback
         on_new_pool: Optional[Callable[[], None]] = None,
+        on_cards_mode_change: Optional[Callable[[str], None]] = None,
         on_card_click: Optional[Callable[[object], None]] = None,
         show_record_button: bool = True
     ):
@@ -89,6 +90,7 @@ class PrompterPanel:
         self.on_finish = on_finish
         self.on_continue = on_continue
         self.on_new_pool = on_new_pool
+        self.on_cards_mode_change = on_cards_mode_change
         self.on_card_click = on_card_click
         self.show_record_button = show_record_button
 
@@ -105,6 +107,8 @@ class PrompterPanel:
         self.mode_badge = None
         self.checklist_badge = None
         self.next_pool_btn = None
+        self.cards_mode_radio = None
+        self._cards_mode_sync = False
         self._is_loading = False
         self._client = None  # NiceGUI client context
 
@@ -190,6 +194,8 @@ class PrompterPanel:
 
         self.state.on_mode_change(self._on_mode_change)
         self.state.on_conversation_mode_change(self._on_conversation_mode_change)
+        self.state.on_cards_mode_change(self._on_cards_mode_change)
+        self.state.on_return_hint_change(self._on_return_hint_change)
 
 
 
@@ -250,6 +256,22 @@ class PrompterPanel:
         if self.on_new_pool:
             self.on_new_pool()
 
+    def _handle_cards_mode_change(self):
+        """Zmien tryb kart (pytania/poradniczy)."""
+        if self._cards_mode_sync:
+            return
+        if not self.cards_mode_radio:
+            return
+        value = self.cards_mode_radio.value
+        mode = "questions" if value == "Pytania" else "decision"
+        if self.on_cards_mode_change:
+            self.on_cards_mode_change(mode)
+
+    def _handle_return_to_questions(self):
+        """Powrot do kart pytan z podpowiedzi."""
+        if self.on_cards_mode_change:
+            self.on_cards_mode_change("questions")
+
 
 
     def _handle_toggle_diarization(self):
@@ -290,9 +312,22 @@ class PrompterPanel:
             with self._client:
                 self._update_mode_badges()
 
+    def _on_cards_mode_change(self):
+        """Callback gdy zmieni się tryb kart."""
+        if self._client:
+            with self._client:
+                self._update_mode_badges()
+
+    def _on_return_hint_change(self):
+        """Callback gdy zmieni się hint powrotu do pytań."""
+        if self._client:
+            with self._client:
+                self._render_content()
+
     def _update_mode_badges(self):
         """Aktualizuje badge trybu rozmowy i checklisty."""
         from app_ui.live.live_state import SessionStatus
+        from app_ui.live.live_state import CardsMode
         mode_key = getattr(self.state.conversation_mode, 'value', 'general')
         label = MODE_LABELS.get(mode_key, MODE_LABELS.get('general', 'Tryb: Ogolny'))
         color = MODE_COLORS.get(mode_key, 'gray')
@@ -318,6 +353,22 @@ class PrompterPanel:
                     self.next_pool_btn.props('color=green')
                 else:
                     self.next_pool_btn.props('color=primary')
+
+        if self.cards_mode_radio:
+            show_radio = self.state.status == SessionStatus.RECORDING
+            self.cards_mode_radio.set_visibility(show_radio)
+            if show_radio:
+                cards_mode = getattr(self.state.cards_mode, 'value', 'auto')
+                if cards_mode == CardsMode.QUESTIONS.value:
+                    value = "Pytania"
+                elif cards_mode == CardsMode.DECISION.value:
+                    value = "Poradniczy"
+                else:
+                    value = "Poradniczy" if mode_key == "decision" else "Pytania"
+                if self.cards_mode_radio.value != value:
+                    self._cards_mode_sync = True
+                    self.cards_mode_radio.value = value
+                    self._cards_mode_sync = False
 
 
     # === UI CREATION ===
@@ -363,6 +414,13 @@ class PrompterPanel:
                 mode_label = MODE_LABELS.get(mode_key, MODE_LABELS.get('general', 'Tryb: Ogolny'))
                 mode_color = MODE_COLORS.get(mode_key, 'gray')
                 self.mode_badge = ui.badge(mode_label, color=mode_color).classes('text-[10px]')
+
+                # Przelacznik kart (Pytania / Poradniczy)
+                self.cards_mode_radio = ui.radio(
+                    ['Pytania', 'Poradniczy'],
+                    value='Poradniczy' if mode_key == 'decision' else 'Pytania'
+                ).props('inline dense').classes('text-[10px]').on('change', lambda: self._handle_cards_mode_change())
+                self.cards_mode_radio.set_visibility(False)
 
                 # Checklist progress (only in decision mode with check items)
                 self.checklist_badge = ui.badge("Check 0/0", color='amber').classes('text-[10px]')
@@ -504,6 +562,19 @@ class PrompterPanel:
 
         with ui.column().classes('w-full gap-4'):
             self._update_mode_badges()
+
+            # Hint: powrot do pytan
+            if getattr(self.state, "return_to_questions_hint", False):
+                with ui.element('div').classes(
+                    'w-full flex items-center justify-between gap-3 p-3 rounded-xl '
+                    'bg-amber-50 border border-amber-200 text-amber-800'
+                ):
+                    ui.label('Wykryto pytanie w rozmowie. Wrocic do kart pytań?').classes('text-sm')
+                    ui.button(
+                        'Wroc do pytan',
+                        icon='help',
+                        on_click=lambda: self._handle_return_to_questions()
+                    ).props('outline size=sm')
 
             # === KARTY SUGESTII ===
 

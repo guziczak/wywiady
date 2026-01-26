@@ -9,7 +9,7 @@ from typing import Optional, List, TYPE_CHECKING
 from enum import Enum
 
 from app_ui.live.intent_router import IntentRouter
-from app_ui.live.live_state import ConversationMode, Suggestion
+from app_ui.live.live_state import ConversationMode, CardsMode, Suggestion
 
 if TYPE_CHECKING:
     from app_ui.live.live_state import LiveState
@@ -132,6 +132,11 @@ class AIController:
                 self._schedule_regeneration(reason)
             else:
                 print(f"[AI] Auto regen blocked (decision mode)", flush=True)
+                if reason == TriggerReason.QUESTION_DETECTED:
+                    try:
+                        self.state.set_return_to_questions_hint(True)
+                    except Exception:
+                        pass
 
         # Zawsze scheduluj walidację
         self._schedule_validation()
@@ -241,6 +246,9 @@ class AIController:
 
     def _is_decision_freeze(self) -> bool:
         if not self.FREEZE_DECISION_AUTO_REGEN:
+            return False
+        cards_mode = getattr(self.state, "cards_mode", CardsMode.AUTO)
+        if cards_mode == CardsMode.QUESTIONS:
             return False
         return self.state.conversation_mode == ConversationMode.DECISION
 
@@ -394,11 +402,21 @@ class AIController:
                     self.state.set_conversation_mode(intent.mode, intent.confidence, intent.reason)
             except Exception as e:
                 print(f"[AI] Intent routing error: {e}", flush=True)
-            mode = self.state.conversation_mode
+        mode = self.state.conversation_mode
+        cards_mode = getattr(self.state, "cards_mode", CardsMode.AUTO)
+        use_decision_cards = (
+            cards_mode == CardsMode.DECISION
+            or (cards_mode == CardsMode.AUTO and mode == ConversationMode.DECISION)
+        )
+        if not use_decision_cards:
+            try:
+                self.state.set_return_to_questions_hint(False)
+            except Exception:
+                pass
 
         # 2) Jeśli brak LLM - uzyj fallback (tylko tryb poradniczy)
         if not self.llm_service:
-            fallback = self._fallback_cards_for_mode(mode)
+            fallback = self._fallback_cards_for_mode(ConversationMode.DECISION if use_decision_cards else mode)
             if fallback:
                 self.state.set_suggestions(fallback)
             if self._on_regen_end:
@@ -406,7 +424,7 @@ class AIController:
             return
 
         try:
-            if mode == ConversationMode.DECISION:
+            if use_decision_cards:
                 cards = await self.llm_service.generate_decision_cards(
                     transcript_for_llm,
                     self.config,

@@ -8,7 +8,7 @@ import asyncio
 from typing import Optional, List
 
 from app_ui.components.header import create_header
-from app_ui.live.live_state import LiveState, SessionStatus, Suggestion
+from app_ui.live.live_state import LiveState, SessionStatus, Suggestion, CardsMode
 from app_ui.live.live_ai_controller import AIController
 from app_ui.live.components.transcript_panel import TranscriptPanel
 from app_ui.live.components.prompter_panel import PrompterPanel
@@ -260,6 +260,7 @@ class LiveInterviewView:
                     on_finish=self._finish_interview,
                     on_continue=self._navigate_next,
                     on_new_pool=self._request_new_pool,
+                    on_cards_mode_change=self._set_cards_mode,
                     on_card_click=self._on_card_click,
                     show_record_button=False
                 )
@@ -802,10 +803,32 @@ class LiveInterviewView:
 
     def _request_new_pool(self):
         """Ręczne odświeżenie puli kart (tryb poradniczy)."""
+        force_decision = self.state.cards_mode == CardsMode.DECISION
+        if self.state.cards_mode == CardsMode.AUTO and self.state.conversation_mode.value == "decision":
+            force_decision = True
         if self.ai_controller:
-            self.ai_controller.request_new_pool(force_decision=True)
+            self.ai_controller.request_new_pool(force_decision=force_decision)
         try:
             ui.notify("Generuje nowa pule...", type='info')
+        except Exception:
+            pass
+
+    def _set_cards_mode(self, mode: str):
+        """Ustawia tryb kart (pytania/poradniczy) i odswieza pule."""
+        if mode == "questions":
+            self.state.set_cards_mode(CardsMode.QUESTIONS)
+            if self.ai_controller:
+                self.ai_controller.request_new_pool(force_decision=False)
+        elif mode == "decision":
+            self.state.set_cards_mode(CardsMode.DECISION)
+            if self.ai_controller:
+                self.ai_controller.request_new_pool(force_decision=True)
+        else:
+            self.state.set_cards_mode(CardsMode.AUTO)
+            if self.ai_controller:
+                self.ai_controller.request_new_pool(force_decision=False)
+        try:
+            ui.notify("Aktualizuje tryb kart...", type='info')
         except Exception:
             pass
 

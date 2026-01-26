@@ -41,6 +41,13 @@ class ConversationMode(Enum):
     GENERAL = "general"
 
 
+class CardsMode(Enum):
+    """Tryb kart w suflerze."""
+    AUTO = "auto"
+    QUESTIONS = "questions"
+    DECISION = "decision"
+
+
 class PrompterMode(Enum):
     """Tryb panelu promptera."""
     SUGGESTIONS = "suggestions"  # Normalne karty sugestii
@@ -153,6 +160,8 @@ class LiveState:
         # Zachowuj użyte checklisty/skrypty między regeneracjami
         self._completed_checks = set()
         self._used_scripts = set()
+        self.cards_mode = CardsMode.AUTO
+        self.return_to_questions_hint = False
 
         # === NOWA ARCHITEKTURA: Aktywne pytanie w osobnym kontekście ===
         self.active_question = ActiveQuestionContext()
@@ -183,6 +192,9 @@ class LiveState:
         self.conversation_mode: ConversationMode = ConversationMode.GENERAL
         self.conversation_mode_confidence: float = 0.0
         self.conversation_mode_reason: str = ""
+        # Tryb kart (override dla suflera)
+        self.cards_mode: CardsMode = CardsMode.AUTO
+        self.return_to_questions_hint: bool = False
 
         # Callbacks dla UI updates
         self._on_transcript_change: Optional[Callable] = None
@@ -191,6 +203,8 @@ class LiveState:
         self._on_diarization_change: Optional[Callable] = None
         self._on_mode_change: Optional[Callable] = None
         self._on_conversation_mode_change: Optional[Callable] = None
+        self._on_cards_mode_change: Optional[Callable] = None
+        self._on_return_hint_change: Optional[Callable] = None
         self._on_qa_pair_created: Optional[Callable[[QAPair], None]] = None
         self._on_active_question_change: Optional[Callable] = None
 
@@ -239,6 +253,14 @@ class LiveState:
     def on_conversation_mode_change(self, callback: Callable):
         """Rejestruje callback na zmianę trybu rozmowy."""
         self._on_conversation_mode_change = callback
+
+    def on_cards_mode_change(self, callback: Callable):
+        """Rejestruje callback na zmianę trybu kart."""
+        self._on_cards_mode_change = callback
+
+    def on_return_hint_change(self, callback: Callable):
+        """Rejestruje callback na zmianę podpowiedzi powrotu do pytań."""
+        self._on_return_hint_change = callback
 
     def on_qa_pair_created(self, callback: Callable[['QAPair'], None]):
         """Rejestruje callback na utworzenie pary Q+A."""
@@ -757,4 +779,43 @@ class LiveState:
                 self._on_conversation_mode_change()
             except Exception as e:
                 print(f"[LiveState] Conversation mode callback error: {e}")
+
+    def set_cards_mode(self, mode: CardsMode):
+        """Ustawia tryb kart."""
+        if isinstance(mode, str):
+            try:
+                mode = CardsMode(mode)
+            except Exception:
+                mode = CardsMode.AUTO
+
+        if mode == self.cards_mode:
+            return
+
+        self.cards_mode = mode
+        # Przy zmianie trybu kart ukryj hint powrotu
+        self.return_to_questions_hint = False
+
+        if self._on_cards_mode_change:
+            try:
+                self._on_cards_mode_change()
+            except Exception as e:
+                print(f"[LiveState] Cards mode callback error: {e}")
+
+        if self._on_return_hint_change:
+            try:
+                self._on_return_hint_change()
+            except Exception as e:
+                print(f"[LiveState] Return hint callback error: {e}")
+
+    def set_return_to_questions_hint(self, value: bool):
+        """Ustawia podpowiedź powrotu do pytań."""
+        value = bool(value)
+        if value == self.return_to_questions_hint:
+            return
+        self.return_to_questions_hint = value
+        if self._on_return_hint_change:
+            try:
+                self._on_return_hint_change()
+            except Exception as e:
+                print(f"[LiveState] Return hint callback error: {e}")
 
