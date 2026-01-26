@@ -150,14 +150,16 @@ def inject_desk_styles() -> None:
     left: 16px;
     bottom: 86px;
     width: min(420px, 94vw);
-    height: var(--overlay-height, min(45vh, 420px));
+    height: min(var(--overlay-height, min(45vh, 420px)), calc(100vh - 190px));
+    max-height: calc(100vh - 190px);
 }
 
 .live-overlay--drawer {
     right: 16px;
     bottom: 86px;
     width: min(460px, 94vw);
-    height: var(--overlay-height, min(60vh, 520px));
+    height: min(var(--overlay-height, min(60vh, 520px)), calc(100vh - 190px));
+    max-height: calc(100vh - 190px);
     transform: translateY(12px);
 }
 
