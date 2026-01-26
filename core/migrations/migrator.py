@@ -70,12 +70,14 @@ class Migrator:
         from . import migration_001_visits
         from . import migration_002_visit_details
         from . import migration_003_patient_details
+        from . import migration_004_specialization_ids
 
         # Rejestruj migracje
         self.migrations = [
             migration_001_visits.migration,
             migration_002_visit_details.migration,
             migration_003_patient_details.migration,
+            migration_004_specialization_ids.migration,
         ]
 
         # Sortuj po wersji

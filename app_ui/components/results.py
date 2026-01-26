@@ -12,9 +12,20 @@ def _inject_grid_checkbox_styles():
     ui.add_head_html('''
     <style>
     /* Ujednolicone wysokosci naglowka/wierszy (fallback dla roznych theme) */
-    .nicegui-aggrid {
+    .nicegui-aggrid,
+    .ag-theme-balham {
         --ag-header-height: 32px;
         --ag-row-height: 32px;
+    }
+
+    /* Wymus widocznosc naglowkow (gdy theme/CSS nie zaladuje sie poprawnie) */
+    .nicegui-aggrid .ag-header,
+    .nicegui-aggrid .ag-header-row,
+    .nicegui-aggrid .ag-header-cell {
+        display: block !important;
+        min-height: 32px !important;
+        height: 32px !important;
+        line-height: 32px !important;
     }
 
     /* Większe i bardziej widoczne checkboxy w AG Grid */
