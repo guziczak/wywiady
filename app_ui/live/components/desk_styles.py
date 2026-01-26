@@ -371,6 +371,7 @@ def inject_desk_styles() -> None:
     border: 1px solid rgba(148, 163, 184, 0.28);
     box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
     overflow: visible;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .qa-card-visual:hover {
@@ -454,6 +455,8 @@ def inject_desk_styles() -> None:
 .qa-card-tilt-3 { transform: rotate(-1deg); }
 .qa-card-tilt-4 { transform: rotate(2deg); }
 .qa-card-tilt-5 { transform: rotate(-1.5deg); }
+.qa-card-straight { transform: rotate(0deg); }
+.qa-card-straight:hover { transform: rotate(0deg) translateY(-6px); }
 
 .qa-card-stamp {
     position: absolute;
@@ -547,6 +550,11 @@ def inject_desk_styles() -> None:
     border: 1px solid rgba(148, 163, 184, 0.28);
     box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
     --prompter-accent: rgba(59, 130, 246, 0.4);
+    --prompter-tilt: 0deg;
+    transform: rotate(var(--prompter-tilt));
+    transform-origin: 50% 55%;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    will-change: transform;
 }
 
 .prompter-card::before {
@@ -576,13 +584,22 @@ def inject_desk_styles() -> None:
 }
 
 .prompter-card--active:hover {
-    transform: translateY(-2px);
+    transform: rotate(var(--prompter-tilt)) translateY(-2px);
     border-color: rgba(59, 130, 246, 0.35);
     box-shadow: 0 16px 30px rgba(15, 23, 42, 0.16);
 }
 
 .prompter-card--selected {
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3), 0 18px 32px rgba(15, 23, 42, 0.16);
+}
+
+.prompter-card.is-straight {
+    --prompter-tilt: 0deg;
+    z-index: 2;
+}
+
+.prompter-card.is-straight.prompter-card--active:hover {
+    transform: rotate(0deg) translateY(-2px);
 }
 
 .prompter-card--used {

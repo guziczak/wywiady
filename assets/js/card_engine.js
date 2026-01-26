@@ -35,6 +35,9 @@ export class CardEngine {
             lockMs: 180,
             releaseMs: 140,
         };
+        this.straightState = {
+            activeId: null,
+        };
         
         this.init();
         this.animate();
@@ -150,6 +153,7 @@ export class CardEngine {
             ry: targetRot.y,
             rz: targetRot.z,
         };
+        object.userData.homeOriginal = { ...object.userData.home };
         object.userData.hovered = false;
 
         new TWEEN.Tween(object.position)
@@ -237,6 +241,10 @@ export class CardEngine {
                 ry: targetRot.y,
                 rz: targetRot.z,
             };
+            object.userData.homeOriginal = { ...object.userData.home };
+            if (object.userData.straightened) {
+                this._setCardStraight(elementId, true);
+            }
             if (object.userData.hovered) {
                 this._dropCard(elementId, true);
             }
@@ -281,8 +289,16 @@ export class CardEngine {
             }
             this._dropCard(this.hoverState.activeId, true);
         }
+        if (this.straightState.activeId && this.straightState.activeId !== elementId) {
+            this._setCardStraight(this.straightState.activeId, false);
+            if (this.straightState.activeId !== this.hoverState.activeId) {
+                this._dropCard(this.straightState.activeId, true);
+            }
+        }
         this.hoverState.activeId = elementId;
         this.hoverState.switchLockUntil = now + this.hoverState.lockMs;
+        this.straightState.activeId = elementId;
+        this._setCardStraight(elementId, true);
         this._liftCard(elementId);
     }
 
@@ -366,6 +382,32 @@ export class CardEngine {
         scaleTween.start();
         object.userData.hoverTween = posTween;
         object.userData.hoverScaleTween = scaleTween;
+    }
+
+    _setCardStraight(elementId, straight = true) {
+        const object = this.cards.get(elementId);
+        if (!object || !object.userData.home) return;
+        if (!object.userData.homeOriginal) {
+            object.userData.homeOriginal = { ...object.userData.home };
+        }
+        if (straight) {
+            object.userData.home = {
+                ...object.userData.home,
+                ry: 0,
+                rz: 0,
+            };
+            object.userData.straightened = true;
+        } else {
+            const original = object.userData.homeOriginal;
+            if (original) {
+                object.userData.home = {
+                    ...object.userData.home,
+                    ry: original.ry,
+                    rz: original.rz,
+                };
+            }
+            object.userData.straightened = false;
+        }
     }
 
     _computeStackTransform(index) {

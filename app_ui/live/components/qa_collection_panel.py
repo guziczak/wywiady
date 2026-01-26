@@ -17,6 +17,17 @@ import json
 
 from app_ui.live.components.three_scene import ThreeStage
 
+_QA_STICKY_STRAIGHT_JS = """
+(e) => {
+    const card = e.target.closest('.qa-card-visual');
+    if (!card) return;
+    document.querySelectorAll('.qa-card-visual.qa-card-straight').forEach((el) => {
+        if (el !== card) el.classList.remove('qa-card-straight');
+    });
+    card.classList.add('qa-card-straight');
+}
+"""
+
 if TYPE_CHECKING:
     from app_ui.live.live_state import LiveState
     from app_ui.live.state.qa_collector import QAPair
@@ -325,6 +336,8 @@ class QACollectionPanel:
         )
         # Ensure DOM ID matches what ThreeStage expects
         card.props(f'id=c{card.id}')
+        card.on('mouseenter', js_handler=_QA_STICKY_STRAIGHT_JS)
+        card.on('focus', js_handler=_QA_STICKY_STRAIGHT_JS)
         
         # Ważne: ID elementu musi być unikalne i znane, NiceGUI generuje je automatycznie.
         # Handler kliknięcia
