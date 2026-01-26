@@ -207,7 +207,12 @@ def get_transcriber_manager():
 
 # Claude Proxy
 import sys
-sys.path.insert(0, r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src")
+_proxy_src = os.environ.get("WYWIAD_CLAUDE_PROXY_SRC") or r"C:\Users\guzic\Documents\GitHub\tools\claude-code-py\src"
+try:
+    if _proxy_src and Path(_proxy_src).is_dir():
+        sys.path.insert(0, _proxy_src)
+except Exception:
+    pass
 try:
     from proxy import start_proxy_server, get_proxy_base_url
     from anthropic import Anthropic

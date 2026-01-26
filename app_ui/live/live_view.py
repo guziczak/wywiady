@@ -174,17 +174,18 @@ class LiveInterviewView:
         self.pipeline_panel: Optional[PipelinePanel] = None
         self._pipeline_loading: bool = False
         self._client = None
+        self._timers = []
 
     def create_ui(self):
         """Buduje interfejs użytkownika."""
 
         # Timer do aktualizacji statusu w headerze
-        ui.timer(1.0, self.app._update_status_ui)
+        self._timers.append(ui.timer(1.0, self.app._update_status_ui))
         # Timer do aktualizacji statusu modeli
-        ui.timer(2.0, self._update_model_status)
+        self._timers.append(ui.timer(2.0, self._update_model_status))
         
         # Timer do rozpoczęcia ładowania modeli (po załadowaniu UI)
-        ui.timer(1.0, self._start_background_loading, once=True)
+        self._timers.append(ui.timer(1.0, self._start_background_loading, once=True))
 
         # Header (z głównej aplikacji)
         create_header(self.app, show_spec_switcher=True, show_status=False)
@@ -238,7 +239,8 @@ class LiveInterviewView:
                     on_toggle_session=self._toggle_session,
                     on_finish=self._finish_interview,
                     on_continue=self._navigate_next,
-                    on_card_click=self._on_card_click
+                    on_card_click=self._on_card_click,
+                    show_record_button=False
                 )
                 self.prompter_panel.create()
                 if self.prompter_panel.container:
@@ -262,7 +264,7 @@ class LiveInterviewView:
                     icon='mic',
                     on_click=self._toggle_session
                 ).props('unelevated').classes('live-desk-btn live-desk-btn--primary')
-                self._status_badge = ui.badge('READY').classes('live-desk-chip')
+                self._status_badge = ui.badge('GOTOWY').classes('live-desk-chip')
                 self._progress_badge = ui.badge('0/10').classes('live-desk-chip')
                 self._toggle_transcript_btn = ui.button(
                     'Transkrypt',
@@ -305,7 +307,7 @@ class LiveInterviewView:
             self._sync_size_button(self._prompter_size_btn, self._prompter_size)
 
         # Dock status refresh
-        ui.timer(0.6, self._update_desk_ui)
+        self._timers.append(ui.timer(0.6, self._update_desk_ui))
 
         # AI Controller callbacks
         self.ai_controller.on_regen_start(self._on_ai_start)
@@ -335,20 +337,58 @@ class LiveInterviewView:
         except Exception:
             pass
 
+    def _schedule_mobile_overlay_policy(self, opened: str) -> None:
+        """Na małych ekranach utrzymuje tylko jeden overlay naraz."""
+        if opened not in ('transcript', 'prompter', 'pipeline'):
+            return
+        if not (self._client or ui.context.client):
+            return
+        asyncio.create_task(self._enforce_mobile_overlay_policy(opened))
+
+    async def _enforce_mobile_overlay_policy(self, opened: str) -> None:
+        client = ui.context.client or self._client
+        if not client:
+            return
+        try:
+            with client:
+                width = await ui.run_javascript("window.innerWidth")
+        except Exception:
+            return
+        try:
+            width_val = float(width)
+        except Exception:
+            return
+        if width_val >= 900:
+            return
+
+        # Na mobile: po otwarciu jednego overlayu zamknij pozostałe
+        if opened != 'transcript' and self._transcript_visible:
+            self._set_transcript_visible(False)
+        if opened != 'prompter' and self._prompter_visible:
+            self._set_prompter_visible(False)
+        if opened != 'pipeline' and self._pipeline_visible:
+            self._set_pipeline_visible(False)
+
     def _set_transcript_visible(self, visible: bool) -> None:
         self._transcript_visible = visible
         self._set_overlay_open(self._transcript_overlay, visible)
         self._sync_toggle_button(self._toggle_transcript_btn, visible)
+        if visible:
+            self._schedule_mobile_overlay_policy('transcript')
 
     def _set_prompter_visible(self, visible: bool) -> None:
         self._prompter_visible = visible
         self._set_overlay_open(self._prompter_overlay, visible)
         self._sync_toggle_button(self._toggle_prompter_btn, visible)
+        if visible:
+            self._schedule_mobile_overlay_policy('prompter')
 
     def _set_pipeline_visible(self, visible: bool) -> None:
         self._pipeline_visible = visible
         self._set_overlay_open(self._pipeline_overlay, visible)
         self._sync_toggle_button(self._toggle_pipeline_btn, visible)
+        if visible:
+            self._schedule_mobile_overlay_policy('pipeline')
 
     def _toggle_transcript_size(self):
         self._transcript_size = 'full' if self._transcript_size != 'full' else 'peek'
@@ -464,13 +504,13 @@ class LiveInterviewView:
             self._record_btn.text = 'STOP'
             self._record_btn.props('icon=stop')
             self._record_btn.classes(add='live-desk-btn--recording', remove='live-desk-btn--primary')
-            self._status_badge.text = 'LIVE'
+            self._status_badge.text = 'NAGRYWANIE'
             self._status_badge.classes(add='live-status-live')
         else:
             self._record_btn.text = 'START'
             self._record_btn.props('icon=mic')
             self._record_btn.classes(add='live-desk-btn--primary', remove='live-desk-btn--recording')
-            self._status_badge.text = 'READY'
+            self._status_badge.text = 'GOTOWY'
             self._status_badge.classes(remove='live-status-live')
 
         current, target = self.state.qa_progress
@@ -479,10 +519,32 @@ class LiveInterviewView:
     async def _on_disconnect(self):
         """Sprzątanie po zamknięciu karty."""
         print("[LIVE] Client disconnected, cleaning up...", flush=True)
+        for timer in self._timers:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+        self._timers = []
+
         if self.transcriber:
             self.transcriber.stop()
         if self.ai_controller:
             self.ai_controller.force_stop()
+        if self.active_question_panel:
+            try:
+                self.active_question_panel.destroy()
+            except Exception:
+                pass
+        if self.prompter_panel:
+            try:
+                self.prompter_panel.destroy()
+            except Exception:
+                pass
+        if self.qa_panel:
+            try:
+                self.qa_panel.destroy()
+            except Exception:
+                pass
 
     async def _start_background_loading(self):
         """Ładuje modele w tle po załadowaniu UI."""

@@ -119,11 +119,11 @@ class QACollectionPanel:
                     # Filter chips
                     with ui.row().classes('items-center gap-1'):
                         self.filter_buttons['all'] = ui.button(
-                            'All',
+                            'Wszystkie',
                             on_click=lambda: self._set_filter_mode('all')
                         ).props('flat dense').classes('qa-filter-btn')
                         self.filter_buttons['latest'] = ui.button(
-                            'Last 3',
+                            'Ostatnie 3',
                             on_click=lambda: self._set_filter_mode('latest')
                         ).props('flat dense').classes('qa-filter-btn')
                         self.filter_buttons['empty'] = ui.button(
@@ -617,3 +617,18 @@ class QACollectionPanel:
     def refresh(self):
         """Metoda zgodności interfejsu."""
         pass
+
+    def destroy(self):
+        """Sprząta timery i zadania asynchroniczne."""
+        if self._engine_check_timer:
+            try:
+                self._engine_check_timer.cancel()
+            except Exception:
+                pass
+            self._engine_check_timer = None
+        if self._probe_task and not self._probe_task.done():
+            try:
+                self._probe_task.cancel()
+            except Exception:
+                pass
+        self._probe_task = None

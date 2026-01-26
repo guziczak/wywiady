@@ -270,14 +270,6 @@ class ActiveQuestionPanel:
             if self.on_manual_answer:
                 self.on_manual_answer(self.context.question, answer)
 
-            # Notyfikacja
-            if self._client:
-                try:
-                    with self._client:
-                        ui.notify('Para Q+A zebrana!', type='positive', position='top', icon='check_circle')
-                except Exception:
-                    pass
-
     def _toggle_pin(self):
         """Przełącza pin."""
         self.context.toggle_pin()

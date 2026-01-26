@@ -227,7 +227,11 @@ class LiveState:
         text = text.strip()
         if not text:
             return
-        self.provisional_text = self._smart_join(self.provisional_text, text)
+        # Provisional powinien odzwierciedlać bieżący segment (bez doklejania).
+        # Streaming wysyła kolejne wersje tego samego fragmentu, więc zastępujemy.
+        if text == self.provisional_text:
+            return
+        self.provisional_text = text
         self._rebuild_full_transcript()
         self._notify_transcript_change()
 

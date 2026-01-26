@@ -35,21 +35,23 @@ class PrompterPanel:
     - Kontrolki sesji (START/STOP, Zakończ)
     """
 
-    def __init__(
-        self,
-        state: 'LiveState',
-        app_instance=None,
-        on_toggle_session: Optional[Callable] = None,
-        on_finish: Optional[Callable[[bool], None]] = None,  # callback(analyze_speakers)
-        on_continue: Optional[Callable[[], None]] = None,    # nowy callback
-        on_card_click: Optional[Callable[[str], None]] = None
-    ):
-        self.state = state
-        self.app_instance = app_instance
-        self.on_toggle_session = on_toggle_session
-        self.on_finish = on_finish
-        self.on_continue = on_continue
-        self.on_card_click = on_card_click
+    def __init__(
+        self,
+        state: 'LiveState',
+        app_instance=None,
+        on_toggle_session: Optional[Callable] = None,
+        on_finish: Optional[Callable[[bool], None]] = None,  # callback(analyze_speakers)
+        on_continue: Optional[Callable[[], None]] = None,    # nowy callback
+        on_card_click: Optional[Callable[[str], None]] = None,
+        show_record_button: bool = True
+    ):
+        self.state = state
+        self.app_instance = app_instance
+        self.on_toggle_session = on_toggle_session
+        self.on_finish = on_finish
+        self.on_continue = on_continue
+        self.on_card_click = on_card_click
+        self.show_record_button = show_record_button
 
         # UI refs
         self.container = None
@@ -165,23 +167,24 @@ class PrompterPanel:
             # Kontrolki
             with ui.row().classes('items-center gap-3'):
                 # Status badge
-                self.status_badge = ui.badge('GOTOWY', color='gray').classes(
-                    'text-[11px]'
-                ).props('aria-live="polite"')
-
-                # Przycisk START/STOP
-                self.action_btn = ui.button(
-                    'START',
-                    icon='mic',
-                    color='green',
-                    on_click=self._handle_toggle
-                ).props('size=sm').classes('min-w-[88px]')
-
-                # Przycisk Zakończ
-                self.finish_btn = ui.button(
-                    'Zakończ',
-                    icon='check_circle',
-                    color='blue',
+                self.status_badge = ui.badge('GOTOWY', color='gray').classes(
+                    'text-[11px]'
+                ).props('aria-live="polite"')
+
+                # Przycisk START/STOP (opcjonalny, gdy jest dock)
+                if self.show_record_button:
+                    self.action_btn = ui.button(
+                        'START',
+                        icon='mic',
+                        color='green',
+                        on_click=self._handle_toggle
+                    ).props('size=sm').classes('min-w-[88px]')
+
+                # Przycisk Zakończ
+                self.finish_btn = ui.button(
+                    'Zakończ',
+                    icon='check_circle',
+                    color='blue',
                     on_click=self._handle_finish_click
                 ).props('outline size=sm')
 
@@ -443,17 +446,19 @@ class PrompterPanel:
         
         # Ten callback jest wywoływany synchronicznie z UI thread
         # więc nie potrzebujemy context managera
-        try:
-            if self.state.status == SessionStatus.RECORDING:
-                self.action_btn.props('color=red icon=stop')
-                self.action_btn.text = 'STOP'
-                self.status_badge.text = 'NAGRYWANIE'
-                self.status_badge.props('color=red')
-            else:
-                self.action_btn.props('color=green icon=mic')
-                self.action_btn.text = 'START'
-                self.status_badge.text = 'GOTOWY'
-                self.status_badge.props('color=gray')
+        try:
+            if self.state.status == SessionStatus.RECORDING:
+                if self.action_btn:
+                    self.action_btn.props('color=red icon=stop')
+                    self.action_btn.text = 'STOP'
+                self.status_badge.text = 'NAGRYWANIE'
+                self.status_badge.props('color=red')
+            else:
+                if self.action_btn:
+                    self.action_btn.props('color=green icon=mic')
+                    self.action_btn.text = 'START'
+                self.status_badge.text = 'GOTOWY'
+                self.status_badge.props('color=gray')
 
             self._render_content()
             print("[PROMPTER] UI updated!", flush=True)
@@ -487,12 +492,21 @@ class PrompterPanel:
         """Wymusza przerysowanie UI w bezpiecznym kontekście klienta."""
         self._needs_refresh = True
 
-    def _flush_refresh(self):
-        """Wykonuje odswiezenie w bezpiecznym kontekscie UI."""
-        if not self._needs_refresh:
-            return
-        self._needs_refresh = False
+    def _flush_refresh(self):
+        """Wykonuje odswiezenie w bezpiecznym kontekscie UI."""
+        if not self._needs_refresh:
+            return
+        self._needs_refresh = False
         try:
             self._render_content()
-        except Exception as e:
-            print(f"[PROMPTER] Refresh error: {e}", flush=True)
+        except Exception as e:
+            print(f"[PROMPTER] Refresh error: {e}", flush=True)
+
+    def destroy(self):
+        """Sprząta timery i zasoby UI."""
+        if self._refresh_timer:
+            try:
+                self._refresh_timer.cancel()
+            except Exception:
+                pass
+            self._refresh_timer = None
