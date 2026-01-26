@@ -112,7 +112,7 @@ def _render_diagnosis_grid(app, column_defs, row_data):
         'rowMultiSelectWithClick': True,
         'headerHeight': 32,
         'rowHeight': 32,
-    }, theme='balham').classes('w-full ag-theme-balham').style('height: 12rem; width: 100%;')
+    }, theme='balham', auto_size_columns=False).classes('w-full ag-theme-balham').style('height: 12rem; width: 100%;')
     app.diagnosis_grid.on('gridReady', lambda _: _force_grid_setup(app.diagnosis_grid, column_defs))
     return app.diagnosis_grid
 
@@ -126,7 +126,7 @@ def _render_procedure_grid(app, column_defs, row_data):
         'rowMultiSelectWithClick': True,
         'headerHeight': 32,
         'rowHeight': 32,
-    }, theme='balham').classes('w-full ag-theme-balham').style('height: 16rem; width: 100%;')
+    }, theme='balham', auto_size_columns=False).classes('w-full ag-theme-balham').style('height: 16rem; width: 100%;')
     app.procedure_grid.on('gridReady', lambda _: _force_grid_setup(app.procedure_grid, column_defs))
     return app.procedure_grid
 
