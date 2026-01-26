@@ -6,6 +6,7 @@ Nowoczesny panel prezentujÄ…cy etapowy pipeline transkrypcji + ustawienia.
 from typing import Callable, Dict, Optional
 from nicegui import ui
 from app_ui.live.components.animation_styles import inject_animation_styles
+from app_ui.live.ui_labels import PIPELINE_PANEL_TITLE, PIPELINE_SETTINGS_TITLE
 
 
 class PipelinePanel:
@@ -80,7 +81,7 @@ class PipelinePanel:
             # Header
             with ui.row().classes('w-full items-center justify-between gap-3 flex-wrap'):
                 with ui.column().classes('gap-1'):
-                    ui.label('Pipeline transkrypcji').classes('text-sm font-semibold text-slate-700')
+                    ui.label(PIPELINE_PANEL_TITLE).classes('text-sm font-semibold text-slate-700')
                     self.preset_label = ui.label('').classes('text-xs text-slate-500')
 
                 with ui.row().classes('items-center gap-2'):
@@ -189,7 +190,7 @@ class PipelinePanel:
             with ui.row().classes('w-full bg-slate-50 p-4 border-b border-slate-100 items-center justify-between'):
                 with ui.row().classes('items-center gap-2'):
                     ui.icon('tune', size='sm').classes('text-slate-600')
-                    ui.label('Ustawienia pipeline').classes('text-lg font-bold text-slate-800')
+                    ui.label(PIPELINE_SETTINGS_TITLE).classes('text-lg font-bold text-slate-800')
                 ui.button(icon='close', on_click=dialog.close).props('flat dense round').classes('text-slate-400')
 
             # Content

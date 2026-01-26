@@ -16,12 +16,13 @@ from app_ui.live.components.suggestion_card import (
     PlaceholderCard,
     EmptyStateCard
 )
-from app_ui.live.components.summary_components import (
-    ConfirmationBar,
-    SummaryStats,
-    SummaryActions
-)
-from app_ui.live.components.animation_styles import inject_animation_styles
+from app_ui.live.components.summary_components import (
+    ConfirmationBar,
+    SummaryStats,
+    SummaryActions
+)
+from app_ui.live.components.animation_styles import inject_animation_styles
+from app_ui.live.ui_labels import STATUS_READY, STATUS_RECORDING
 
 if TYPE_CHECKING:
     from app_ui.live.live_state import LiveState, SessionStatus, PrompterMode
@@ -167,7 +168,7 @@ class PrompterPanel:
             # Kontrolki
             with ui.row().classes('items-center gap-3'):
                 # Status badge
-                self.status_badge = ui.badge('GOTOWY', color='gray').classes(
+                self.status_badge = ui.badge(STATUS_READY, color='gray').classes(
                     'text-[11px]'
                 ).props('aria-live="polite"')
 
@@ -451,13 +452,13 @@ class PrompterPanel:
                 if self.action_btn:
                     self.action_btn.props('color=red icon=stop')
                     self.action_btn.text = 'STOP'
-                self.status_badge.text = 'NAGRYWANIE'
+                self.status_badge.text = STATUS_RECORDING
                 self.status_badge.props('color=red')
             else:
                 if self.action_btn:
                     self.action_btn.props('color=green icon=mic')
                     self.action_btn.text = 'START'
-                self.status_badge.text = 'GOTOWY'
+                self.status_badge.text = STATUS_READY
                 self.status_badge.props('color=gray')
 
             self._render_content()

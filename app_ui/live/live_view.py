@@ -17,6 +17,15 @@ from app_ui.live.components.qa_collection_panel import QACollectionPanel
 from app_ui.live.components.active_question_panel import ActiveQuestionPanel
 from app_ui.live.components.desk_styles import inject_desk_styles
 from app_ui.live.components.feedback import inject_feedback_script
+from app_ui.live.ui_labels import (
+    STATUS_READY,
+    STATUS_RECORDING,
+    DOCK_TRANSCRIPT,
+    DOCK_PROMPTER,
+    DOCK_PIPELINE,
+    DOCK_FOCUS,
+    OVERLAY_PIPELINE_TITLE,
+)
 
 # Streaming transcriber (opcjonalny)
 try:
@@ -250,7 +259,7 @@ class LiveInterviewView:
             self._pipeline_overlay = ui.element('div').classes('live-overlay live-overlay--pipeline')
             with self._pipeline_overlay:
                 with ui.element('div').classes('overlay-header'):
-                    ui.label('Pipeline').classes('overlay-title')
+                    ui.label(OVERLAY_PIPELINE_TITLE).classes('overlay-title')
                     with ui.row().classes('items-center gap-1'):
                         ui.button(icon='close', on_click=lambda: self._set_pipeline_visible(False)).props('flat dense').classes('overlay-btn')
                 self._create_model_info_bar()
@@ -264,25 +273,25 @@ class LiveInterviewView:
                     icon='mic',
                     on_click=self._toggle_session
                 ).props('unelevated').classes('live-desk-btn live-desk-btn--primary')
-                self._status_badge = ui.badge('GOTOWY').classes('live-desk-chip')
+                self._status_badge = ui.badge(STATUS_READY).classes('live-desk-chip')
                 self._progress_badge = ui.badge('0/10').classes('live-desk-chip')
                 self._toggle_transcript_btn = ui.button(
-                    'Transkrypt',
+                    DOCK_TRANSCRIPT,
                     icon='subject',
                     on_click=self._toggle_transcript
                 ).props('flat').classes('live-desk-btn')
                 self._toggle_prompter_btn = ui.button(
-                    'Sufler',
+                    DOCK_PROMPTER,
                     icon='auto_awesome',
                     on_click=self._toggle_prompter
                 ).props('flat').classes('live-desk-btn')
                 self._toggle_pipeline_btn = ui.button(
-                    'Pipeline',
+                    DOCK_PIPELINE,
                     icon='tune',
                     on_click=self._toggle_pipeline
                 ).props('flat').classes('live-desk-btn')
                 self._focus_btn = ui.button(
-                    'Focus',
+                    DOCK_FOCUS,
                     icon='center_focus_strong',
                     on_click=self._toggle_focus_mode
                 ).props('flat').classes('live-desk-btn')
@@ -504,13 +513,13 @@ class LiveInterviewView:
             self._record_btn.text = 'STOP'
             self._record_btn.props('icon=stop')
             self._record_btn.classes(add='live-desk-btn--recording', remove='live-desk-btn--primary')
-            self._status_badge.text = 'NAGRYWANIE'
+            self._status_badge.text = STATUS_RECORDING
             self._status_badge.classes(add='live-status-live')
         else:
             self._record_btn.text = 'START'
             self._record_btn.props('icon=mic')
             self._record_btn.classes(add='live-desk-btn--primary', remove='live-desk-btn--recording')
-            self._status_badge.text = 'GOTOWY'
+            self._status_badge.text = STATUS_READY
             self._status_badge.classes(remove='live-status-live')
 
         current, target = self.state.qa_progress

@@ -16,6 +16,7 @@ import asyncio
 import json
 
 from app_ui.live.components.three_scene import ThreeStage
+from app_ui.live.ui_labels import QA_TITLE, QA_ENGINE_LOADING, QA_ENGINE_FALLBACK
 
 _QA_STICKY_STRAIGHT_JS = """
 (e) => {
@@ -93,7 +94,7 @@ class QACollectionPanel:
                     title_row_classes += ' qa-hud-card'
                 with ui.row().classes(title_row_classes):
                     ui.icon('collections_bookmark', size='sm').classes('text-emerald-600')
-                    ui.label('Zebrane Q+A (3D Desk)').classes(
+                    ui.label(QA_TITLE).classes(
                         'text-sm font-semibold text-slate-700'
                     )
 
@@ -155,7 +156,7 @@ class QACollectionPanel:
                 # 3D engine status overlay
                 self._engine_status = ui.element('div').classes('qa-engine-status')
                 with self._engine_status:
-                    self._engine_status_label = ui.label('Laduje desk 3D...')
+                    self._engine_status_label = ui.label(QA_ENGINE_LOADING)
 
                 # The Three.js Scene
                 self.three_stage = ThreeStage()
@@ -218,7 +219,7 @@ class QACollectionPanel:
             if self._engine_check_timer:
                 self._engine_check_timer.cancel()
             if self._engine_status_label:
-                self._engine_status_label.text = '3D offline - fallback 2D'
+                self._engine_status_label.text = QA_ENGINE_FALLBACK
             self._activate_fallback()
 
     async def _probe_engine_ready(self):
