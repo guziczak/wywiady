@@ -20,6 +20,10 @@ export class CardEngine {
             amp: 10,
             speed: 0.0006,
         };
+        this.cardMetrics = {
+            lift: 6,
+            depth: 4,
+        };
         this.hoverState = {
             activeId: null,
             leaveTimer: null,
@@ -109,6 +113,13 @@ export class CardEngine {
         element.style.pointerEvents = 'auto';
         element.style.opacity = '1';
         element.style.visibility = 'visible';
+
+        const rect = element.getBoundingClientRect();
+        if (rect && rect.height) {
+            const lift = Math.max(6, Math.min(14, rect.height * 0.08));
+            const depth = Math.max(4, Math.min(10, rect.height * 0.05));
+            this.cardMetrics = { lift, depth };
+        }
 
         const object = new CSS3DObject(element);
         console.log(`[CardEngine] Created CSS3DObject for ${elementId}`);
@@ -349,8 +360,10 @@ export class CardEngine {
         const radius = 20 + Math.min(index, 16) * 2.2;
         const jitter = (this._pseudoRandom(index * 3.1) - 0.5) * 10;
         const targetX = Math.cos(angle) * radius + jitter;
-        const targetZ = Math.sin(angle) * radius + jitter;
-        const targetY = Math.min(index * 1.1, 18);
+        const lift = this.cardMetrics?.lift ?? 6;
+        const depth = this.cardMetrics?.depth ?? 4;
+        const targetY = Math.min(index * lift, 110);
+        const targetZ = Math.sin(angle) * radius + jitter + Math.min(index * depth, 70);
         const targetRot = {
             x: -Math.PI / 2,
             y: (this._pseudoRandom(index * 5.7) - 0.5) * 0.08,

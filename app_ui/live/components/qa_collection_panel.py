@@ -334,32 +334,34 @@ class QACollectionPanel:
             with ui.element('div').classes('qa-card-stamp qa-stamp-in'):
                 ui.label('ZEBRANE')
             # Card content
-            with ui.column().classes('gap-2 w-full'):
+            with ui.column().classes('gap-2 w-full qa-card-body'):
                 with ui.element('div').classes('qa-card-preview'):
                     ui.label('Pytanie').classes('qa-card-preview-title')
                     ui.label(pair.question).classes('qa-card-preview-text')
                     ui.label('Odpowiedź').classes('qa-card-preview-title qa-card-preview-title--answer')
                     ui.label(pair.answer if (pair.answer or '').strip() else 'Brak odpowiedzi').classes('qa-card-preview-text')
-                with ui.row().classes('w-full items-center justify-between'):
-                    if order_index:
-                        ui.badge(f'#{order_index}').classes('qa-card-index')
+                with ui.row().classes('w-full items-center justify-between qa-card-head'):
+                    with ui.row().classes('items-center gap-2'):
+                        if order_index:
+                            ui.badge(f'#{order_index}').classes('qa-card-index')
+                        ui.label('Q+A').classes('qa-card-chip')
                     ui.label(pair.id.upper()).classes('qa-card-id')
                 # Question section
                 with ui.element('div').classes('w-full qa-card-section qa-card-question'):
-                    with ui.row().classes('items-center gap-1 mb-1'):
+                    with ui.row().classes('items-center gap-2 mb-1'):
                         ui.icon('help_outline', size='xs').classes('text-blue-500')
-                        ui.label('Pytanie').classes('text-[10px] text-blue-600 uppercase tracking-wide font-medium')
+                        ui.label('Pytanie').classes('qa-card-label qa-card-label--question')
                     ui.label(self._truncate(pair.question, 40)).classes(
-                        'text-xs text-slate-700 leading-tight font-medium'
+                        'qa-card-text text-slate-700'
                     )
 
                 # Answer section
                 with ui.element('div').classes('w-full qa-card-section qa-card-answer'):
-                    with ui.row().classes('items-center gap-1 mb-1'):
+                    with ui.row().classes('items-center gap-2 mb-1'):
                         ui.icon('chat_bubble_outline', size='xs').classes('text-emerald-500')
-                        ui.label('Odpowiedź').classes('text-[10px] text-emerald-600 uppercase tracking-wide font-medium')
+                        ui.label('Odpowiedź').classes('qa-card-label qa-card-label--answer')
                     ui.label(self._truncate(pair.answer, 50)).classes(
-                        'text-xs text-slate-600 leading-tight'
+                        'qa-card-text text-slate-600'
                     )
             
             # Decoration (Corner Fold or ID)

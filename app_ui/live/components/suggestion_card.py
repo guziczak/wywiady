@@ -39,28 +39,28 @@ class SuggestionCard:
         # Style bazowe (równe karty w siatce)
         is_primary = self.variant == "primary"
         base_classes = (
-            'w-full min-h-[120px] '
-            'flex flex-col items-start justify-between '
-            'p-3 rounded-xl '
+            'w-full min-h-[118px] '
+            'flex flex-col items-start justify-between gap-3 '
+            'p-3 rounded-2xl '
             'transition-all duration-200 ease-out '
+            'prompter-card'
         )
 
+        selected_classes = 'prompter-card--selected ' if self.selected else ''
+        primary_classes = 'prompter-card--primary ' if is_primary else ''
+
         if self.used:
-            # Użyta karta - wyszarzona
-            selected_classes = 'border-blue-300 ring-2 ring-blue-100 ' if self.selected else ''
             style_classes = base_classes + (
-                'bg-gray-100 border-2 border-gray-200 '
-                + selected_classes +
-                'opacity-50 cursor-not-allowed'
+                'prompter-card--used '
+                + primary_classes +
+                selected_classes +
+                'cursor-not-allowed'
             )
         else:
-            # Aktywna karta - interaktywna
-            selected_classes = 'border-blue-500 ring-2 ring-blue-200 ' if self.selected else ''
             style_classes = base_classes + (
-                'bg-white border-2 border-blue-100 '
-                + selected_classes +
-                'shadow-sm hover:shadow-md '
-                'hover:border-blue-300 hover:scale-[1.01] '
+                'prompter-card--active '
+                + primary_classes +
+                selected_classes +
                 'cursor-pointer '
                 'focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2'
             )
@@ -90,35 +90,33 @@ class SuggestionCard:
         """Tworzy zawartość karty."""
 
         # Header (badge + icon)
-        with ui.row().classes('w-full items-center justify-between mb-2'):
+        with ui.row().classes('w-full items-center justify-between'):
             with ui.row().classes('items-center gap-2'):
                 if self.variant == "primary":
-                    ui.badge('Następne', color='blue').classes('text-[10px] uppercase tracking-wide')
+                    ui.badge('Następne', color='blue').classes('prompter-badge prompter-badge--primary')
                 if self.tag:
-                    ui.badge(self.tag, color='gray').classes('text-[10px] uppercase tracking-wide')
-            icon_color = 'text-gray-300' if self.used else 'text-blue-500'
-            ui.icon('help_outline', size='sm').classes(icon_color)
+                    ui.badge(self.tag, color='gray').classes('prompter-badge')
+            icon_color = 'text-slate-300' if self.used else 'text-blue-500'
+            ui.icon('auto_awesome', size='sm').classes(icon_color)
 
         # Tekst pytania
-        text_color = 'text-gray-400' if self.used else 'text-slate-800'
-        text_size = 'text-sm sm:text-base'
-        with ui.column().classes('flex-grow justify-center w-full'):
+        text_color = 'text-slate-400' if self.used else 'text-slate-800'
+        with ui.column().classes('flex-grow justify-center w-full gap-1'):
             ui.label(self.question).classes(
-                f'{text_color} {text_size} '
-                'leading-relaxed font-semibold'
+                f'prompter-card-title {text_color}'
             )
 
         # Hint na dole
         if not self.used:
-            with ui.row().classes('w-full justify-between items-center mt-3 pt-2 border-t border-gray-100'):
-                ui.label('Kliknij aby skopiować').classes(
-                    'text-[11px] text-gray-400 font-light'
+            with ui.row().classes('w-full justify-between items-center pt-2 prompter-card-footer'):
+                ui.label('Kliknij, aby skopiować').classes(
+                    'prompter-card-hint'
                 )
-                ui.icon('content_copy', size='xs').classes('text-gray-300')
+                ui.icon('content_copy', size='xs').classes('text-slate-300')
         else:
-            with ui.row().classes('w-full justify-center mt-3 pt-2 border-t border-gray-100'):
-                ui.icon('check', size='xs').classes('text-green-500 mr-1')
-                ui.label('Użyte').classes('text-[11px] text-green-500 font-light')
+            with ui.row().classes('w-full justify-center items-center pt-2 prompter-card-footer'):
+                ui.icon('check', size='xs').classes('text-emerald-500 mr-1')
+                ui.label('Użyte').classes('prompter-card-hint text-emerald-500')
 
     def _handle_click(self):
         """Obsługuje kliknięcie."""
@@ -142,15 +140,15 @@ class PlaceholderCard:
     def create(self) -> ui.card:
         """Tworzy placeholder."""
         with ui.card().classes(
-            'w-full min-h-[120px] '
+            'w-full min-h-[118px] '
             'flex items-center justify-center '
-            'bg-gray-50 border-2 border-dashed border-gray-200 '
-            'rounded-xl'
+            'rounded-2xl '
+            'prompter-card prompter-card--ghost'
         ) as card:
-            with ui.column().classes('items-center gap-2'):
+            with ui.column().classes('items-center gap-2 px-4'):
                 ui.spinner(size='sm', color='gray')
                 ui.label(self.message).classes(
-                    'text-gray-400 text-[11px] font-light italic text-center'
+                    'prompter-card-hint text-center'
                 )
 
         return card
@@ -165,15 +163,15 @@ class EmptyStateCard:
     def create(self) -> ui.card:
         """Tworzy empty state."""
         with ui.card().classes(
-            'w-full min-h-[120px] '
+            'w-full min-h-[118px] '
             'flex items-center justify-center '
-            'bg-slate-50 border-2 border-slate-200 '
-            'rounded-xl'
+            'rounded-2xl '
+            'prompter-card prompter-card--ghost'
         ) as card:
-            with ui.column().classes('items-center gap-2'):
+            with ui.column().classes('items-center gap-2 px-4'):
                 ui.icon('mic_none', size='lg').classes('text-slate-300')
                 ui.label(self.message).classes(
-                    'text-slate-400 text-[11px] font-light text-center'
+                    'prompter-card-hint text-center'
                 )
 
         return card
