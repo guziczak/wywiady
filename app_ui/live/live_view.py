@@ -815,20 +815,23 @@ class LiveInterviewView:
 
     def _set_cards_mode(self, mode: str):
         """Ustawia tryb kart (pytania/poradniczy) i odswieza pule."""
+        label = "Auto"
         if mode == "questions":
             self.state.set_cards_mode(CardsMode.QUESTIONS)
             if self.ai_controller:
                 self.ai_controller.request_new_pool(force_decision=False)
+            label = "Pytania do pacjenta"
         elif mode == "decision":
             self.state.set_cards_mode(CardsMode.DECISION)
             if self.ai_controller:
                 self.ai_controller.request_new_pool(force_decision=True)
+            label = "Poradniczy (skrypt/checklista)"
         else:
             self.state.set_cards_mode(CardsMode.AUTO)
             if self.ai_controller:
                 self.ai_controller.request_new_pool(force_decision=False)
         try:
-            ui.notify("Aktualizuje tryb kart...", type='info')
+            ui.notify(f"Pula kart: {label}", type='info')
         except Exception:
             pass
 

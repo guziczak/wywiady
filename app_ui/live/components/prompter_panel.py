@@ -45,6 +45,8 @@ from app_ui.live.ui_labels import (
     STATUS_RECORDING,
     MODE_LABELS,
     MODE_COLORS,
+    CARDS_MODE_HINTS,
+    CARDS_MODE_AUTO_BADGE,
 )
 
 
@@ -108,6 +110,9 @@ class PrompterPanel:
         self.checklist_badge = None
         self.next_pool_btn = None
         self.cards_mode_radio = None
+        self.cards_mode_hint = None
+        self.cards_mode_auto_badge = None
+        self.cards_mode_hint_row = None
         self._cards_mode_sync = False
         self._is_loading = False
         self._client = None  # NiceGUI client context
@@ -272,6 +277,18 @@ class PrompterPanel:
         if self.on_cards_mode_change:
             self.on_cards_mode_change("questions")
 
+    def _resolve_cards_mode(self):
+        """Zwraca (effective_mode, is_auto) dla puli kart."""
+        from app_ui.live.live_state import CardsMode
+        mode_key = getattr(self.state.conversation_mode, 'value', 'general')
+        cards_mode = getattr(self.state, 'cards_mode', CardsMode.AUTO)
+
+        if cards_mode == CardsMode.DECISION:
+            return "decision", False
+        if cards_mode == CardsMode.QUESTIONS:
+            return "questions", False
+        return ("decision" if mode_key == "decision" else "questions"), True
+
 
 
     def _handle_toggle_diarization(self):
@@ -327,7 +344,6 @@ class PrompterPanel:
     def _update_mode_badges(self):
         """Aktualizuje badge trybu rozmowy i checklisty."""
         from app_ui.live.live_state import SessionStatus
-        from app_ui.live.live_state import CardsMode
         mode_key = getattr(self.state.conversation_mode, 'value', 'general')
         label = MODE_LABELS.get(mode_key, MODE_LABELS.get('general', 'Tryb: Ogolny'))
         color = MODE_COLORS.get(mode_key, 'gray')
@@ -336,16 +352,22 @@ class PrompterPanel:
             self.mode_badge.text = label
             self.mode_badge.props(f'color={color}')
 
+        effective_mode, is_auto = self._resolve_cards_mode()
+        show_decision = effective_mode == "decision"
+
         if self.checklist_badge:
-            done, total = self.state.checklist_progress
-            if total > 0:
-                self.checklist_badge.text = f"Check {done}/{total}"
-                self.checklist_badge.set_visibility(True)
+            if show_decision:
+                done, total = self.state.checklist_progress
+                if total > 0:
+                    self.checklist_badge.text = f"Check {done}/{total}"
+                    self.checklist_badge.set_visibility(True)
+                else:
+                    self.checklist_badge.set_visibility(False)
             else:
                 self.checklist_badge.set_visibility(False)
 
         if self.next_pool_btn:
-            show_next = (mode_key == "decision" and self.state.status == SessionStatus.RECORDING)
+            show_next = (show_decision and self.state.status == SessionStatus.RECORDING)
             self.next_pool_btn.set_visibility(show_next)
             if show_next:
                 done, total = self.state.checklist_progress
@@ -358,17 +380,20 @@ class PrompterPanel:
             show_radio = self.state.status == SessionStatus.RECORDING
             self.cards_mode_radio.set_visibility(show_radio)
             if show_radio:
-                cards_mode = getattr(self.state.cards_mode, 'value', 'auto')
-                if cards_mode == CardsMode.QUESTIONS.value:
-                    value = "Pytania"
-                elif cards_mode == CardsMode.DECISION.value:
-                    value = "Poradniczy"
-                else:
-                    value = "Poradniczy" if mode_key == "decision" else "Pytania"
+                value = "Poradniczy" if show_decision else "Pytania"
                 if self.cards_mode_radio.value != value:
                     self._cards_mode_sync = True
                     self.cards_mode_radio.value = value
                     self._cards_mode_sync = False
+
+        if self.cards_mode_hint_row:
+            show_hint = self.state.status == SessionStatus.RECORDING
+            self.cards_mode_hint_row.set_visibility(show_hint)
+            if show_hint and self.cards_mode_hint:
+                hint_text = CARDS_MODE_HINTS.get(effective_mode, "")
+                self.cards_mode_hint.text = f"Pula kart: {hint_text}" if hint_text else ""
+            if self.cards_mode_auto_badge:
+                self.cards_mode_auto_badge.set_visibility(show_hint and is_auto)
 
 
     # === UI CREATION ===
@@ -416,11 +441,13 @@ class PrompterPanel:
                 self.mode_badge = ui.badge(mode_label, color=mode_color).classes('text-[10px]')
 
                 # Przelacznik kart (Pytania / Poradniczy)
-                self.cards_mode_radio = ui.radio(
-                    ['Pytania', 'Poradniczy'],
-                    value='Poradniczy' if mode_key == 'decision' else 'Pytania'
-                ).props('inline dense').classes('text-[10px]').on('change', lambda: self._handle_cards_mode_change())
-                self.cards_mode_radio.set_visibility(False)
+                with ui.row().classes('items-center gap-1'):
+                    ui.label('Karty').classes('text-[10px] text-slate-500')
+                    self.cards_mode_radio = ui.radio(
+                        ['Pytania', 'Poradniczy'],
+                        value='Poradniczy' if mode_key == 'decision' else 'Pytania'
+                    ).props('inline dense').classes('text-[10px]').on('change', lambda: self._handle_cards_mode_change())
+                    self.cards_mode_radio.set_visibility(False)
 
                 # Checklist progress (only in decision mode with check items)
                 self.checklist_badge = ui.badge("Check 0/0", color='amber').classes('text-[10px]')
@@ -451,6 +478,15 @@ class PrompterPanel:
                     on_click=self._handle_finish_click
 
                 ).props('outline size=sm')
+
+        # Hint: opis trybu kart
+        self.cards_mode_hint_row = ui.row().classes(
+            'w-full items-center gap-2 mt-1 text-[10px] text-slate-500'
+        )
+        with self.cards_mode_hint_row:
+            self.cards_mode_hint = ui.label('')
+            self.cards_mode_auto_badge = ui.badge(CARDS_MODE_AUTO_BADGE, color='gray').classes('text-[9px]')
+        self.cards_mode_hint_row.set_visibility(False)
 
 
 

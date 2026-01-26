@@ -50,3 +50,10 @@ CARD_TAG_CHECK = "CHECKLISTA"
 CARD_HINT_QUESTION = "Kliknij, aby skopiowac"
 CARD_HINT_SCRIPT = "Kliknij, aby otworzyc skrypt"
 CARD_HINT_CHECK = "Kliknij, aby odhaczyc"
+
+# Cards mode (prompter pool)
+CARDS_MODE_HINTS = {
+    "questions": "Pytania do pacjenta",
+    "decision": "Poradniczy (skrypt/checklista)",
+}
+CARDS_MODE_AUTO_BADGE = "Auto"
