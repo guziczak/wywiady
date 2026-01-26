@@ -150,6 +150,9 @@ class LiveState:
         # Sugestie - TYLKO pula kart, oddzielona od aktywnego pytania
         self.suggestions: List[Suggestion] = []
         self.asked_questions: List[str] = []  # Historia użytych pytań
+        # Zachowuj użyte checklisty/skrypty między regeneracjami
+        self._completed_checks = set()
+        self._used_scripts = set()
 
         # === NOWA ARCHITEKTURA: Aktywne pytanie w osobnym kontekście ===
         self.active_question = ActiveQuestionContext()
@@ -334,6 +337,14 @@ class LiveState:
                 continue
             filtered.append(s)
 
+        # Przywróć stan użycia dla checklist/skryptów po regeneracji
+        for s in filtered:
+            key = self._normalize_key(s.question)
+            if s.kind == "check" and key in self._completed_checks:
+                s.used = True
+            elif s.kind == "script" and key in self._used_scripts:
+                s.used = True
+
         self.suggestions = filtered[:3]  # Max 3 sugestie
         self._words_since_last_regen = 0
 
@@ -364,10 +375,17 @@ class LiveState:
                     s.kind = kind
                 break
 
-        if kind == "question" and question:
+        if kind == "check" and question:
+            self._completed_checks.add(self._normalize_key(question))
+        elif kind == "script" and question:
+            self._used_scripts.add(self._normalize_key(question))
+        elif kind == "question" and question:
             if question not in self.asked_questions:
                 self.asked_questions.append(question)
         self._notify_suggestions_change()
+
+    def _normalize_key(self, text: str) -> str:
+        return " ".join((text or "").lower().split())
 
     def get_active_suggestions(self) -> List[Suggestion]:
         """Zwraca nieużyte sugestie."""
@@ -419,6 +437,8 @@ class LiveState:
         self._words_since_last_regen = 0
         self.suggestions = []
         self.asked_questions = []
+        self._completed_checks = set()
+        self._used_scripts = set()
 
         # Reset deprecated fields (dla kompatybilności)
         self.selected_question = None

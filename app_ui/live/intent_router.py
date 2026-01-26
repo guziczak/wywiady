@@ -47,7 +47,9 @@ class IntentRouter:
         self._pending_streak = 0
 
     async def classify(self, transcript: str, spec_ids: Optional[List[int]] = None, force: bool = False) -> IntentResult:
-        if not transcript or len(transcript.strip()) < 20:
+        if not transcript:
+            return self._last_result
+        if len(transcript.strip()) < 20 and not force:
             return self._last_result
 
         now = time.time()

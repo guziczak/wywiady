@@ -149,13 +149,14 @@ class AIController:
         # Oznacz jako uzyte
         self.state.mark_suggestion_used(suggestion)
 
-        # Opozniona regeneracja
-        delay = self.CARD_CLICK_REGEN_DELAY if kind == "question" else 2.5
-        self._schedule_regeneration(
-            TriggerReason.CARD_CLICKED,
-            immediate=False,
-            delay=delay
-        )
+        # Opozniona regeneracja tylko dla pytan (check/skrypt nie powinny resetowac checklisty)
+        if kind == "question":
+            delay = self.CARD_CLICK_REGEN_DELAY
+            self._schedule_regeneration(
+                TriggerReason.CARD_CLICKED,
+                immediate=False,
+                delay=delay
+            )
 
     def on_qa_pair_created(self, question: str, answer: str):
         """Reakcja na ręcznie wybraną parę Q+A (np. z kart odpowiedzi)."""

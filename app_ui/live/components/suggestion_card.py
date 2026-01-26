@@ -141,8 +141,8 @@ class SuggestionCard:
     def _create_content(self):
         with ui.row().classes('w-full items-center justify-between'):
             with ui.row().classes('items-center gap-2'):
-                if self.variant == "primary":
-                    ui.badge('Nastepne', color='blue').classes('prompter-badge prompter-badge--primary')
+                if self.variant == "primary" and self.card_kind == "question":
+                    ui.badge('Polecane', color='blue').classes('prompter-badge prompter-badge--primary')
 
                 tag = self.tag
                 if not tag:
