@@ -177,7 +177,7 @@ try:
     from app_ui.components.header import create_header
     from app_ui.components.settings import create_settings_section
     from app_ui.components.recording import create_recording_section
-    from app_ui.components.results import create_results_section, _render_diagnosis_grid, _render_procedure_grid
+    from app_ui.components.results import create_results_section, _render_diagnosis_grid, _render_procedure_grid, _schedule_size_to_fit
     from app_ui.live import LiveInterviewView
 except ImportError as e:
     print(f"[ERROR] Could not import UI components: {e}")
@@ -1786,8 +1786,7 @@ class WywiadApp:
                 # Wymus załadowanie danych przez API (fix dla "No Rows To Show")
                 self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
                 self.diagnosis_grid.run_grid_method('refreshHeader')
-                # Dopasuj szerokosci po przerysowaniu
-                ui.timer(0.05, lambda: self.diagnosis_grid.run_grid_method('sizeColumnsToFit'), once=True)
+                _schedule_size_to_fit(self.diagnosis_grid)
             if self.diagnosis_grid:
                 # Opoznij selectAll, aby grid zdazyl sie przerysowac
                 ui.timer(0.1, lambda: self.diagnosis_grid.run_grid_method('selectAll'), once=True)
@@ -1804,8 +1803,7 @@ class WywiadApp:
                 # Wymus zaladowanie danych przez API
                 self.procedure_grid.run_grid_method('setRowData', procedury)
                 self.procedure_grid.run_grid_method('refreshHeader')
-                # Dopasuj szerokosci po przerysowaniu
-                ui.timer(0.05, lambda: self.procedure_grid.run_grid_method('sizeColumnsToFit'), once=True)
+                _schedule_size_to_fit(self.procedure_grid)
             if self.procedure_grid:
                 # Opoznij selectAll
                 ui.timer(0.1, lambda: self.procedure_grid.run_grid_method('selectAll'), once=True)

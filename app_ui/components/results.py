@@ -71,10 +71,27 @@ def _force_grid_setup(grid, column_defs):
     try:
         grid.run_grid_method('setColumnDefs', column_defs)
         grid.run_grid_method('refreshHeader')
-        # Upewnij sie, ze kolumny dostana szerokosc po renderze
-        ui.timer(0.05, lambda: grid.run_grid_method('sizeColumnsToFit'), once=True)
+        _schedule_size_to_fit(grid)
     except Exception:
         pass
+
+
+def _schedule_size_to_fit(grid, attempts=6, delay=0.1):
+    async def _try(attempt):
+        try:
+            width = await grid.client.run_javascript(
+                f"return getElement({grid.id})?.clientWidth || 0",
+                timeout=2,
+            )
+            if width and width > 50:
+                grid.run_grid_method('sizeColumnsToFit')
+                return
+        except Exception:
+            pass
+        if attempt < attempts:
+            ui.timer(delay, lambda: asyncio.create_task(_try(attempt + 1)), once=True)
+
+    asyncio.create_task(_try(0))
 
 
 def _render_diagnosis_grid(app, column_defs, row_data):
