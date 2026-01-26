@@ -1724,14 +1724,6 @@ class WywiadApp:
                 {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
             ]
 
-            if self.diagnosis_grid:
-                self.diagnosis_grid.options['columnDefs'] = new_column_defs
-                self.diagnosis_grid.update()
-            
-            if self.procedure_grid:
-                self.procedure_grid.options['columnDefs'] = new_column_defs
-                self.procedure_grid.update()
-
             # Helper do czyszczenia i normalizacji danych
             def clean_data(rows):
                 cleaned = []
@@ -1781,20 +1773,20 @@ class WywiadApp:
             
             print(f"[UI] Loading {len(diagnozy)} diagnoses into grid (Spec: {spec_name})...", flush=True)
 
-            # Aktualizuj dane
+            # Aktualizuj dane i kolumny JEDNYM rzutem (unika race condition)
             if self.diagnosis_grid:
+                self.diagnosis_grid.options['columnDefs'] = new_column_defs
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
-                self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
-                # Domyślnie zaznacz wszystkie wiersze
-                self.diagnosis_grid.run_grid_method('selectAll')
+                # Opóźnij selectAll, aby grid zdążył się przerysować
+                ui.timer(0.1, lambda: self.diagnosis_grid.run_grid_method('selectAll'), once=True)
 
             if self.procedure_grid:
+                self.procedure_grid.options['columnDefs'] = new_column_defs
                 self.procedure_grid.options['rowData'] = procedury
                 self.procedure_grid.update()
-                self.procedure_grid.run_grid_method('setRowData', procedury)
-                # Domyślnie zaznacz wszystkie wiersze
-                self.procedure_grid.run_grid_method('selectAll')
+                # Opóźnij selectAll
+                ui.timer(0.1, lambda: self.procedure_grid.run_grid_method('selectAll'), once=True)
 
             # Status Update
             if self.record_status:
