@@ -120,15 +120,33 @@ export class CardEngine {
         const targetZ = Math.sin(angle) * radius + jitter;
         const targetY = Math.min(index * 0.35, 6); // subtle stack height
 
+        const targetRot = {
+            x: -Math.PI / 2,
+            y: (Math.random() - 0.5) * 0.08,
+            z: (Math.random() - 0.5) * 0.12,
+        };
+
+        object.userData.home = {
+            x: targetX,
+            y: targetY,
+            z: targetZ,
+            rx: targetRot.x,
+            ry: targetRot.y,
+            rz: targetRot.z,
+        };
+        object.userData.hovered = false;
+
         new TWEEN.Tween(object.position)
             .to({ x: targetX, y: targetY, z: targetZ }, 1000)
             .easing(TWEEN.Easing.Exponential.Out)
             .start();
 
         new TWEEN.Tween(object.rotation)
-            .to({ x: -Math.PI / 2, y: (Math.random() - 0.5) * 0.08, z: (Math.random() - 0.5) * 0.12 }, 1000) // Lay flat (-90deg on X)
+            .to(targetRot, 1000) // Lay flat (-90deg on X)
             .easing(TWEEN.Easing.Cubic.Out)
             .start();
+
+        this._attachCardInteractions(element, elementId);
     }
 
     moveToStack(elementId) {
@@ -174,12 +192,73 @@ export class CardEngine {
             .start();
     }
 
+    setCardVisible(elementId, visible = true) {
+        const object = this.cards.get(elementId);
+        if (!object) return;
+        object.visible = !!visible;
+        if (object.element) {
+            object.element.style.display = visible ? 'block' : 'none';
+            object.element.style.opacity = visible ? '1' : '0';
+        }
+    }
+
     setFocus(level = 0) {
         this.focusLevel = Math.max(0, Math.min(1, level));
     }
 
     setMotionEnabled(enabled = true) {
         this.prefersReducedMotion = !enabled;
+    }
+
+    _attachCardInteractions(element, elementId) {
+        element.addEventListener('pointerenter', () => {
+            this._liftCard(elementId);
+        }, { passive: true });
+
+        element.addEventListener('pointerleave', () => {
+            this._dropCard(elementId);
+        }, { passive: true });
+    }
+
+    _liftCard(elementId) {
+        const object = this.cards.get(elementId);
+        if (!object || object.userData.hovered) return;
+        const home = object.userData.home;
+        if (!home) return;
+        object.userData.hovered = true;
+
+        const liftPos = { x: home.x, y: home.y + 28, z: home.z - 22 };
+        const liftRot = { x: home.rx + 0.08, y: home.ry, z: home.rz };
+
+        object.userData.hoverTween?.stop?.();
+        const posTween = new TWEEN.Tween(object.position)
+            .to(liftPos, 220)
+            .easing(TWEEN.Easing.Cubic.Out);
+        const rotTween = new TWEEN.Tween(object.rotation)
+            .to(liftRot, 220)
+            .easing(TWEEN.Easing.Cubic.Out);
+        posTween.start();
+        rotTween.start();
+        object.userData.hoverTween = posTween;
+    }
+
+    _dropCard(elementId) {
+        const object = this.cards.get(elementId);
+        if (!object || !object.userData.hovered) return;
+        const home = object.userData.home;
+        if (!home) return;
+        object.userData.hovered = false;
+
+        object.userData.hoverTween?.stop?.();
+        const posTween = new TWEEN.Tween(object.position)
+            .to({ x: home.x, y: home.y, z: home.z }, 260)
+            .easing(TWEEN.Easing.Cubic.Out);
+        const rotTween = new TWEEN.Tween(object.rotation)
+            .to({ x: home.rx, y: home.ry, z: home.rz }, 260)
+            .easing(TWEEN.Easing.Cubic.Out);
+        posTween.start();
+        rotTween.start();
+        object.userData.hoverTween = posTween;
     }
 
     _attachMotionHandlers() {

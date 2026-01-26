@@ -357,6 +357,10 @@ def inject_desk_styles() -> None:
             box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
         }
 
+        .qa-card-visual:hover {
+            box-shadow: 0 22px 50px rgba(15, 23, 42, 0.25);
+        }
+
         .qa-card-visual::after {
             content: "";
             position: absolute;
@@ -383,11 +387,94 @@ def inject_desk_styles() -> None:
             color: rgba(15, 23, 42, 0.45) !important;
         }
 
+        .qa-card-section {
+            padding: 6px 8px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        .qa-card-question {
+            background: linear-gradient(140deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.03));
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+
+        .qa-card-answer {
+            margin-top: 4px;
+            background: linear-gradient(140deg, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0.03));
+            border-color: rgba(16, 185, 129, 0.2);
+        }
+
         .qa-card-tilt-1 { transform: rotate(-2deg); }
         .qa-card-tilt-2 { transform: rotate(1.5deg); }
         .qa-card-tilt-3 { transform: rotate(-1deg); }
         .qa-card-tilt-4 { transform: rotate(2deg); }
         .qa-card-tilt-5 { transform: rotate(-1.5deg); }
+
+        .qa-card-stamp {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            background: rgba(239, 68, 68, 0.08);
+            color: #991b1b;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            transform: rotate(-8deg);
+            box-shadow: 0 8px 18px rgba(239, 68, 68, 0.15);
+        }
+
+        .qa-stamp-in {
+            animation: stampIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        @keyframes stampIn {
+            0% { transform: translateY(-10px) rotate(-18deg) scale(0.6); opacity: 0; }
+            60% { transform: translateY(2px) rotate(-10deg) scale(1.05); opacity: 1; }
+            100% { transform: translateY(0) rotate(-8deg) scale(1); opacity: 1; }
+        }
+
+        .qa-filter-btn {
+            font-size: 11px !important;
+            border-radius: 999px !important;
+            padding: 0 10px !important;
+            color: rgba(15, 23, 42, 0.6) !important;
+        }
+
+        .qa-filter-btn.is-active {
+            background: rgba(249, 115, 22, 0.18) !important;
+            color: #9a3412 !important;
+        }
+
+        .qa-stack-overview {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 6px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .qa-stack-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.35);
+        }
+
+        .qa-stack-dot.is-filled {
+            background: rgba(34, 197, 94, 0.65);
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+        }
+
+        .qa-stack-dot.is-latest {
+            background: rgba(249, 115, 22, 0.8);
+            box-shadow: 0 0 14px rgba(249, 115, 22, 0.35);
+        }
         </style>
         '''
     )

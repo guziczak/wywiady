@@ -48,6 +48,11 @@ class QACollectionPanel:
         self._engine_check_timer = None
         self._engine_checks = 0
         self._use_fallback = False
+
+        # UI helpers
+        self.filter_mode: str = "all"
+        self.filter_buttons = {}
+        self.stack_overview: Optional[ui.element] = None
         
         # Śledzimy dodane ID, by nie dodawać duplikatów przy odświeżaniu
         self._added_card_ids = set()
@@ -96,6 +101,26 @@ class QACollectionPanel:
                         f'{current}/{target}',
                         color='green'
                     ).classes('qa-progress-badge text-xs px-2 py-1')
+
+                    # Filter chips
+                    with ui.row().classes('items-center gap-1'):
+                        self.filter_buttons['all'] = ui.button(
+                            'All',
+                            on_click=lambda: self._set_filter_mode('all')
+                        ).props('flat dense').classes('qa-filter-btn')
+                        self.filter_buttons['latest'] = ui.button(
+                            'Last 3',
+                            on_click=lambda: self._set_filter_mode('latest')
+                        ).props('flat dense').classes('qa-filter-btn')
+                        self.filter_buttons['empty'] = ui.button(
+                            'Brak A',
+                            on_click=lambda: self._set_filter_mode('empty')
+                        ).props('flat dense').classes('qa-filter-btn')
+
+                    # Stack overview mini-map
+                    self.stack_overview = ui.element('div').classes('qa-stack-overview')
+                    self._render_stack_overview()
+                    self._sync_filter_buttons()
 
             # 3D Stage Container
             # Use relative positioning and define height
@@ -151,6 +176,7 @@ class QACollectionPanel:
         for pair in self.state.qa_pairs:
             if pair.id not in self._added_card_ids:
                 await self._create_and_throw_card(pair)
+        self._apply_filter()
 
     def _poll_engine_ready(self):
         """Sprawdza gotowosc silnika 3D i uruchamia fallback."""
@@ -252,6 +278,8 @@ class QACollectionPanel:
         card.on('click', lambda: self._open_edit_modal(pair))
 
         with card:
+            with ui.element('div').classes('qa-card-stamp qa-stamp-in'):
+                ui.label('ZEBRANE')
             # Card content
             with ui.column().classes('gap-2 w-full'):
                 with ui.row().classes('w-full items-center justify-between'):
@@ -259,7 +287,7 @@ class QACollectionPanel:
                         ui.badge(f'#{order_index}').classes('qa-card-index')
                     ui.label(pair.id.upper()).classes('qa-card-id')
                 # Question section
-                with ui.element('div').classes('w-full border-b border-slate-100 pb-2'):
+                with ui.element('div').classes('w-full qa-card-section qa-card-question'):
                     with ui.row().classes('items-center gap-1 mb-1'):
                         ui.icon('help_outline', size='xs').classes('text-blue-500')
                         ui.label('Pytanie').classes('text-[10px] text-blue-600 uppercase tracking-wide font-medium')
@@ -268,7 +296,7 @@ class QACollectionPanel:
                     )
 
                 # Answer section
-                with ui.element('div').classes('w-full pt-1'):
+                with ui.element('div').classes('w-full qa-card-section qa-card-answer'):
                     with ui.row().classes('items-center gap-1 mb-1'):
                         ui.icon('chat_bubble_outline', size='xs').classes('text-emerald-500')
                         ui.label('Odpowiedź').classes('text-[10px] text-emerald-600 uppercase tracking-wide font-medium')
@@ -311,6 +339,7 @@ class QACollectionPanel:
                 self.progress_badge.text = f'{current}/{target}'
                 self.progress_badge.classes(add='pulse')
                 ui.timer(0.7, lambda: self.progress_badge.classes(remove='pulse'), once=True)
+            self._render_stack_overview()
             
             self._update_undo_visibility()
             
@@ -318,6 +347,7 @@ class QACollectionPanel:
             await self._create_and_throw_card(pair)
             self._pulse_desk()
             self._play_feedback()
+            self._apply_filter()
             
             ui.notify('Zebrano parę Q+A!', type='positive', position='top-right')
 
@@ -342,6 +372,67 @@ class QACollectionPanel:
                 )
         except Exception:
             pass
+
+    def _set_filter_mode(self, mode: str) -> None:
+        if mode == self.filter_mode:
+            return
+        self.filter_mode = mode
+        self._sync_filter_buttons()
+        self._apply_filter()
+
+    def _sync_filter_buttons(self) -> None:
+        for key, btn in self.filter_buttons.items():
+            if key == self.filter_mode:
+                btn.classes(add='is-active')
+            else:
+                btn.classes(remove='is-active')
+
+    def _apply_filter(self) -> None:
+        if not self._pair_element_map:
+            return
+        visible_ids = set()
+        if self.filter_mode == 'latest':
+            visible_ids = {p.id for p in self.state.qa_pairs[-3:]}
+        elif self.filter_mode == 'empty':
+            visible_ids = {p.id for p in self.state.qa_pairs if not (p.answer or '').strip()}
+        else:
+            visible_ids = {p.id for p in self.state.qa_pairs}
+
+        for pair_id, card_el in self._pair_element_map.items():
+            is_visible = pair_id in visible_ids
+            if self._use_fallback:
+                try:
+                    card_el.set_visibility(is_visible)
+                except Exception:
+                    pass
+            else:
+                if not self._client:
+                    continue
+                element_id = f"c{card_el.id}"
+                try:
+                    with self._client:
+                        ui.run_javascript(
+                            f"window.engine && window.engine.setCardVisible('{element_id}', {str(is_visible).lower()});"
+                        )
+                except Exception:
+                    pass
+
+    def _render_stack_overview(self) -> None:
+        if not self.stack_overview:
+            return
+        self.stack_overview.clear()
+        current, target = self.state.qa_progress
+        total = min(max(target, 10), 12)
+        effective_current = min(current, total)
+        with self.stack_overview:
+            for idx in range(total):
+                filled = idx < effective_current
+                classes = 'qa-stack-dot'
+                if filled:
+                    classes += ' is-filled'
+                if idx == effective_current - 1:
+                    classes += ' is-latest'
+                ui.element('div').classes(classes)
 
     def _truncate(self, text: str, max_len: int) -> str:
         if len(text) <= max_len:
@@ -393,6 +484,8 @@ class QACollectionPanel:
             # self.three_stage.discard(pair_id) - wymagałoby mapowania ID elementu na ID pary
             ui.notify('Usunięto parę Q+A', type='info')
             self._remove_visual_card(pair_id)
+            self._render_stack_overview()
+            self._apply_filter()
 
     def _undo_last(self):
         removed = self.state.qa_collector.undo_last()
@@ -400,6 +493,8 @@ class QACollectionPanel:
             ui.notify(f'Cofnięto parę: {self._truncate(removed.question, 30)}', type='info')
             self._remove_visual_card(removed.id)
             self._update_undo_visibility()
+            self._render_stack_overview()
+            self._apply_filter()
 
     def _remove_visual_card(self, pair_id: str):
         """Usuwa kartę z widoku (i ze zbioru dodanych)."""

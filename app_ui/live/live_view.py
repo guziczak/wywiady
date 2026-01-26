@@ -150,6 +150,8 @@ class LiveInterviewView:
         self._toggle_transcript_btn = None
         self._toggle_prompter_btn = None
         self._toggle_pipeline_btn = None
+        self._transcript_size_btn = None
+        self._prompter_size_btn = None
         self._toggle_fx_btn = None
         self._focus_btn = None
         self._transcript_visible = False
@@ -210,16 +212,26 @@ class LiveInterviewView:
                 self.active_question_panel.create()
 
             # === TRANSCRIPT (TAPE) ===
-            self._transcript_overlay = ui.element('div').classes('live-overlay live-overlay--transcript')
+            self._transcript_overlay = ui.element('div').classes('live-overlay live-overlay--transcript flex flex-col gap-2')
             with self._transcript_overlay:
+                with ui.element('div').classes('overlay-header'):
+                    ui.label('Transkrypt').classes('overlay-title')
+                    with ui.row().classes('items-center gap-1'):
+                        self._transcript_size_btn = ui.button(icon='open_in_full', on_click=self._toggle_transcript_size).props('flat dense').classes('overlay-btn')
+                        ui.button(icon='close', on_click=lambda: self._set_transcript_visible(False)).props('flat dense').classes('overlay-btn')
                 self.transcript_panel = TranscriptPanel(self.state)
                 self.transcript_panel.create()
                 if self.transcript_panel.container:
-                    self.transcript_panel.container.classes(add='live-panel live-transcript-panel')
+                    self.transcript_panel.container.classes(add='live-panel live-transcript-panel flex-1')
 
             # === PROMPTER (DRAWER) ===
-            self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer')
+            self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer flex flex-col gap-2')
             with self._prompter_overlay:
+                with ui.element('div').classes('overlay-header'):
+                    ui.label('Sufler').classes('overlay-title')
+                    with ui.row().classes('items-center gap-1'):
+                        self._prompter_size_btn = ui.button(icon='close_fullscreen', on_click=self._toggle_prompter_size).props('flat dense').classes('overlay-btn')
+                        ui.button(icon='close', on_click=lambda: self._set_prompter_visible(False)).props('flat dense').classes('overlay-btn')
                 self.prompter_panel = PrompterPanel(
                     state=self.state,
                     app_instance=self.app,
@@ -230,11 +242,15 @@ class LiveInterviewView:
                 )
                 self.prompter_panel.create()
                 if self.prompter_panel.container:
-                    self.prompter_panel.container.classes(add='live-panel live-prompter-panel')
+                    self.prompter_panel.container.classes(add='live-panel live-prompter-panel flex-1')
 
             # === PIPELINE (FLOATING CHIP) ===
             self._pipeline_overlay = ui.element('div').classes('live-overlay live-overlay--pipeline')
             with self._pipeline_overlay:
+                with ui.element('div').classes('overlay-header'):
+                    ui.label('Pipeline').classes('overlay-title')
+                    with ui.row().classes('items-center gap-1'):
+                        ui.button(icon='close', on_click=lambda: self._set_pipeline_visible(False)).props('flat dense').classes('overlay-btn')
                 self._create_model_info_bar()
                 if self.pipeline_panel and self.pipeline_panel.container:
                     self.pipeline_panel.container.classes(add='live-panel live-pipeline-panel')
@@ -278,10 +294,15 @@ class LiveInterviewView:
             self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
             self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
             self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
+            self._set_overlay_size(self._transcript_overlay, self._transcript_size)
+            self._set_overlay_size(self._prompter_overlay, self._prompter_size)
             self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
             self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
             self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
             self._sync_toggle_button(self._toggle_fx_btn, self._fx_enabled)
+            self._sync_fx_button()
+            self._sync_size_button(self._transcript_size_btn, self._transcript_size)
+            self._sync_size_button(self._prompter_size_btn, self._prompter_size)
 
         # Dock status refresh
         ui.timer(0.6, self._update_desk_ui)
@@ -295,6 +316,49 @@ class LiveInterviewView:
 
         # Capture client context for background updates
         self._client = ui.context.client
+
+    def _set_overlay_size(self, overlay, size: str) -> None:
+        if not overlay:
+            return
+        overlay.classes(remove='is-peek is-full')
+        if size == 'full':
+            overlay.classes(add='is-full')
+        else:
+            overlay.classes(add='is-peek')
+
+    def _sync_size_button(self, button, size: str) -> None:
+        if not button:
+            return
+        icon = 'open_in_full' if size != 'full' else 'close_fullscreen'
+        try:
+            button.props(f'icon={icon}')
+        except Exception:
+            pass
+
+    def _set_transcript_visible(self, visible: bool) -> None:
+        self._transcript_visible = visible
+        self._set_overlay_open(self._transcript_overlay, visible)
+        self._sync_toggle_button(self._toggle_transcript_btn, visible)
+
+    def _set_prompter_visible(self, visible: bool) -> None:
+        self._prompter_visible = visible
+        self._set_overlay_open(self._prompter_overlay, visible)
+        self._sync_toggle_button(self._toggle_prompter_btn, visible)
+
+    def _set_pipeline_visible(self, visible: bool) -> None:
+        self._pipeline_visible = visible
+        self._set_overlay_open(self._pipeline_overlay, visible)
+        self._sync_toggle_button(self._toggle_pipeline_btn, visible)
+
+    def _toggle_transcript_size(self):
+        self._transcript_size = 'full' if self._transcript_size != 'full' else 'peek'
+        self._set_overlay_size(self._transcript_overlay, self._transcript_size)
+        self._sync_size_button(self._transcript_size_btn, self._transcript_size)
+
+    def _toggle_prompter_size(self):
+        self._prompter_size = 'full' if self._prompter_size != 'full' else 'peek'
+        self._set_overlay_size(self._prompter_overlay, self._prompter_size)
+        self._sync_size_button(self._prompter_size_btn, self._prompter_size)
 
     def _set_overlay_open(self, overlay, is_open: bool) -> None:
         if not overlay:
@@ -331,35 +395,26 @@ class LiveInterviewView:
             self._transcript_visible = self._focus_restore.get('transcript', False)
             self._prompter_visible = self._focus_restore.get('prompter', True)
             self._pipeline_visible = self._focus_restore.get('pipeline', False)
-            self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
-            self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
-            self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
-            self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
-            self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
-            self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
+            self._set_transcript_visible(self._transcript_visible)
+            self._set_prompter_visible(self._prompter_visible)
+            self._set_pipeline_visible(self._pipeline_visible)
         self._sync_toggle_button(self._focus_btn, False)
         self._set_engine_focus(False)
 
     def _toggle_transcript(self):
         if self._focus_mode:
             self._exit_focus_mode(restore=False)
-        self._transcript_visible = not self._transcript_visible
-        self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
-        self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
+        self._set_transcript_visible(not self._transcript_visible)
 
     def _toggle_prompter(self):
         if self._focus_mode:
             self._exit_focus_mode(restore=False)
-        self._prompter_visible = not self._prompter_visible
-        self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
-        self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
+        self._set_prompter_visible(not self._prompter_visible)
 
     def _toggle_pipeline(self):
         if self._focus_mode:
             self._exit_focus_mode(restore=False)
-        self._pipeline_visible = not self._pipeline_visible
-        self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
-        self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
+        self._set_pipeline_visible(not self._pipeline_visible)
 
     def _toggle_focus_mode(self):
         self._focus_mode = not self._focus_mode
@@ -369,23 +424,27 @@ class LiveInterviewView:
                 'prompter': self._prompter_visible,
                 'pipeline': self._pipeline_visible,
             }
-            self._transcript_visible = False
-            self._prompter_visible = False
-            self._pipeline_visible = False
-            self._set_overlay_open(self._transcript_overlay, False)
-            self._set_overlay_open(self._prompter_overlay, False)
-            self._set_overlay_open(self._pipeline_overlay, False)
-            self._sync_toggle_button(self._toggle_transcript_btn, False)
-            self._sync_toggle_button(self._toggle_prompter_btn, False)
-            self._sync_toggle_button(self._toggle_pipeline_btn, False)
+            self._set_transcript_visible(False)
+            self._set_prompter_visible(False)
+            self._set_pipeline_visible(False)
             self._sync_toggle_button(self._focus_btn, True)
             self._set_engine_focus(True)
         else:
             self._exit_focus_mode(restore=True)
 
+    def _sync_fx_button(self):
+        if not self._toggle_fx_btn:
+            return
+        icon = 'volume_up' if self._fx_enabled else 'volume_off'
+        try:
+            self._toggle_fx_btn.props(f'icon={icon}')
+        except Exception:
+            pass
+
     def _toggle_fx(self):
         self._fx_enabled = not self._fx_enabled
         self._sync_toggle_button(self._toggle_fx_btn, self._fx_enabled)
+        self._sync_fx_button()
         if not self._client:
             return
         try:
