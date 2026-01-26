@@ -7,6 +7,19 @@ export class CardEngine {
         this.container = document.getElementById(containerId);
         this.cards = new Map(); // id -> CSS3DObject
         this.isInitialized = false;
+
+        this.prefersReducedMotion = window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        this.focusLevel = 0; // 0 = normal, 1 = focus (reduced motion)
+        this._lastTime = performance.now();
+        this.baseCamera = { x: 0, y: 800, z: 1200 };
+        this.parallax = { x: 0, z: 0 };
+        this.parallaxTarget = { x: 0, z: 0 };
+        this.breathing = {
+            phase: Math.random() * Math.PI * 2,
+            amp: 10,
+            speed: 0.0006,
+        };
         
         this.init();
         this.animate();
@@ -18,7 +31,7 @@ export class CardEngine {
 
         // 1. Camera (Perspective) - Looking down at a desk
         this.camera = new THREE.PerspectiveCamera(40, width / height, 1, 5000);
-        this.camera.position.set(0, 800, 1200); // High up, pulled back
+        this.camera.position.set(this.baseCamera.x, this.baseCamera.y, this.baseCamera.z); // High up, pulled back
         this.camera.lookAt(0, 0, 0);
 
         // 2. Scene
@@ -37,7 +50,10 @@ export class CardEngine {
         this.container.innerHTML = '';
         this.container.appendChild(this.renderer.domElement);
 
-        // 4. Resize Handler
+        // 4. Motion input
+        this._attachMotionHandlers();
+
+        // 5. Resize Handler
         window.addEventListener('resize', () => this.onWindowResize());
         
         this.isInitialized = true;
@@ -57,6 +73,7 @@ export class CardEngine {
     animate() {
         requestAnimationFrame(() => this.animate());
         TWEEN.update();
+        this._updateCameraMotion(performance.now());
         this.renderer.render(this.scene, this.camera);
     }
 
@@ -94,10 +111,14 @@ export class CardEngine {
 
         // Animate to Center (The "Deal")
         // Target: Center of desk (0, 0, 0)
-        // Add slight random offset to prevent perfect overlap Z-fighting visual
-        const targetX = (Math.random() - 0.5) * 50;
-        const targetZ = (Math.random() - 0.5) * 50;
-        const targetY = 0; // Desk level
+        // Use a gentle spiral stack for more natural piling
+        const index = this.cards.size;
+        const angle = index * 0.55;
+        const radius = 20 + Math.min(index, 16) * 2.2;
+        const jitter = (Math.random() - 0.5) * 10;
+        const targetX = Math.cos(angle) * radius + jitter;
+        const targetZ = Math.sin(angle) * radius + jitter;
+        const targetY = Math.min(index * 0.35, 6); // subtle stack height
 
         new TWEEN.Tween(object.position)
             .to({ x: targetX, y: targetY, z: targetZ }, 1000)
@@ -105,7 +126,7 @@ export class CardEngine {
             .start();
 
         new TWEEN.Tween(object.rotation)
-            .to({ x: -Math.PI / 2, y: 0, z: (Math.random() - 0.5) * 0.1 }, 1000) // Lay flat (-90deg on X)
+            .to({ x: -Math.PI / 2, y: (Math.random() - 0.5) * 0.08, z: (Math.random() - 0.5) * 0.12 }, 1000) // Lay flat (-90deg on X)
             .easing(TWEEN.Easing.Cubic.Out)
             .start();
     }
@@ -151,6 +172,63 @@ export class CardEngine {
                 // but for now visual removal is enough.
             })
             .start();
+    }
+
+    setFocus(level = 0) {
+        this.focusLevel = Math.max(0, Math.min(1, level));
+    }
+
+    setMotionEnabled(enabled = true) {
+        this.prefersReducedMotion = !enabled;
+    }
+
+    _attachMotionHandlers() {
+        if (!this.container) return;
+
+        const updateTarget = (clientX, clientY) => {
+            if (this.prefersReducedMotion) return;
+            const rect = this.container.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const x = (clientX - rect.left) / rect.width;
+            const y = (clientY - rect.top) / rect.height;
+            this.parallaxTarget.x = (x - 0.5) * 2;
+            this.parallaxTarget.z = (y - 0.5) * 2;
+        };
+
+        this.container.addEventListener('pointermove', (event) => {
+            updateTarget(event.clientX, event.clientY);
+        }, { passive: true });
+
+        this.container.addEventListener('pointerleave', () => {
+            this.parallaxTarget.x = 0;
+            this.parallaxTarget.z = 0;
+        }, { passive: true });
+
+        this.container.addEventListener('touchmove', (event) => {
+            if (!event.touches || !event.touches[0]) return;
+            updateTarget(event.touches[0].clientX, event.touches[0].clientY);
+        }, { passive: true });
+    }
+
+    _updateCameraMotion(now) {
+        if (this.prefersReducedMotion) return;
+
+        const focusFactor = 1 - (this.focusLevel * 0.65);
+        const targetX = this.parallaxTarget.x * 40 * focusFactor;
+        const targetZ = this.parallaxTarget.z * 30 * focusFactor;
+
+        this.parallax.x += (targetX - this.parallax.x) * 0.05;
+        this.parallax.z += (targetZ - this.parallax.z) * 0.05;
+
+        const breath = Math.sin(now * this.breathing.speed + this.breathing.phase)
+            * this.breathing.amp * (0.4 + (1 - this.focusLevel) * 0.6);
+
+        this.camera.position.set(
+            this.baseCamera.x + this.parallax.x,
+            this.baseCamera.y + breath,
+            this.baseCamera.z + this.parallax.z
+        );
+        this.camera.lookAt(0, 0, 0);
     }
 }
 

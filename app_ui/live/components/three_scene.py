@@ -1,12 +1,14 @@
 from nicegui import ui, app
 from typing import Optional, Dict
 import asyncio
+import json
 
 class ThreeStage(ui.element):
     def __init__(self):
         super().__init__('div')
         self.classes('w-full h-full relative overflow-hidden')
         self._initialized = False
+        self._init_ok: Optional[bool] = None
         print("[ThreeStage] __init__ called")
 
         # 1. Setup Import Map for Three.js (Module resolution)
@@ -74,11 +76,24 @@ class ThreeStage(ui.element):
         try:
             result = await ui.run_javascript(js_init, timeout=15.0)
             print(f"[ThreeStage] Init diagnostic: {result}")
+            try:
+                if isinstance(result, dict):
+                    diag = result
+                else:
+                    diag = json.loads(result) if result else {}
+                self._init_ok = bool(diag.get("engineCreated"))
+            except Exception:
+                self._init_ok = False
         except Exception as e:
             print(f"[ThreeStage] Init error: {e}")
+            self._init_ok = False
 
         self._initialized = True
         print("[ThreeStage] Initialization complete, _initialized=True")
+
+    def is_ready(self) -> bool:
+        """Returns True when JS engine initialized correctly."""
+        return bool(self._init_ok)
 
     async def run_method_js(self, code: str):
         """Helper to run JS safely."""
@@ -102,6 +117,17 @@ class ThreeStage(ui.element):
             if wait_count > 50:  # 5 seconds max
                 print("[ThreeStage] ERROR: Timeout waiting for initialization!")
                 return
+
+        # Allow a short grace period for init result
+        if self._init_ok is None:
+            for _ in range(10):
+                await asyncio.sleep(0.1)
+                if self._init_ok is not None:
+                    break
+
+        if not self._init_ok:
+            print("[ThreeStage] Engine not ready; skipping add_card")
+            return
 
         element_id = f"c{card_element.id}"
         print(f"[ThreeStage] Executing JS: window.engine.addCard('{element_id}')")

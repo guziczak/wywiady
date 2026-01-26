@@ -26,8 +26,9 @@ class QACollectionPanel:
     Panel kolekcji par Q+A (Wersja 3D).
     """
 
-    def __init__(self, state: 'LiveState'):
+    def __init__(self, state: 'LiveState', immersive: bool = False):
         self.state = state
+        self.immersive = immersive
         self.container: Optional[ui.element] = None
         self.three_stage: Optional[ThreeStage] = None
         
@@ -39,6 +40,14 @@ class QACollectionPanel:
         self.undo_btn: Optional[ui.button] = None
         self._client = None
         self._edit_dialog: Optional[ui.dialog] = None
+
+        # Fallback / diagnostics
+        self.fallback_container: Optional[ui.element] = None
+        self._engine_status: Optional[ui.element] = None
+        self._engine_status_label: Optional[ui.label] = None
+        self._engine_check_timer = None
+        self._engine_checks = 0
+        self._use_fallback = False
         
         # Śledzimy dodane ID, by nie dodawać duplikatów przy odświeżaniu
         self._added_card_ids = set()
@@ -50,19 +59,30 @@ class QACollectionPanel:
         self.container = ui.element('div').classes(
             'w-full qa-collection-container flex flex-col gap-2'
         )
+        if self.immersive:
+            self.container.classes(add='qa-collection-container--immersive')
 
         with self.container:
             # Header row
-            with ui.row().classes('w-full justify-between items-center px-1'):
+            header_classes = 'w-full justify-between items-center px-1'
+            if self.immersive:
+                header_classes += ' qa-desk-hud'
+            with ui.row().classes(header_classes):
                 # Title
-                with ui.row().classes('items-center gap-2'):
+                title_row_classes = 'items-center gap-2'
+                if self.immersive:
+                    title_row_classes += ' qa-hud-card'
+                with ui.row().classes(title_row_classes):
                     ui.icon('collections_bookmark', size='sm').classes('text-emerald-600')
                     ui.label('Zebrane Q+A (3D Desk)').classes(
                         'text-sm font-semibold text-slate-700'
                     )
 
                 # Controls
-                with ui.row().classes('items-center gap-2'):
+                controls_row_classes = 'items-center gap-2'
+                if self.immersive:
+                    controls_row_classes += ' qa-hud-card'
+                with ui.row().classes(controls_row_classes):
                     self.undo_btn = ui.button(
                         icon='undo',
                         on_click=self._undo_last
@@ -79,16 +99,30 @@ class QACollectionPanel:
 
             # 3D Stage Container
             # Use relative positioning and define height
-            with ui.element('div').classes(
-                'qa-stage-wrapper w-full h-[400px] relative rounded-xl overflow-hidden bg-slate-50 border border-slate-200 shadow-inner'
-            ):
-                # Background decoration (gradient floor)
-                ui.element('div').classes(
-                    'absolute inset-0 bg-gradient-to-b from-slate-100 to-slate-200 opacity-50 pointer-events-none'
-                )
-                
+            stage_classes = 'qa-stage-wrapper w-full relative rounded-xl overflow-hidden'
+            if self.immersive:
+                stage_classes += ' qa-stage-wrapper--immersive flex-1 min-h-[420px]'
+            else:
+                stage_classes += ' h-[400px] bg-slate-50 border border-slate-200 shadow-inner'
+
+            with ui.element('div').classes(stage_classes):
+                # Background decoration (gradient floor) for non-immersive
+                if not self.immersive:
+                    ui.element('div').classes(
+                        'absolute inset-0 bg-gradient-to-b from-slate-100 to-slate-200 opacity-50 pointer-events-none'
+                    )
+
+                # 3D engine status overlay
+                self._engine_status = ui.element('div').classes('qa-engine-status')
+                with self._engine_status:
+                    self._engine_status_label = ui.label('Laduje desk 3D...')
+
                 # The Three.js Scene
                 self.three_stage = ThreeStage()
+
+                # Fallback stack (2D)
+                self.fallback_container = ui.element('div').classes('qa-fallback-stack')
+                self.fallback_container.set_visibility(False)
 
             # Staging Area (Hidden from view, but in DOM)
             # Use visibility:hidden instead of opacity:0 - opacity affects children!
@@ -101,8 +135,11 @@ class QACollectionPanel:
         # Subscribe to events
         self.state.qa_collector.on_pair_added(self._on_qa_pair_created)
         
+        # Poll engine readiness and fallback if needed
+        self._engine_check_timer = ui.timer(0.8, self._poll_engine_ready)
+        
         # Initial population (delayed slightly to ensure Three.js init)
-        ui.timer(0.5, self._populate_existing_cards, once=True)
+        ui.timer(1.2, self._populate_existing_cards, once=True)
 
         return self.container
 
@@ -115,21 +152,76 @@ class QACollectionPanel:
             if pair.id not in self._added_card_ids:
                 await self._create_and_throw_card(pair)
 
+    def _poll_engine_ready(self):
+        """Sprawdza gotowosc silnika 3D i uruchamia fallback."""
+        if not self.three_stage:
+            return
+
+        self._engine_checks += 1
+        if self.three_stage.is_ready():
+            if self._engine_status:
+                self._engine_status.set_visibility(False)
+            if self._engine_check_timer:
+                self._engine_check_timer.cancel()
+            return
+
+        # After a few checks, switch to fallback
+        if self._engine_checks >= 5:
+            if self._engine_check_timer:
+                self._engine_check_timer.cancel()
+            if self._engine_status_label:
+                self._engine_status_label.text = '3D offline - fallback 2D'
+            self._activate_fallback()
+
+    def _activate_fallback(self):
+        """Aktywuje fallback 2D, gdy 3D nie wystartowalo."""
+        if self._use_fallback:
+            return
+
+        self._use_fallback = True
+        if self.fallback_container:
+            self.fallback_container.set_visibility(True)
+
+        # Reset maps so we can repopulate in fallback
+        self._added_card_ids.clear()
+        self._pair_element_map.clear()
+
+        # Repopulate existing cards in fallback mode
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._populate_existing_cards())
+        except RuntimeError:
+            asyncio.run_coroutine_threadsafe(
+                self._populate_existing_cards(),
+                asyncio.get_event_loop()
+            )
+
+    def _get_pair_index(self, pair_id: str) -> int:
+        for idx, pair in enumerate(self.state.qa_pairs):
+            if pair.id == pair_id:
+                return idx + 1
+        return len(self.state.qa_pairs)
+
     async def _create_and_throw_card(self, pair: 'QAPair'):
         """Tworzy element karty i wrzuca go do sceny 3D."""
         print(f"[3D-CARD] _create_and_throw_card called for pair: {pair.id}")
-        if not self.staging_container:
-            print("[3D-CARD] ERROR: No staging_container!")
+        target_container = self.fallback_container if self._use_fallback else self.staging_container
+        if not target_container:
+            print("[3D-CARD] ERROR: No target container!")
             return
 
         self._added_card_ids.add(pair.id)
 
         # Create the card element in the staging area
-        with self.staging_container:
-            card_el = self._build_card_element(pair)
+        variant = 'fallback' if self._use_fallback else '3d'
+        with target_container:
+            card_el = self._build_card_element(pair, variant=variant, order_index=self._get_pair_index(pair.id))
 
         print(f"[3D-CARD] Card element created: id=c{card_el.id}")
         self._pair_element_map[pair.id] = card_el
+
+        if self._use_fallback:
+            return
 
         # Tell Three.js to take it
         # We need to wait a tick for NiceGUI/Vue to mount it
@@ -141,14 +233,16 @@ class QACollectionPanel:
         else:
             print("[3D-CARD] ERROR: No three_stage!")
 
-    def _build_card_element(self, pair: 'QAPair') -> ui.card:
+    def _build_card_element(self, pair: 'QAPair', variant: str = '3d', order_index: int = 0) -> ui.card:
         """Tworzy wizualną reprezentację karty (NiceGUI Element)."""
         # Styl karty identyczny jak wcześniej, ale bez klas animacji CSS (bo Three.js to robi)
         # Dodajemy opacity-100 aby upewnić się, że jest widoczna po wyjęciu z ukrytego kontenera
+        extra_class = 'qa-fallback-card' if variant == 'fallback' else ''
+        tilt_class = f'qa-card-tilt-{(order_index % 5) + 1}' if order_index else ''
         card = ui.card().classes(
-            'w-[220px] p-3 bg-white border border-slate-200 '
+            'w-[220px] p-3 qa-card-visual '
             'rounded-xl shadow-lg cursor-pointer select-none '
-            'hover:shadow-xl hover:border-blue-300 transition-colors opacity-100'
+            f'hover:shadow-xl transition-colors opacity-100 {extra_class} {tilt_class}'
         )
         # Ensure DOM ID matches what ThreeStage expects
         card.props(f'id=c{card.id}')
@@ -160,6 +254,10 @@ class QACollectionPanel:
         with card:
             # Card content
             with ui.column().classes('gap-2 w-full'):
+                with ui.row().classes('w-full items-center justify-between'):
+                    if order_index:
+                        ui.badge(f'#{order_index}').classes('qa-card-index')
+                    ui.label(pair.id.upper()).classes('qa-card-id')
                 # Question section
                 with ui.element('div').classes('w-full border-b border-slate-100 pb-2'):
                     with ui.row().classes('items-center gap-1 mb-1'):
@@ -218,8 +316,32 @@ class QACollectionPanel:
             
             # Add to 3D scene
             await self._create_and_throw_card(pair)
+            self._pulse_desk()
+            self._play_feedback()
             
             ui.notify('Zebrano parę Q+A!', type='positive', position='top-right')
+
+    def _pulse_desk(self):
+        """Subtelny pulse biurka po dodaniu pary."""
+        if not self.container:
+            return
+        try:
+            self.container.classes(add='desk-pulse')
+            ui.timer(0.6, lambda: self.container.classes(remove='desk-pulse'), once=True)
+        except Exception:
+            pass
+
+    def _play_feedback(self):
+        """Audio + haptic feedback (opcjonalne)."""
+        if not self._client:
+            return
+        try:
+            with self._client:
+                ui.run_javascript(
+                    "window.liveFeedback && (window.liveFeedback.play('qa'), window.liveFeedback.vibrate([18]));"
+                )
+        except Exception:
+            pass
 
     def _truncate(self, text: str, max_len: int) -> str:
         if len(text) <= max_len:
@@ -283,7 +405,12 @@ class QACollectionPanel:
         """Usuwa kartę z widoku (i ze zbioru dodanych)."""
         if pair_id in self._pair_element_map:
             card_el = self._pair_element_map[pair_id]
-            if self.three_stage:
+            if self._use_fallback:
+                try:
+                    card_el.set_visibility(False)
+                except Exception:
+                    pass
+            elif self.three_stage:
                 # Async call from sync method needs handling if not already in loop
                 # But typically this is called from callback.
                 # Use background task for safety

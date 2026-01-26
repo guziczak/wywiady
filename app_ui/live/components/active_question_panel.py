@@ -61,12 +61,14 @@ class ActiveQuestionPanel:
         context: 'ActiveQuestionContext',
         on_answer_click: Optional[Callable[[str], None]] = None,
         on_manual_answer: Optional[Callable[[str, str], None]] = None,  # (question, answer)
-        on_close: Optional[Callable[[], None]] = None
+        on_close: Optional[Callable[[], None]] = None,
+        card_classes: str = ""
     ):
         self.context = context
         self.on_answer_click = on_answer_click
         self.on_manual_answer = on_manual_answer
         self.on_close = on_close
+        self.card_classes = card_classes
 
         # UI refs
         self.container: Optional[ui.element] = None
@@ -117,7 +119,7 @@ class ActiveQuestionPanel:
         with self.container:
             with ui.card().classes(
                 f'w-full {bg} border-2 {border} rounded-xl p-4 '
-                'transition-all duration-300 ease-out'
+                f'transition-all duration-300 ease-out {self.card_classes}'
             ):
                 # Header
                 self._render_header(state_name, text)
@@ -135,8 +137,8 @@ class ActiveQuestionPanel:
     def _render_placeholder(self):
         """Placeholder gdy brak aktywnego pytania."""
         with ui.card().classes(
-            'w-full bg-slate-50 border-2 border-dashed border-slate-200 '
-            'rounded-xl p-4'
+            f'w-full bg-slate-50 border-2 border-dashed border-slate-200 '
+            f'rounded-xl p-4 {self.card_classes}'
         ):
             with ui.row().classes('w-full items-center justify-center gap-3 py-2'):
                 ui.icon('touch_app', size='sm').classes('text-slate-400')

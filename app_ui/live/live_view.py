@@ -15,6 +15,8 @@ from app_ui.live.components.prompter_panel import PrompterPanel
 from app_ui.live.components.pipeline_panel import PipelinePanel
 from app_ui.live.components.qa_collection_panel import QACollectionPanel
 from app_ui.live.components.active_question_panel import ActiveQuestionPanel
+from app_ui.live.components.desk_styles import inject_desk_styles
+from app_ui.live.components.feedback import inject_feedback_script
 
 # Streaming transcriber (opcjonalny)
 try:
@@ -135,6 +137,30 @@ class LiveInterviewView:
         self.qa_panel: Optional[QACollectionPanel] = None
         self.active_question_panel: Optional[ActiveQuestionPanel] = None
 
+        # Desk-first layout refs
+        self._desk_shell = None
+        self._active_overlay = None
+        self._transcript_overlay = None
+        self._prompter_overlay = None
+        self._pipeline_overlay = None
+        self._dock = None
+        self._record_btn = None
+        self._status_badge = None
+        self._progress_badge = None
+        self._toggle_transcript_btn = None
+        self._toggle_prompter_btn = None
+        self._toggle_pipeline_btn = None
+        self._toggle_fx_btn = None
+        self._focus_btn = None
+        self._transcript_visible = False
+        self._prompter_visible = True
+        self._pipeline_visible = False
+        self._fx_enabled = True
+        self._focus_mode = False
+        self._focus_restore = {}
+        self._transcript_size = 'peek'
+        self._prompter_size = 'full'
+
         # Diarization service
         self.diarization_service: Optional[DiarizationService] = None
         if DIARIZATION_AVAILABLE:
@@ -161,38 +187,39 @@ class LiveInterviewView:
         # Header (z głównej aplikacji)
         create_header(self.app, show_spec_switcher=True, show_status=False)
         
-        # Model Info Bar (new)
-        self._create_model_info_bar()
+        # Desk-first immersive layout
+        inject_desk_styles()
+        inject_feedback_script()
+        with ui.element('div').classes('live-mode live-desk-shell') as self._desk_shell:
+            # === DESK (MAIN STAGE) ===
+            self.qa_panel = QACollectionPanel(self.state, immersive=True)
+            self.qa_panel.create()
+            if self.qa_panel.container:
+                self.qa_panel.container.classes(add='h-full')
 
-        # Main layout
-        with ui.column().classes(
-            'w-full h-[calc(100vh-100px)] '  # Adjusted for model bar
-            'p-2 sm:p-4 '
-            'gap-2 sm:gap-4 '
-            'max-w-6xl mx-auto'
-        ):
-            # === GÓRA: TRANSKRYPCJA ===
-            with ui.element('div').classes('w-full flex-1 min-h-[200px] overflow-hidden'):
-                self.transcript_panel = TranscriptPanel(self.state)
-                self.transcript_panel.create()
-
-            # === ŚRODEK: AKTYWNE PYTANIE (ODDZIELONY OD SUGESTII!) ===
-            with ui.element('div').classes('w-full shrink-0'):
+            # === ACTIVE QUESTION (SPOTLIGHT) ===
+            self._active_overlay = ui.element('div').classes('live-overlay live-overlay--spotlight is-open')
+            with self._active_overlay:
                 self.active_question_panel = ActiveQuestionPanel(
                     context=self.state.active_question,
                     on_answer_click=self._on_answer_copied,
                     on_manual_answer=self._on_manual_answer_selected,
-                    on_close=self._on_active_question_closed
+                    on_close=self._on_active_question_closed,
+                    card_classes='live-active-card'
                 )
                 self.active_question_panel.create()
 
-            # === ŚRODEK: KOLEKCJA Q+A (GAMIFIKACJA) ===
-            with ui.element('div').classes('w-full shrink-0'):
-                self.qa_panel = QACollectionPanel(self.state)
-                self.qa_panel.create()
+            # === TRANSCRIPT (TAPE) ===
+            self._transcript_overlay = ui.element('div').classes('live-overlay live-overlay--transcript')
+            with self._transcript_overlay:
+                self.transcript_panel = TranscriptPanel(self.state)
+                self.transcript_panel.create()
+                if self.transcript_panel.container:
+                    self.transcript_panel.container.classes(add='live-panel live-transcript-panel')
 
-            # === DÓŁ: SUFLER ===
-            with ui.element('div').classes('w-full shrink-0'):
+            # === PROMPTER (DRAWER) ===
+            self._prompter_overlay = ui.element('div').classes('live-overlay live-overlay--drawer')
+            with self._prompter_overlay:
                 self.prompter_panel = PrompterPanel(
                     state=self.state,
                     app_instance=self.app,
@@ -202,6 +229,62 @@ class LiveInterviewView:
                     on_card_click=self._on_card_click
                 )
                 self.prompter_panel.create()
+                if self.prompter_panel.container:
+                    self.prompter_panel.container.classes(add='live-panel live-prompter-panel')
+
+            # === PIPELINE (FLOATING CHIP) ===
+            self._pipeline_overlay = ui.element('div').classes('live-overlay live-overlay--pipeline')
+            with self._pipeline_overlay:
+                self._create_model_info_bar()
+                if self.pipeline_panel and self.pipeline_panel.container:
+                    self.pipeline_panel.container.classes(add='live-panel live-pipeline-panel')
+
+            # === DOCK ===
+            with ui.element('div').classes('live-desk-dock') as self._dock:
+                self._record_btn = ui.button(
+                    'START',
+                    icon='mic',
+                    on_click=self._toggle_session
+                ).props('unelevated').classes('live-desk-btn live-desk-btn--primary')
+                self._status_badge = ui.badge('READY').classes('live-desk-chip')
+                self._progress_badge = ui.badge('0/10').classes('live-desk-chip')
+                self._toggle_transcript_btn = ui.button(
+                    'Transkrypt',
+                    icon='subject',
+                    on_click=self._toggle_transcript
+                ).props('flat').classes('live-desk-btn')
+                self._toggle_prompter_btn = ui.button(
+                    'Sufler',
+                    icon='auto_awesome',
+                    on_click=self._toggle_prompter
+                ).props('flat').classes('live-desk-btn')
+                self._toggle_pipeline_btn = ui.button(
+                    'Pipeline',
+                    icon='tune',
+                    on_click=self._toggle_pipeline
+                ).props('flat').classes('live-desk-btn')
+                self._focus_btn = ui.button(
+                    'Focus',
+                    icon='center_focus_strong',
+                    on_click=self._toggle_focus_mode
+                ).props('flat').classes('live-desk-btn')
+                self._toggle_fx_btn = ui.button(
+                    'FX',
+                    icon='volume_up',
+                    on_click=self._toggle_fx
+                ).props('flat').classes('live-desk-btn')
+
+            # Initial overlay states
+            self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
+            self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
+            self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
+            self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
+            self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
+            self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
+            self._sync_toggle_button(self._toggle_fx_btn, self._fx_enabled)
+
+        # Dock status refresh
+        ui.timer(0.6, self._update_desk_ui)
 
         # AI Controller callbacks
         self.ai_controller.on_regen_start(self._on_ai_start)
@@ -212,6 +295,127 @@ class LiveInterviewView:
 
         # Capture client context for background updates
         self._client = ui.context.client
+
+    def _set_overlay_open(self, overlay, is_open: bool) -> None:
+        if not overlay:
+            return
+        if is_open:
+            overlay.classes(add='is-open')
+        else:
+            overlay.classes(remove='is-open')
+
+    def _sync_toggle_button(self, button, is_open: bool) -> None:
+        if not button:
+            return
+        if is_open:
+            button.classes(add='is-active')
+        else:
+            button.classes(remove='is-active')
+
+    def _set_engine_focus(self, enabled: bool) -> None:
+        if not self._client:
+            return
+        try:
+            with self._client:
+                ui.run_javascript(
+                    f'window.engine && window.engine.setFocus({1 if enabled else 0});'
+                )
+        except Exception:
+            pass
+
+    def _exit_focus_mode(self, restore: bool = True) -> None:
+        if not self._focus_mode:
+            return
+        self._focus_mode = False
+        if restore and self._focus_restore:
+            self._transcript_visible = self._focus_restore.get('transcript', False)
+            self._prompter_visible = self._focus_restore.get('prompter', True)
+            self._pipeline_visible = self._focus_restore.get('pipeline', False)
+            self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
+            self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
+            self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
+            self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
+            self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
+            self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
+        self._sync_toggle_button(self._focus_btn, False)
+        self._set_engine_focus(False)
+
+    def _toggle_transcript(self):
+        if self._focus_mode:
+            self._exit_focus_mode(restore=False)
+        self._transcript_visible = not self._transcript_visible
+        self._set_overlay_open(self._transcript_overlay, self._transcript_visible)
+        self._sync_toggle_button(self._toggle_transcript_btn, self._transcript_visible)
+
+    def _toggle_prompter(self):
+        if self._focus_mode:
+            self._exit_focus_mode(restore=False)
+        self._prompter_visible = not self._prompter_visible
+        self._set_overlay_open(self._prompter_overlay, self._prompter_visible)
+        self._sync_toggle_button(self._toggle_prompter_btn, self._prompter_visible)
+
+    def _toggle_pipeline(self):
+        if self._focus_mode:
+            self._exit_focus_mode(restore=False)
+        self._pipeline_visible = not self._pipeline_visible
+        self._set_overlay_open(self._pipeline_overlay, self._pipeline_visible)
+        self._sync_toggle_button(self._toggle_pipeline_btn, self._pipeline_visible)
+
+    def _toggle_focus_mode(self):
+        self._focus_mode = not self._focus_mode
+        if self._focus_mode:
+            self._focus_restore = {
+                'transcript': self._transcript_visible,
+                'prompter': self._prompter_visible,
+                'pipeline': self._pipeline_visible,
+            }
+            self._transcript_visible = False
+            self._prompter_visible = False
+            self._pipeline_visible = False
+            self._set_overlay_open(self._transcript_overlay, False)
+            self._set_overlay_open(self._prompter_overlay, False)
+            self._set_overlay_open(self._pipeline_overlay, False)
+            self._sync_toggle_button(self._toggle_transcript_btn, False)
+            self._sync_toggle_button(self._toggle_prompter_btn, False)
+            self._sync_toggle_button(self._toggle_pipeline_btn, False)
+            self._sync_toggle_button(self._focus_btn, True)
+            self._set_engine_focus(True)
+        else:
+            self._exit_focus_mode(restore=True)
+
+    def _toggle_fx(self):
+        self._fx_enabled = not self._fx_enabled
+        self._sync_toggle_button(self._toggle_fx_btn, self._fx_enabled)
+        if not self._client:
+            return
+        try:
+            with self._client:
+                ui.run_javascript(
+                    f'window.liveFeedback && window.liveFeedback.setEnabled({str(self._fx_enabled).lower()});'
+                )
+        except Exception:
+            pass
+
+    def _update_desk_ui(self):
+        if not self._record_btn or not self._status_badge or not self._progress_badge:
+            return
+
+        recording = self.state.status == SessionStatus.RECORDING
+        if recording:
+            self._record_btn.text = 'STOP'
+            self._record_btn.props('icon=stop')
+            self._record_btn.classes(add='live-desk-btn--recording', remove='live-desk-btn--primary')
+            self._status_badge.text = 'LIVE'
+            self._status_badge.classes(add='live-status-live')
+        else:
+            self._record_btn.text = 'START'
+            self._record_btn.props('icon=mic')
+            self._record_btn.classes(add='live-desk-btn--primary', remove='live-desk-btn--recording')
+            self._status_badge.text = 'READY'
+            self._status_badge.classes(remove='live-status-live')
+
+        current, target = self.state.qa_progress
+        self._progress_badge.text = f'{current}/{target}'
 
     async def _on_disconnect(self):
         """Sprzątanie po zamknięciu karty."""
