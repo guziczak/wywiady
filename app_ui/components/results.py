@@ -1,5 +1,4 @@
 from nicegui import ui
-import asyncio
 
 _GRID_CHECKBOX_STYLES_INJECTED = False
 
@@ -76,22 +75,32 @@ def _force_grid_setup(grid, column_defs):
         pass
 
 
-def _schedule_size_to_fit(grid, attempts=6, delay=0.1):
-    async def _try(attempt):
-        try:
-            width = await grid.client.run_javascript(
-                f"return getElement({grid.id})?.clientWidth || 0",
-                timeout=2,
-            )
-            if width and width > 50:
-                grid.run_grid_method('sizeColumnsToFit')
-                return
-        except Exception:
-            pass
-        if attempt < attempts:
-            ui.timer(delay, lambda: asyncio.create_task(_try(attempt + 1)), once=True)
-
-    asyncio.create_task(_try(0))
+def _schedule_size_to_fit(grid, attempts=10, delay_ms=150):
+    """Wymusza sizeColumnsToFit po stronie klienta, bez użycia ui.timer."""
+    try:
+        grid.client.run_javascript(f"""
+        (() => {{
+          const id = {grid.id};
+          let tries = 0;
+          const tick = () => {{
+            const el = getElement(id);
+            const api = el?.api;
+            const w = el?.clientWidth || 0;
+            if (api && w > 50) {{
+              try {{
+                api.sizeColumnsToFit();
+                api.refreshHeader?.();
+              }} catch (e) {{}}
+              return;
+            }}
+            if (++tries < {attempts}) {{
+              setTimeout(tick, {delay_ms});
+            }}
+          }};
+          setTimeout(tick, {delay_ms});
+        }})();""")
+    except Exception:
+        pass
 
 
 def _render_diagnosis_grid(app, column_defs, row_data):
