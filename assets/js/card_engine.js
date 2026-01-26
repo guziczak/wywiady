@@ -24,6 +24,10 @@ export class CardEngine {
             lift: 6,
             depth: 4,
         };
+        this.focusMetrics = {
+            scale: 1.08,
+            tilt: 0.35,
+        };
         this.hoverState = {
             activeId: null,
             leaveTimer: null,
@@ -116,8 +120,8 @@ export class CardEngine {
 
         const rect = element.getBoundingClientRect();
         if (rect && rect.height) {
-            const lift = Math.max(6, Math.min(14, rect.height * 0.08));
-            const depth = Math.max(4, Math.min(10, rect.height * 0.05));
+            const lift = Math.max(8, Math.min(18, rect.height * 0.1));
+            const depth = Math.max(8, Math.min(18, rect.height * 0.08));
             this.cardMetrics = { lift, depth };
         }
 
@@ -315,13 +319,10 @@ export class CardEngine {
         if (!home) return;
         object.userData.hovered = true;
 
-        const focusPull = 0.55;
-        const liftPos = {
-            x: home.x * (1 - focusPull),
-            y: home.y + 32,
-            z: home.z * (1 - focusPull) + 180,
-        };
-        const liftRot = { x: -Math.PI / 2, y: 0, z: 0 };
+        const focus = this._computeFocusTransform(home);
+        const liftPos = focus.position;
+        const liftRot = focus.rotation;
+        const liftScale = focus.scale;
 
         object.userData.hoverTween?.stop?.();
         const posTween = new TWEEN.Tween(object.position)
@@ -330,9 +331,15 @@ export class CardEngine {
         const rotTween = new TWEEN.Tween(object.rotation)
             .to(liftRot, 240)
             .easing(TWEEN.Easing.Cubic.Out);
+        object.userData.hoverScaleTween?.stop?.();
+        const scaleTween = new TWEEN.Tween(object.scale)
+            .to(liftScale, 240)
+            .easing(TWEEN.Easing.Cubic.Out);
         posTween.start();
         rotTween.start();
+        scaleTween.start();
         object.userData.hoverTween = posTween;
+        object.userData.hoverScaleTween = scaleTween;
     }
 
     _dropCard(elementId, force = false) {
@@ -350,26 +357,45 @@ export class CardEngine {
         const rotTween = new TWEEN.Tween(object.rotation)
             .to({ x: home.rx, y: home.ry, z: home.rz }, 260)
             .easing(TWEEN.Easing.Cubic.Out);
+        object.userData.hoverScaleTween?.stop?.();
+        const scaleTween = new TWEEN.Tween(object.scale)
+            .to({ x: 1, y: 1, z: 1 }, 240)
+            .easing(TWEEN.Easing.Cubic.Out);
         posTween.start();
         rotTween.start();
+        scaleTween.start();
         object.userData.hoverTween = posTween;
+        object.userData.hoverScaleTween = scaleTween;
     }
 
     _computeStackTransform(index) {
         const angle = index * 0.55;
-        const radius = 20 + Math.min(index, 16) * 2.2;
+        const radius = 18 + Math.min(index, 16) * 3.5;
         const jitter = (this._pseudoRandom(index * 3.1) - 0.5) * 10;
         const targetX = Math.cos(angle) * radius + jitter;
         const lift = this.cardMetrics?.lift ?? 6;
         const depth = this.cardMetrics?.depth ?? 4;
         const targetY = Math.min(index * lift, 110);
-        const targetZ = Math.sin(angle) * radius + jitter + Math.min(index * depth, 70);
+        const targetZ = Math.sin(angle) * radius + jitter + Math.min(index * depth, 120);
         const targetRot = {
             x: -Math.PI / 2,
             y: (this._pseudoRandom(index * 5.7) - 0.5) * 0.08,
             z: (this._pseudoRandom(index * 8.3) - 0.5) * 0.12,
         };
         return { targetX, targetY, targetZ, targetRot };
+    }
+
+    _computeFocusTransform(home) {
+        const rect = this.container ? this.container.getBoundingClientRect() : null;
+        const focusX = rect ? -Math.min(260, rect.width * 0.28) : -220;
+        const focusZ = rect ? Math.min(260, rect.height * 0.32) : 220;
+        const focusY = Math.max(home.y + (this.cardMetrics?.lift ?? 10) * 4, 70);
+        const tilt = this.focusMetrics?.tilt ?? 0.35;
+        return {
+            position: { x: focusX, y: focusY, z: focusZ },
+            rotation: { x: -Math.PI / 2 + tilt, y: 0, z: 0 },
+            scale: { x: this.focusMetrics.scale, y: this.focusMetrics.scale, z: this.focusMetrics.scale },
+        };
     }
 
     _pseudoRandom(seed) {
