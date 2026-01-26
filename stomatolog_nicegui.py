@@ -1703,19 +1703,75 @@ class WywiadApp:
                 spec = spec_manager.get_active()
                 spec_name = spec.name
                 
-            # Dostosuj nagłówek kolumny lokalizacji
+            # Dostosuj nagłówek i pole kolumny lokalizacji
             loc_header = "Ząb" if spec_name == "Stomatologia" else "Lokalizacja"
+            loc_field = "zab"  # Używamy jednego pola w gridzie dla uproszczenia, mapujemy dane
             
-            # Helper do czyszczenia danych (None -> "")
+            # Aktualizacja definicji kolumn gridu (Dynamiczne nagłówki)
+            new_column_defs = [
+                {
+                    'headerName': '',
+                    'field': 'selected',
+                    'checkboxSelection': True,
+                    'headerCheckboxSelection': True,
+                    'width': 50,
+                    'maxWidth': 50,
+                    'pinned': 'left'
+                },
+                {'headerName': 'Kod', 'field': 'kod', 'width': 100},
+                {'headerName': 'Nazwa', 'field': 'nazwa', 'flex': 1},
+                {'headerName': loc_header, 'field': loc_field, 'width': 140},
+                {'headerName': 'Opis', 'field': 'opis_tekstowy', 'flex': 1}
+            ]
+
+            if self.diagnosis_grid:
+                self.diagnosis_grid.options['columnDefs'] = new_column_defs
+                self.diagnosis_grid.update()
+            
+            if self.procedure_grid:
+                self.procedure_grid.options['columnDefs'] = new_column_defs
+                self.procedure_grid.update()
+
+            # Helper do czyszczenia i normalizacji danych
             def clean_data(rows):
                 cleaned = []
                 for row in rows:
-                    new_row = row.copy()
-                    # Mapuj 'zab' lub 'location' na uniwersalne pole do wyświetlenia, jeśli trzeba
-                    # Ale tutaj zakładamy że JSON ma klucz 'zab' (z promptu)
-                    for k, v in new_row.items():
-                        if v is None:
-                            new_row[k] = ""
+                    new_row = {}
+                    
+                    # 1. Kod
+                    new_row['kod'] = row.get('kod') or row.get('icd10_code') or row.get('code') or ""
+                    
+                    # 2. Nazwa
+                    new_row['nazwa'] = row.get('nazwa') or row.get('name') or row.get('desc') or ""
+                    
+                    # 3. Lokalizacja (mapowanie na 'zab')
+                    # Szukamy różnych wariantów jakie AI może zwrócić
+                    loc_val = (
+                        row.get('zab') or 
+                        row.get('numer zęba') or 
+                        row.get('lokalizacja') or 
+                        row.get('location') or 
+                        row.get('lokalizacja anatomiczna') or 
+                        ""
+                    )
+                    # Jeśli to lista (AI czasem zwraca listę), zamień na string
+                    if isinstance(loc_val, list):
+                        loc_val = ", ".join(map(str, loc_val))
+                    new_row[loc_field] = str(loc_val)
+
+                    # 4. Opis
+                    new_row['opis_tekstowy'] = (
+                        row.get('opis_tekstowy') or 
+                        row.get('opis') or 
+                        row.get('description') or 
+                        row.get('opis wykonania/zalecenia') or
+                        ""
+                    )
+                    
+                    # Zachowaj ID jeśli jest (dla checkboxów)
+                    if 'id' in row:
+                        new_row['id'] = row['id']
+                        
                     cleaned.append(new_row)
                 return cleaned
 
@@ -1723,9 +1779,9 @@ class WywiadApp:
             diagnozy = clean_data(result_json.get('diagnozy', []))
             procedury = clean_data(result_json.get('procedury', []))
             
-            print(f"[UI] Loading {len(diagnozy)} diagnoses into grid...", flush=True)
+            print(f"[UI] Loading {len(diagnozy)} diagnoses into grid (Spec: {spec_name})...", flush=True)
 
-            # Aktualizuj dane (bez ruszania kolumn)
+            # Aktualizuj dane
             if self.diagnosis_grid:
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
