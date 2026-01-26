@@ -675,6 +675,82 @@ Zwróć WYŁĄCZNIE JSON w formacie:
             print(f"[LLM] Decision cards error: {e}", flush=True)
             return []
 
+    async def expand_script(
+        self,
+        script: str,
+        transcript: str,
+        config: Dict,
+        spec_ids: list = None
+    ) -> str:
+        """
+        Rozwija krotki skrypt w 3-5 zdan do wypowiedzenia przez lekarza.
+        Zwraca czysty tekst (bez JSON).
+        """
+        if not script:
+            return ""
+
+        transcript = transcript or ""
+        if len(transcript) > 2000:
+            transcript = transcript[-2000:]
+
+        spec_label = ""
+        if SPEC_MANAGER_AVAILABLE:
+            spec_manager = get_specialization_manager()
+            names = []
+            if spec_ids:
+                for sid in spec_ids:
+                    spec = spec_manager.get_by_id(sid)
+                    if spec:
+                        names.append(spec.name)
+            else:
+                active = spec_manager.get_active()
+                if active:
+                    names.append(active.name)
+            if names:
+                spec_label = f"Specjalizacja: {', '.join(names)}"
+
+        prompt = f"""Jestes asystentem lekarza. Rozwin ponizszy skrypt w 3-5 zdan.
+Ma byc naturalny, uprzejmy i konkretny. Unikaj zbednych ozdobnikow.
+Zachowaj ten sam sens i nie dodawaj ryzykownych porad.
+
+{spec_label}
+Kontekst (opcjonalnie):
+{transcript}
+
+Skrypt bazowy:
+{script}
+
+Zwrac tylko tekst skryptu, bez cudzyslowow i bez dodatkowych naglowkow.
+"""
+
+        gemini_key = config.get("api_key", "")
+        loop = asyncio.get_event_loop()
+
+        try:
+            if gemini_key and GENAI_AVAILABLE:
+                response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_gemini, gemini_key, prompt))
+            else:
+                session_key = config.get("session_key", "")
+                claude_token = self._load_claude_token()
+                if (session_key or claude_token) and CLAUDE_AVAILABLE:
+                    auth_key = session_key if session_key and session_key.startswith("sk-") else claude_token
+                    response = await loop.run_in_executor(None, lambda: self._call_with_retry(self._call_claude, auth_key, prompt))
+                else:
+                    return ""
+
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+            if cleaned.startswith('"') and cleaned.endswith('"'):
+                cleaned = cleaned[1:-1].strip()
+            return cleaned
+        except Exception as e:
+            print(f"[LLM] Script expansion error: {e}", flush=True)
+            return ""
+
     async def generate_patient_answers(
         self,
         question: str,

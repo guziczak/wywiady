@@ -186,6 +186,12 @@ class LiveInterviewView:
         self._pipeline_loading: bool = False
         self._client = None
         self._timers = []
+        # Script dialog state (decision mode)
+        self._script_dialog = None
+        self._script_dialog_key = None
+        self._script_expand_label = None
+        self._script_expand_btn = None
+        self._script_cache = {}
 
     def create_ui(self):
         """Buduje interfejs użytkownika."""
@@ -250,6 +256,7 @@ class LiveInterviewView:
                     on_toggle_session=self._toggle_session,
                     on_finish=self._finish_interview,
                     on_continue=self._navigate_next,
+                    on_new_pool=self._request_new_pool,
                     on_card_click=self._on_card_click,
                     show_record_button=False
                 )
@@ -787,6 +794,15 @@ class LiveInterviewView:
 
         ui.notify("Sesja zatrzymana", type='info')
 
+    def _request_new_pool(self):
+        """Ręczne odświeżenie puli kart (tryb poradniczy)."""
+        if self.ai_controller:
+            self.ai_controller.request_new_pool(force_decision=True)
+        try:
+            ui.notify("Generuje nowa pule...", type='info')
+        except Exception:
+            pass
+
     def _finish_interview(self, analyze_speakers: bool = True):
         """Kończy wywiad i przekazuje transkrypt."""
         print(f"[LIVE] Finishing interview (analyze={analyze_speakers})...", flush=True)
@@ -992,24 +1008,17 @@ class LiveInterviewView:
             # Script / checklista: wsparcie lekarza
             import json
             client = ui.context.client or self._client
-            if client:
-                if kind == "script":
-                    try:
-                        client.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
-                    except Exception:
-                        pass
-                    try:
-                        with client:
-                            ui.notify("Skopiowano skrypt!", type='positive', position='top')
-                    except Exception:
-                        pass
-                elif kind == "check":
+            if kind == "script":
+                self._open_script_dialog(text)
+            elif kind == "check":
+                if client:
                     try:
                         with client:
                             ui.notify("Odhaczone.", type='positive', position='top')
                     except Exception:
                         pass
-                else:
+            else:
+                if client:
                     try:
                         client.run_javascript(f'navigator.clipboard.writeText({json.dumps(text)})')
                     except Exception:
@@ -1023,6 +1032,127 @@ class LiveInterviewView:
         # Trigger AI (regeneracja i oznaczenie uzycia)
         if self.ai_controller:
             self.ai_controller.on_card_clicked(suggestion)
+
+    def _normalize_script_key(self, text: str) -> str:
+        return " ".join((text or "").lower().split())
+
+    def _open_script_dialog(self, script_text: str):
+        """Otwiera dialog ze skryptem i opcja rozwiniecia."""
+        if not script_text:
+            return
+
+        key = self._normalize_script_key(script_text)
+        self._script_dialog_key = key
+        expanded = self._script_cache.get(key)
+
+        if self._script_dialog:
+            try:
+                self._script_dialog.close()
+            except Exception:
+                pass
+
+        with ui.dialog() as self._script_dialog, ui.card().classes('w-[560px] max-w-[92vw] p-4'):
+            with ui.row().classes('w-full justify-between items-center mb-3'):
+                ui.label('Skrypt rozmowy').classes('text-lg font-semibold text-slate-800')
+                ui.button(icon='close', on_click=self._script_dialog.close).props('flat dense round')
+
+            with ui.column().classes('w-full gap-2'):
+                ui.label('Skrypt bazowy').classes('text-xs text-slate-500 uppercase tracking-wide')
+                ui.label(script_text).classes(
+                    'text-sm text-slate-700 p-2 bg-slate-50 rounded border border-slate-200 whitespace-pre-wrap'
+                )
+
+            with ui.column().classes('w-full gap-2 mt-3'):
+                ui.label('Gadanka (AI)').classes('text-xs text-slate-500 uppercase tracking-wide')
+                self._script_expand_label = ui.label(
+                    expanded or "Kliknij Rozwin, aby wygenerowac gadanke."
+                ).classes(
+                    'text-sm text-slate-700 p-2 bg-white rounded border border-slate-200 min-h-[80px] whitespace-pre-wrap'
+                )
+
+            with ui.row().classes('w-full justify-between items-center mt-4'):
+                self._script_expand_btn = ui.button(
+                    'Rozwin',
+                    icon='auto_fix_high',
+                    on_click=lambda: asyncio.create_task(self._expand_script(script_text))
+                ).props('outline size=sm')
+                ui.button(
+                    'Skopiuj',
+                    icon='content_copy',
+                    on_click=lambda: self._copy_script_text(script_text)
+                ).props('color=primary size=sm')
+
+        self._script_dialog.open()
+
+    def _copy_script_text(self, script_text: str):
+        """Kopiuje skrypt (rozszerzony jesli dostepny)."""
+        key = self._normalize_script_key(script_text)
+        payload = self._script_cache.get(key) or script_text
+        if not payload:
+            return
+        import json
+        client = ui.context.client or self._client
+        if client:
+            try:
+                client.run_javascript(f'navigator.clipboard.writeText({json.dumps(payload)})')
+            except Exception:
+                pass
+            try:
+                with client:
+                    ui.notify("Skopiowano skrypt!", type='positive', position='top')
+            except Exception:
+                pass
+
+    async def _expand_script(self, script_text: str):
+        """Generuje dluzsza wersje skryptu przez AI."""
+        key = self._normalize_script_key(script_text)
+        if not key or self._script_dialog_key != key:
+            return
+
+        if key in self._script_cache:
+            if self._script_expand_label:
+                self._script_expand_label.text = self._script_cache[key]
+            return
+
+        if self._script_expand_btn:
+            self._script_expand_btn.props('loading')
+
+        if not self.app.llm_service:
+            if self._script_expand_label:
+                self._script_expand_label.text = "Brak konfiguracji AI."
+            if self._script_expand_btn:
+                self._script_expand_btn.props('loading=false')
+            return
+
+        transcript = self.state.full_transcript or ""
+        if len(transcript) > 1600:
+            transcript = transcript[-1600:]
+
+        try:
+            spec_ids = self.ai_controller.current_spec_ids if self.ai_controller else None
+            result = await self.app.llm_service.expand_script(
+                script=script_text,
+                transcript=transcript,
+                config=self.app.config,
+                spec_ids=spec_ids
+            )
+        except Exception as e:
+            print(f"[LIVE] Script expansion error: {e}", flush=True)
+            result = ""
+
+        if self._script_dialog_key != key:
+            return
+
+        if result:
+            self._script_cache[key] = result
+            if self._script_expand_label:
+                self._script_expand_label.text = result
+        else:
+            if self._script_expand_label:
+                self._script_expand_label.text = "Nie udalo sie wygenerowac."
+
+        if self._script_expand_btn:
+            self._script_expand_btn.props('loading=false')
 
     async def _load_patient_answers(self, question: str) -> None:
         """

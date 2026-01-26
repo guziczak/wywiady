@@ -48,5 +48,5 @@ CARD_TAG_SCRIPT = "SKRYPT"
 CARD_TAG_CHECK = "CHECKLISTA"
 
 CARD_HINT_QUESTION = "Kliknij, aby skopiowac"
-CARD_HINT_SCRIPT = "Kliknij, aby skopiowac skrypt"
+CARD_HINT_SCRIPT = "Kliknij, aby otworzyc skrypt"
 CARD_HINT_CHECK = "Kliknij, aby odhaczyc"

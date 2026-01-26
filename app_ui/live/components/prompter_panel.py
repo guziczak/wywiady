@@ -79,6 +79,7 @@ class PrompterPanel:
         on_toggle_session: Optional[Callable] = None,
         on_finish: Optional[Callable[[bool], None]] = None,  # callback(analyze_speakers)
         on_continue: Optional[Callable[[], None]] = None,    # nowy callback
+        on_new_pool: Optional[Callable[[], None]] = None,
         on_card_click: Optional[Callable[[object], None]] = None,
         show_record_button: bool = True
     ):
@@ -87,6 +88,7 @@ class PrompterPanel:
         self.on_toggle_session = on_toggle_session
         self.on_finish = on_finish
         self.on_continue = on_continue
+        self.on_new_pool = on_new_pool
         self.on_card_click = on_card_click
         self.show_record_button = show_record_button
 
@@ -102,6 +104,7 @@ class PrompterPanel:
         self.status_badge = None
         self.mode_badge = None
         self.checklist_badge = None
+        self.next_pool_btn = None
         self._is_loading = False
         self._client = None  # NiceGUI client context
 
@@ -242,6 +245,11 @@ class PrompterPanel:
 
             self.on_continue()
 
+    def _handle_new_pool(self):
+        """Klikniecie Nowa pula (tryb poradniczy)."""
+        if self.on_new_pool:
+            self.on_new_pool()
+
 
 
     def _handle_toggle_diarization(self):
@@ -284,6 +292,7 @@ class PrompterPanel:
 
     def _update_mode_badges(self):
         """Aktualizuje badge trybu rozmowy i checklisty."""
+        from app_ui.live.live_state import SessionStatus
         mode_key = getattr(self.state.conversation_mode, 'value', 'general')
         label = MODE_LABELS.get(mode_key, MODE_LABELS.get('general', 'Tryb: Ogolny'))
         color = MODE_COLORS.get(mode_key, 'gray')
@@ -299,6 +308,16 @@ class PrompterPanel:
                 self.checklist_badge.set_visibility(True)
             else:
                 self.checklist_badge.set_visibility(False)
+
+        if self.next_pool_btn:
+            show_next = (mode_key == "decision" and self.state.status == SessionStatus.RECORDING)
+            self.next_pool_btn.set_visibility(show_next)
+            if show_next:
+                done, total = self.state.checklist_progress
+                if total > 0 and done >= total:
+                    self.next_pool_btn.props('color=green')
+                else:
+                    self.next_pool_btn.props('color=primary')
 
 
     # === UI CREATION ===
@@ -348,6 +367,14 @@ class PrompterPanel:
                 # Checklist progress (only in decision mode with check items)
                 self.checklist_badge = ui.badge("Check 0/0", color='amber').classes('text-[10px]')
                 self.checklist_badge.set_visibility(False)
+
+                # Nowa pula (only in decision mode)
+                self.next_pool_btn = ui.button(
+                    'Nowa pula',
+                    icon='autorenew',
+                    on_click=self._handle_new_pool
+                ).props('outline size=sm')
+                self.next_pool_btn.set_visibility(False)
 
                 # Przycisk START/STOP (opcjonalny, gdy jest dock)
                 if self.show_record_button:

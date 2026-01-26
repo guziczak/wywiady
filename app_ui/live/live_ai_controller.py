@@ -47,6 +47,7 @@ class AIController:
     QA_TIMEOUT_SECONDS = 120.0        # Okno czasowe na odpowiedź (zwiększone z 60s)
     QA_MIN_WORDS = 3                  # Minimalna liczba słów w odpowiedzi (zmniejszone z 5)
     MANUAL_OVERRIDE_TTL = 90.0        # Jak długo utrzymać tryb z ręcznej pary Q+A
+    FREEZE_DECISION_AUTO_REGEN = True # W trybie poradniczym nie odswiezaj automatycznie
 
     def __init__(self, state: 'LiveState', llm_service, config):
         self.state = state
@@ -109,6 +110,8 @@ class AIController:
         if current_len - self._last_processed_text_len < 5:
             return
 
+        auto_allowed = not self._is_decision_freeze()
+
         # 1. Wykryto pytanie (znak ?)
         if self.state.has_question_mark():
             # Sprawdź czy to NOWE pytanie (tekst urósł od ostatniego razu)
@@ -125,7 +128,10 @@ class AIController:
 
         if should_regen:
             self._last_processed_text_len = current_len
-            self._schedule_regeneration(reason)
+            if auto_allowed:
+                self._schedule_regeneration(reason)
+            else:
+                print(f"[AI] Auto regen blocked (decision mode)", flush=True)
 
         # Zawsze scheduluj walidację
         self._schedule_validation()
@@ -150,7 +156,7 @@ class AIController:
         self.state.mark_suggestion_used(suggestion)
 
         # Opozniona regeneracja tylko dla pytan (check/skrypt nie powinny resetowac checklisty)
-        if kind == "question":
+        if kind == "question" and not self._is_decision_freeze():
             delay = self.CARD_CLICK_REGEN_DELAY
             self._schedule_regeneration(
                 TriggerReason.CARD_CLICKED,
@@ -224,6 +230,19 @@ class AIController:
         self._manual_context = None
         self._manual_context_until = 0.0
         self._schedule_regeneration(TriggerReason.INITIAL, immediate=True)
+
+    def request_new_pool(self, force_decision: bool = False):
+        """Ręczne odświeżenie puli kart (np. przycisk Nowa pula)."""
+        now = time.time()
+        if force_decision and self.state.conversation_mode == ConversationMode.DECISION:
+            self._manual_mode_override = ConversationMode.DECISION
+            self._manual_mode_until = now + self.MANUAL_OVERRIDE_TTL
+        self._schedule_regeneration(TriggerReason.MANUAL, immediate=True)
+
+    def _is_decision_freeze(self) -> bool:
+        if not self.FREEZE_DECISION_AUTO_REGEN:
+            return False
+        return self.state.conversation_mode == ConversationMode.DECISION
 
     # === SCHEDULING ===
 
