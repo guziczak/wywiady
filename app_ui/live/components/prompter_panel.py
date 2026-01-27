@@ -268,7 +268,12 @@ class PrompterPanel:
         if not self.cards_mode_radio:
             return
         value = self.cards_mode_radio.value
-        mode = "questions" if value == "Pytania" else "decision"
+        if value == "Auto":
+            mode = "auto"
+        elif value == "Pytania":
+            mode = "questions"
+        else:
+            mode = "decision"
         if self.on_cards_mode_change:
             self.on_cards_mode_change(mode)
 
@@ -352,6 +357,8 @@ class PrompterPanel:
             self.mode_badge.text = label
             self.mode_badge.props(f'color={color}')
 
+        from app_ui.live.live_state import CardsMode
+        cards_mode = getattr(self.state, 'cards_mode', CardsMode.AUTO)
         effective_mode, is_auto = self._resolve_cards_mode()
         show_decision = effective_mode == "decision"
 
@@ -380,7 +387,12 @@ class PrompterPanel:
             show_radio = self.state.status == SessionStatus.RECORDING
             self.cards_mode_radio.set_visibility(show_radio)
             if show_radio:
-                value = "Poradniczy" if show_decision else "Pytania"
+                if cards_mode == CardsMode.DECISION:
+                    value = "Poradniczy"
+                elif cards_mode == CardsMode.QUESTIONS:
+                    value = "Pytania"
+                else:
+                    value = "Auto"
                 if self.cards_mode_radio.value != value:
                     self._cards_mode_sync = True
                     self.cards_mode_radio.value = value
@@ -440,12 +452,20 @@ class PrompterPanel:
                 mode_color = MODE_COLORS.get(mode_key, 'gray')
                 self.mode_badge = ui.badge(mode_label, color=mode_color).classes('text-[10px]')
 
-                # Przelacznik kart (Pytania / Poradniczy)
+                # Przelacznik kart (Auto / Pytania / Poradniczy)
                 with ui.row().classes('items-center gap-1'):
                     ui.label('Karty').classes('text-[10px] text-slate-500')
+                    from app_ui.live.live_state import CardsMode
+                    cards_mode = getattr(self.state, 'cards_mode', CardsMode.AUTO)
+                    if cards_mode == CardsMode.DECISION:
+                        cards_value = 'Poradniczy'
+                    elif cards_mode == CardsMode.QUESTIONS:
+                        cards_value = 'Pytania'
+                    else:
+                        cards_value = 'Auto'
                     self.cards_mode_radio = ui.radio(
-                        ['Pytania', 'Poradniczy'],
-                        value='Poradniczy' if mode_key == 'decision' else 'Pytania'
+                        ['Auto', 'Pytania', 'Poradniczy'],
+                        value=cards_value
                     ).props('inline dense').classes('text-[10px]').on('change', lambda: self._handle_cards_mode_change())
                     self.cards_mode_radio.set_visibility(False)
 
