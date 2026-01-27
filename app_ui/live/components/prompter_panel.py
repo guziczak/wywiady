@@ -403,7 +403,10 @@ class PrompterPanel:
             self.cards_mode_hint_row.set_visibility(show_hint)
             if show_hint and self.cards_mode_hint:
                 hint_text = CARDS_MODE_HINTS.get(effective_mode, "")
-                self.cards_mode_hint.text = f"Pula kart: {hint_text}" if hint_text else ""
+                if is_auto and hint_text:
+                    self.cards_mode_hint.text = f"Pula kart: Auto → {hint_text} ({label})"
+                else:
+                    self.cards_mode_hint.text = f"Pula kart: {hint_text}" if hint_text else ""
             if self.cards_mode_auto_badge:
                 self.cards_mode_auto_badge.set_visibility(show_hint and is_auto)
 

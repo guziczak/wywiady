@@ -830,6 +830,17 @@ class LiveInterviewView:
             self.state.set_cards_mode(CardsMode.AUTO)
             if self.ai_controller:
                 self.ai_controller.request_new_pool(force_decision=False)
+            mode_key = getattr(self.state.conversation_mode, 'value', 'general')
+            if mode_key == "decision":
+                label = "Auto → Poradniczy (Tryb: Poradniczy)"
+            elif mode_key == "symptom":
+                label = "Auto → Pytania (Tryb: Diagnostyczny)"
+            elif mode_key == "followup":
+                label = "Auto → Pytania (Tryb: Kontrolny)"
+            elif mode_key == "admin":
+                label = "Auto → Pytania (Tryb: Formalny)"
+            else:
+                label = "Auto → Pytania (Tryb: Ogolny)"
         try:
             ui.notify(f"Pula kart: {label}", type='info')
         except Exception:
