@@ -1,4 +1,4 @@
-"""
+﻿"""
 Wizyta v2 - NiceGUI Edition
 Nowoczesne GUI do generowania opisow stomatologicznych z wywiadu glosowego.
 """
@@ -6,8 +6,8 @@ Nowoczesne GUI do generowania opisow stomatologicznych z wywiadu glosowego.
 import asyncio
 import sys
 
-# Windows: użyj SelectorEventLoop zamiast ProactorEventLoop
-# ProactorEventLoop nie obsługuje prawidłowo Ctrl+C
+# Windows: uĹĽyj SelectorEventLoop zamiast ProactorEventLoop
+# ProactorEventLoop nie obsĹ‚uguje prawidĹ‚owo Ctrl+C
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import concurrent.futures
@@ -36,11 +36,11 @@ except Exception:
 # === STATE MANAGEMENT ===
 
 class ModelState(Enum):
-    """Stan ładowania modelu."""
-    IDLE = "idle"              # Nic nie załadowane
-    LOADING = "loading"        # Ładowanie w toku (cancellable)
-    READY = "ready"            # Model załadowany i gotowy
-    ERROR = "error"            # Błąd ładowania
+    """Stan Ĺ‚adowania modelu."""
+    IDLE = "idle"              # Nic nie zaĹ‚adowane
+    LOADING = "loading"        # Ĺadowanie w toku (cancellable)
+    READY = "ready"            # Model zaĹ‚adowany i gotowy
+    ERROR = "error"            # BĹ‚Ä…d Ĺ‚adowania
 
 
 class TranscriptionState(Enum):
@@ -52,7 +52,7 @@ class TranscriptionState(Enum):
 
 @dataclass
 class LoadedModelInfo:
-    """Informacja o FAKTYCZNIE załadowanym modelu - Single Source of Truth."""
+    """Informacja o FAKTYCZNIE zaĹ‚adowanym modelu - Single Source of Truth."""
     backend: str              # np. "openvino_whisper"
     model_name: str           # np. "small", "large-v3"
     device: str               # np. "NPU", "GPU", "CPU"
@@ -63,7 +63,7 @@ class LoadedModelInfo:
 
 
 class CancellableTask:
-    """Wrapper dla operacji które można anulować."""
+    """Wrapper dla operacji ktĂłre moĹĽna anulowaÄ‡."""
 
     def __init__(self, name: str):
         self.name = name
@@ -79,7 +79,7 @@ class CancellableTask:
         self._thread = thread
 
     def cancel(self):
-        """Anuluje zadanie - zabija subprocess jeśli istnieje."""
+        """Anuluje zadanie - zabija subprocess jeĹ›li istnieje."""
         print(f"[TASK] Cancelling: {self.name}", flush=True)
         self._cancel_event.set()
         if self._process:
@@ -186,9 +186,9 @@ from nicegui import ui, app
 
 # Global TranscriberManager instance (Singleton)
 GLOBAL_TRANSCRIBER_MANAGER = None
-# Transkrypt z live interview do przekazania do głównego widoku
+# Transkrypt z live interview do przekazania do gĹ‚Ăłwnego widoku
 GLOBAL_LIVE_TRANSCRIPT = None
-# Windows Ctrl+C handler (musi być globalna żeby nie była garbage collectowana)
+# Windows Ctrl+C handler (musi byÄ‡ globalna ĹĽeby nie byĹ‚a garbage collectowana)
 _WIN_CTRL_HANDLER = None
 
 def get_transcriber_manager():
@@ -463,26 +463,26 @@ class WywiadApp:
                 device="cloud"
             )
         else:
-            # Lokalne backendy - sprawdź czy coś jest załadowane
+            # Lokalne backendy - sprawdĹş czy coĹ› jest zaĹ‚adowane
             self.model_state = ModelState.IDLE
             self.loaded_model = None
 
     def _is_model_ready(self) -> bool:
-        """Sprawdza czy model jest gotowy do użycia."""
+        """Sprawdza czy model jest gotowy do uĹĽycia."""
         return self.model_state == ModelState.READY
 
     def _get_selected_model_name(self) -> str:
-        """Zwraca nazwę wybranego modelu z konfiguracji."""
+        """Zwraca nazwÄ™ wybranego modelu z konfiguracji."""
         return self.config.get("transcriber_model", "small")
 
     def _cancel_current_task(self):
-        """Anuluje bieżące zadanie jeśli istnieje."""
+        """Anuluje bieĹĽÄ…ce zadanie jeĹ›li istnieje."""
         if self.current_task:
             self.current_task.cancel()
             self.current_task = None
 
     async def _load_model_async(self):
-        """Ładuje model w SUBPROCESS - można zabić w każdej chwili."""
+        """Ĺaduje model w SUBPROCESS - moĹĽna zabiÄ‡ w kaĹĽdej chwili."""
         backend_type = self.config.get("transcriber_backend", "gemini_cloud")
 
         # Gemini nie wymaga lokalnego modelu
@@ -496,9 +496,9 @@ class WywiadApp:
             self._update_status_ui()
             return
 
-        # Dla backendów innych niż OpenVINO nie używamy subprocess loadera
+        # Dla backendĂłw innych niĹĽ OpenVINO nie uĹĽywamy subprocess loadera
         if backend_type != "openvino_whisper":
-            # Sprawdź czy backend jest zainstalowany / dostępny
+            # SprawdĹş czy backend jest zainstalowany / dostÄ™pny
             if self.transcriber_manager:
                 try:
                     backends = self.transcriber_manager.get_available_backends()
@@ -536,7 +536,7 @@ class WywiadApp:
         # Anuluj poprzednie zadanie (zabij subprocess)
         self._cancel_current_task()
 
-        # Sprawdź czy OpenVINO jest zainstalowane
+        # SprawdĹş czy OpenVINO jest zainstalowane
         try:
             backends = self.transcriber_manager.get_available_backends()
             info = next((b for b in backends if b.type.value == "openvino_whisper"), None)
@@ -548,11 +548,11 @@ class WywiadApp:
         except Exception:
             pass
 
-        # Utwórz nowe zadanie
+        # UtwĂłrz nowe zadanie
         model_name = self._get_selected_model_name()
         device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
 
-        # Sprawdź czy model OpenVINO jest pobrany (XML + BIN)
+        # SprawdĹş czy model OpenVINO jest pobrany (XML + BIN)
         try:
             from core.transcriber import MODELS_DIR
             suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
@@ -560,13 +560,13 @@ class WywiadApp:
             xml_path = model_path / "openvino_encoder_model.xml"
             bin_path = model_path / "openvino_encoder_model.bin"
             if not model_path.exists() or not xml_path.exists() or not bin_path.exists():
-                # Spróbuj fallback do już pobranego modelu
+                # SprĂłbuj fallback do juĹĽ pobranego modelu
                 try:
                     backend = self.transcriber_manager.get_current_backend()
                     models = backend.get_models() if backend else []
                     downloaded = [m for m in models if getattr(m, 'is_downloaded', False)]
                     if downloaded:
-                        # Preferuj 'small', potem pierwszy dostępny
+                        # Preferuj 'small', potem pierwszy dostÄ™pny
                         fallback = next((m for m in downloaded if m.name == "small"), downloaded[0])
                         if fallback.name != model_name:
                             print(f"[LOAD] Model '{model_name}' missing, fallback to '{fallback.name}'", flush=True)
@@ -600,7 +600,7 @@ class WywiadApp:
         task = CancellableTask(f"load_{model_name}_{device}")
         self.current_task = task
 
-        # Ustaw stan ładowania
+        # Ustaw stan Ĺ‚adowania
         self.model_state = ModelState.LOADING
         self.model_error_message = ""
         self._update_status_ui()
@@ -608,13 +608,13 @@ class WywiadApp:
         print(f"[LOAD] Starting SUBPROCESS model load: {model_name} on {device}...", flush=True)
 
         try:
-            # Ścieżka do loadera i modelu
+            # ĹšcieĹĽka do loadera i modelu
             loader_script = Path(__file__).parent / "core" / "model_loader.py"
             from core.transcriber import MODELS_DIR
             suffix = "int8" if model_name in ["medium", "large-v3"] else "fp16"
             model_path = MODELS_DIR / "openvino-whisper" / f"whisper-{model_name}-{suffix}-ov"
 
-            # Uruchom SUBPROCESS - można go zabić!
+            # Uruchom SUBPROCESS - moĹĽna go zabiÄ‡!
             process = subprocess.Popen(
                 [sys.executable, str(loader_script), str(model_path), device],
                 stdout=subprocess.PIPE,
@@ -625,11 +625,11 @@ class WywiadApp:
             task.set_process(process)
             print(f"[LOAD] Subprocess started: PID {process.pid}", flush=True)
 
-            # Czekaj na wynik w osobnym WĄTKU (nie blokuje event loop)
+            # Czekaj na wynik w osobnym WÄ„TKU (nie blokuje event loop)
             loop = asyncio.get_event_loop()
             success, error = await loop.run_in_executor(None, lambda: self._wait_for_subprocess(process, task))
 
-            # Sprawdź czy to NADAL aktualny task (nie został zastąpiony przez nowy)
+            # SprawdĹş czy to NADAL aktualny task (nie zostaĹ‚ zastÄ…piony przez nowy)
             if self.current_task != task:
                 print(f"[LOAD] Task replaced by newer one, ignoring result", flush=True)
                 return
@@ -639,11 +639,11 @@ class WywiadApp:
                 self.model_state = ModelState.IDLE
                 self.loaded_model = None
             elif success:
-                # Subprocess załadował model (w cache) - NIE ładujemy w main procesie
-                # żeby nie blokować UI. Model załaduje się przy pierwszej transkrypcji.
+                # Subprocess zaĹ‚adowaĹ‚ model (w cache) - NIE Ĺ‚adujemy w main procesie
+                # ĹĽeby nie blokowaÄ‡ UI. Model zaĹ‚aduje siÄ™ przy pierwszej transkrypcji.
                 print(f"[LOAD] Subprocess done - model cached, skipping main process preload", flush=True)
 
-                # Ustaw urządzenie w backendzie (to jest szybkie)
+                # Ustaw urzÄ…dzenie w backendzie (to jest szybkie)
                 if backend_type == "openvino_whisper":
                     try:
                         from core.transcriber import TranscriberType
@@ -662,16 +662,16 @@ class WywiadApp:
                 elapsed = task.elapsed_seconds()
                 print(f"[LOAD] Model ready (cached) in {elapsed}s: {self.loaded_model}", flush=True)
                 
-                # AUTO-SWITCH: Jeśli brak klucza Gemini, a mamy model offline -> przełącz
+                # AUTO-SWITCH: JeĹ›li brak klucza Gemini, a mamy model offline -> przeĹ‚Ä…cz
                 gemini_key = self.config.get("api_key", "")
                 current_backend = self.config.get("transcriber_backend", "")
                 
                 if not gemini_key and current_backend == "gemini_cloud":
                     print("[AUTO-SWITCH] Gemini key missing, switching to offline backend...", flush=True)
-                    # Preferuj openvino jeśli to on się załadował
+                    # Preferuj openvino jeĹ›li to on siÄ™ zaĹ‚adowaĹ‚
                     new_backend = "openvino_whisper" 
                     
-                    # Jeśli mamy managera, ustaw
+                    # JeĹ›li mamy managera, ustaw
                     if self.transcriber_manager:
                         try:
                             # Importuj typ enum dynamicznie
@@ -679,10 +679,10 @@ class WywiadApp:
                             self.transcriber_manager.set_current_backend(TranscriberType(new_backend))
                             self.config["transcriber_backend"] = new_backend
                             
-                            # Odśwież UI w wątku głównym
-                            # (chociaż jesteśmy w async, lepiej unikać problemów z NiceGUI)
+                            # OdĹ›wieĹĽ UI w wÄ…tku gĹ‚Ăłwnym
+                            # (chociaĹĽ jesteĹ›my w async, lepiej unikaÄ‡ problemĂłw z NiceGUI)
                             self.refresh_backend_buttons()
-                            ui.notify(f"Przełączono na {new_backend} (brak klucza Gemini)", type='positive')
+                            ui.notify(f"PrzeĹ‚Ä…czono na {new_backend} (brak klucza Gemini)", type='positive')
                         except Exception as e:
                             print(f"[AUTO-SWITCH] Failed: {e}", flush=True)
             else:
@@ -765,7 +765,7 @@ class WywiadApp:
             return False, str(e)
 
     def _set_device_sync(self, device_id: str):
-        """Ustawia urządzenie w backendzie (synchronicznie)."""
+        """Ustawia urzÄ…dzenie w backendzie (synchronicznie)."""
         if self.transcriber_manager:
             ov_backend = self.transcriber_manager.get_backend(TranscriberType.OPENVINO_WHISPER)
             ov_backend.set_device(device_id)
@@ -775,7 +775,7 @@ class WywiadApp:
         if not self.status_indicator or not self.status_label:
             return
 
-        # Pokaż/ukryj przycisk anuluj
+        # PokaĹĽ/ukryj przycisk anuluj
         show_cancel = self.model_state == ModelState.LOADING or self.transcription_state == TranscriptionState.PROCESSING
         if self.cancel_button:
             self.cancel_button.set_visibility(show_cancel)
@@ -783,17 +783,17 @@ class WywiadApp:
         # Status modelu
         if self.model_state == ModelState.IDLE:
             self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-gray-400')
-            self.status_label.text = "Model nie załadowany"
+            self.status_label.text = "Model nie zaĹ‚adowany"
 
         elif self.model_state == ModelState.LOADING:
             self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-yellow-500 animate-pulse')
             elapsed = self.current_task.elapsed_seconds() if self.current_task else 0
             model_name = self._get_selected_model_name()
             device = self.selected_device if self.selected_device != "auto" else self.get_best_device()
-            self.status_label.text = f"Ładowanie {model_name} @ {device}... {elapsed}s"
+            self.status_label.text = f"Ĺadowanie {model_name} @ {device}... {elapsed}s"
 
         elif self.model_state == ModelState.READY:
-            # Pokaż co FAKTYCZNIE jest załadowane
+            # PokaĹĽ co FAKTYCZNIE jest zaĹ‚adowane
             if self.loaded_model:
                 if self.loaded_model.backend == "gemini_cloud":
                     self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-blue-500')
@@ -807,7 +807,7 @@ class WywiadApp:
 
         elif self.model_state == ModelState.ERROR:
             self.status_indicator.classes(replace='w-3 h-3 rounded-full bg-red-500')
-            self.status_label.text = self.model_error_message or "Błąd"
+            self.status_label.text = self.model_error_message or "BĹ‚Ä…d"
 
         # Aktualizuj przycisk nagrywania
         self._update_record_button()
@@ -823,7 +823,7 @@ class WywiadApp:
             self.record_button.enable()
             self.record_button.props(remove='disable')
             if hasattr(self, 'record_tooltip'):
-                self.record_tooltip.text = "Kliknij aby nagrać"
+                self.record_tooltip.text = "Kliknij aby nagraÄ‡"
             if hasattr(self, 'record_status'):
                 self.record_status.text = "Gotowy do nagrywania"
                 self.record_status.classes(remove='text-red-500 text-yellow-600', add='text-green-600')
@@ -831,16 +831,16 @@ class WywiadApp:
             self.record_button.disable()
             self.record_button.props('disable')
             
-            status_text = "Niedostępny"
+            status_text = "NiedostÄ™pny"
             
             if self.model_state == ModelState.LOADING:
-                status_text = "Ładowanie modelu..."
+                status_text = "Ĺadowanie modelu..."
             elif self.transcription_state == TranscriptionState.PROCESSING:
                 status_text = "Transkrypcja w toku..."
             elif self.model_state == ModelState.ERROR:
-                status_text = "Błąd modelu"
+                status_text = "BĹ‚Ä…d modelu"
             elif self.model_state == ModelState.IDLE:
-                 status_text = "Model nie załadowany"
+                 status_text = "Model nie zaĹ‚adowany"
 
             if hasattr(self, 'record_tooltip'):
                 self.record_tooltip.text = status_text
@@ -850,7 +850,7 @@ class WywiadApp:
                 self.record_status.classes(remove='text-green-600', add='text-gray-500')
 
     def _on_cancel_click(self):
-        """Handler kliknięcia przycisku Anuluj."""
+        """Handler klikniÄ™cia przycisku Anuluj."""
         if self.current_task:
             self._cancel_current_task()
             self.model_state = ModelState.IDLE
@@ -860,12 +860,12 @@ class WywiadApp:
             ui.notify("Anulowano", type='warning')
 
     def _retry_load_model(self):
-        """Ponawia ładowanie modelu (tylko przy błędzie)."""
+        """Ponawia Ĺ‚adowanie modelu (tylko przy bĹ‚Ä™dzie)."""
         if self.model_state == ModelState.ERROR:
             asyncio.create_task(self._load_model_async())
 
     def _refresh_status_timer(self):
-        """Timer do odświeżania statusu podczas ładowania."""
+        """Timer do odĹ›wieĹĽania statusu podczas Ĺ‚adowania."""
         if self.model_state == ModelState.LOADING or self.transcription_state == TranscriptionState.PROCESSING:
             self._update_status_ui()
 
@@ -880,8 +880,8 @@ class WywiadApp:
     # === UI COMPONENTS ===
 
     def select_device(self, device_id: str):
-        """Wybiera urządzenie i ładuje model."""
-        # Znajdź device info
+        """Wybiera urzÄ…dzenie i Ĺ‚aduje model."""
+        # ZnajdĹş device info
         device_info = next((d for d in self.devices if d.id == device_id), None)
         
         # SMART UX: Auto-switch to OpenVINO for Intel hardware
@@ -890,19 +890,19 @@ class WywiadApp:
             if current_backend != "openvino_whisper":
                 print(f"[UI] Smart UX: Auto-switching to OpenVINO for {device_id}", flush=True)
                 
-                # Zmień backend
+                # ZmieĹ„ backend
                 if self.transcriber_manager:
                     try:
                         from core.transcriber import TranscriberType
                         if self.transcriber_manager.set_current_backend(TranscriberType.OPENVINO_WHISPER):
                             self.config["transcriber_backend"] = "openvino_whisper"
                             self.refresh_backend_buttons()
-                            ui.notify(f"Przełączono na OpenVINO (wymagane dla {device_id})", type='positive')
+                            ui.notify(f"PrzeĹ‚Ä…czono na OpenVINO (wymagane dla {device_id})", type='positive')
                     except Exception as e:
                         print(f"[UI] Auto-switch failed: {e}", flush=True)
 
-        # Sprawdź czy już załadowane na tym urządzeniu (po ewentualnej zmianie backendu)
-        # Musimy sprawdzić ponownie stan, bo mógł się zmienić backend
+        # SprawdĹş czy juĹĽ zaĹ‚adowane na tym urzÄ…dzeniu (po ewentualnej zmianie backendu)
+        # Musimy sprawdziÄ‡ ponownie stan, bo mĂłgĹ‚ siÄ™ zmieniÄ‡ backend
         if (device_id == self.selected_device and
             self.model_state == ModelState.READY and
             self.loaded_model and
@@ -911,39 +911,39 @@ class WywiadApp:
 
         print(f"[UI] Device selection: {device_id}", flush=True)
 
-        # Zapisz wybór
+        # Zapisz wybĂłr
         self.selected_device = device_id
         self.config["selected_device"] = device_id
         self.config.save()
 
-        # Odśwież karty i rozpocznij ładowanie
+        # OdĹ›wieĹĽ karty i rozpocznij Ĺ‚adowanie
         self.refresh_device_cards()
         asyncio.create_task(self._load_model_async())
 
     def refresh_device_cards(self):
-        """Odświeża karty urządzeń."""
+        """OdĹ›wieĹĽa karty urzÄ…dzeĹ„."""
         if self.device_cards_container:
             self.device_cards_container.clear()
             current_backend = self.config.get("transcriber_backend", "")
             
             with self.device_cards_container:
-                # Jeśli wybrano chmurę, ukryj wybór sprzętu
+                # JeĹ›li wybrano chmurÄ™, ukryj wybĂłr sprzÄ™tu
                 if current_backend == "gemini_cloud":
                     with ui.card().classes('w-full h-48 bg-blue-50 items-center justify-center text-center p-4 shadow-none border-2 border-blue-100'):
                         with ui.row().classes('items-center gap-4'):
                             ui.icon('cloud_upload', size='4xl').classes('text-blue-400')
                             with ui.column().classes('items-start'):
                                 ui.label('Przetwarzanie w chmurze').classes('text-xl font-bold text-blue-800')
-                                ui.label('Obliczenia wykonywane są na serwerach Google.').classes('text-gray-600')
-                                ui.label('Twoja karta graficzna i procesor odpoczywają.').classes('text-sm text-gray-500')
+                                ui.label('Obliczenia wykonywane sÄ… na serwerach Google.').classes('text-gray-600')
+                                ui.label('Twoja karta graficzna i procesor odpoczywajÄ….').classes('text-sm text-gray-500')
                     return
 
-                # Dla offline - pokaż karty
+                # Dla offline - pokaĹĽ karty
                 for device in self.devices:
                     self.create_device_card(device, current_backend)
 
     def create_device_card(self, device: DeviceInfo, current_backend: str) -> ui.card:
-        """Tworzy kartę urządzenia."""
+        """Tworzy kartÄ™ urzÄ…dzenia."""
         is_selected = (self.selected_device == device.id) or (self.selected_device == "auto" and device.recommended)
         is_loading = is_selected and self.model_state == ModelState.LOADING
         is_ready = is_selected and self.model_state == ModelState.READY and self.loaded_model and self.loaded_model.device == device.id
@@ -958,16 +958,16 @@ class WywiadApp:
             if current_backend != "openvino_whisper":
                 is_compatible = False
                 warning_msg = "Wymaga OpenVINO"
-                compatibility_reason = "NPU jest obsługiwane tylko przez silnik OpenVINO. Kliknij, aby przełączyć."
+                compatibility_reason = "NPU jest obsĹ‚ugiwane tylko przez silnik OpenVINO. Kliknij, aby przeĹ‚Ä…czyÄ‡."
 
         # Intel GPU compatibility
         elif device.id == "GPU" and device.is_intel:
             if current_backend in ["faster_whisper", "openai_whisper"]:
                 is_compatible = False
                 warning_msg = "Brak CUDA (NVIDIA)"
-                compatibility_reason = "Ten silnik wymaga karty NVIDIA (CUDA). Dla Intel Arc użyj OpenVINO. Kliknij, aby przełączyć automatycznie."
+                compatibility_reason = "Ten silnik wymaga karty NVIDIA (CUDA). Dla Intel Arc uĹĽyj OpenVINO. Kliknij, aby przeĹ‚Ä…czyÄ‡ automatycznie."
             elif current_backend != "openvino_whisper" and current_backend != "gemini_cloud":
-                 # Inne backendy (przyszłościowo)
+                 # Inne backendy (przyszĹ‚oĹ›ciowo)
                  is_compatible = False
                  warning_msg = "Wymaga OpenVINO"
 
@@ -1018,7 +1018,7 @@ class WywiadApp:
                     if is_loading:
                         ui.spinner(size='sm', color='yellow')
                         elapsed = self.current_task.elapsed_seconds() if self.current_task else 0
-                        ui.label(f"Ładowanie... {elapsed}s").classes('text-xs text-yellow-600')
+                        ui.label(f"Ĺadowanie... {elapsed}s").classes('text-xs text-yellow-600')
                     elif is_ready:
                         ui.badge("GOTOWY", color='green')
                     elif is_selected:
@@ -1031,7 +1031,7 @@ class WywiadApp:
                         speed_text = f"~{device.speed_multiplier}x"
                         ui.label(speed_text).classes('text-sm text-gray-500')
                     else:
-                        ui.label("Niedostępny").classes('text-sm text-red-400')
+                        ui.label("NiedostÄ™pny").classes('text-sm text-red-400')
 
         return card
 
@@ -1188,7 +1188,7 @@ class WywiadApp:
         self.refresh_model_cards()
 
     def activate_model(self, model_name: str):
-        """Aktywuje model i przeładowuje."""
+        """Aktywuje model i przeĹ‚adowuje."""
         if not self.transcriber_manager:
             return
 
@@ -1204,7 +1204,7 @@ class WywiadApp:
                 self.loaded_model = None
                 self._update_status_ui()
 
-                # Przeładuj model na aktualnym urządzeniu
+                # PrzeĹ‚aduj model na aktualnym urzÄ…dzeniu
                 self.refresh_model_cards()
                 asyncio.create_task(self._load_model_async())
             else:
@@ -1222,20 +1222,20 @@ class WywiadApp:
         try:
             backend = self.transcriber_manager.get_current_backend()
 
-            # Sprawdź czy to nie jest aktywny model
+            # SprawdĹş czy to nie jest aktywny model
             if backend.get_current_model() == model_name:
-                ui.notify(f"Nie można usunąć aktywnego modelu!", type='negative')
+                ui.notify(f"Nie moĹĽna usunÄ…Ä‡ aktywnego modelu!", type='negative')
                 return
 
             success = backend.delete_model(model_name)
             if success:
-                ui.notify(f"Model {model_name} usunięty", type='positive')
+                ui.notify(f"Model {model_name} usuniÄ™ty", type='positive')
             else:
-                ui.notify(f"Nie udało się usunąć modelu {model_name}", type='negative')
+                ui.notify(f"Nie udaĹ‚o siÄ™ usunÄ…Ä‡ modelu {model_name}", type='negative')
 
             self.refresh_model_cards()
         except Exception as e:
-            ui.notify(f"Błąd: {e}", type='negative')
+            ui.notify(f"BĹ‚Ä…d: {e}", type='negative')
 
     def select_backend(self, backend_value: str):
         """Wybiera backend transkrypcji."""
@@ -1268,7 +1268,7 @@ class WywiadApp:
                         self.selected_device = "CPU"
                         self.config["selected_device"] = "CPU"
                         self.config.save()
-                        ui.notify("Przełączono na CPU (backend nie wspiera NPU/GPU)", type='warning')
+                        ui.notify("PrzeĹ‚Ä…czono na CPU (backend nie wspiera NPU/GPU)", type='warning')
 
                 # Reset state immediately
                 self.model_state = ModelState.LOADING
@@ -1279,7 +1279,7 @@ class WywiadApp:
                 self.refresh_model_cards()
                 self.refresh_backend_buttons()
 
-                # Załaduj model dla nowego backendu
+                # ZaĹ‚aduj model dla nowego backendu
                 asyncio.create_task(self._load_model_async())
             else:
                 ui.notify("Nie udalo sie zmienic backendu", type='negative')
@@ -1410,7 +1410,7 @@ class WywiadApp:
                     cancel_btn.text = "Zamknij"
                     cancel_btn.props('color=green')
                     self._notify_client(client, f"Zainstalowano {info.name}!", type='positive', timeout=5000)
-                    # Odśwież stan backendów i modeli po instalacji
+                    # OdĹ›wieĹĽ stan backendĂłw i modeli po instalacji
                     self.refresh_backend_buttons()
                     self.refresh_model_cards()
                     self.refresh_device_cards()
@@ -1479,12 +1479,12 @@ class WywiadApp:
 
     def start_recording(self):
         """Rozpoczyna nagrywanie."""
-        # Sprawdź czy model jest gotowy
+        # SprawdĹş czy model jest gotowy
         if not self._is_model_ready():
             if self.model_state == ModelState.LOADING:
-                ui.notify("Model się ładuje... Poczekaj.", type='warning')
+                ui.notify("Model siÄ™ Ĺ‚aduje... Poczekaj.", type='warning')
             else:
-                ui.notify("Model nie jest gotowy. Sprawdź status w headerze.", type='warning')
+                ui.notify("Model nie jest gotowy. SprawdĹş status w headerze.", type='warning')
             return
 
         self.is_recording = True
@@ -1511,7 +1511,7 @@ class WywiadApp:
         self.stream.start()
 
     def stop_recording(self):
-        """Zatrzymuje nagrywanie i rozpoczyna transkrypcję."""
+        """Zatrzymuje nagrywanie i rozpoczyna transkrypcjÄ™."""
         self.is_recording = False
         if self.stream:
             self.stream.stop()
@@ -1527,7 +1527,7 @@ class WywiadApp:
             self.transcription_state = TranscriptionState.PROCESSING
             self._update_status_ui()
 
-            # Pokaż status z info o załadowanym modelu
+            # PokaĹĽ status z info o zaĹ‚adowanym modelu
             if self.record_status:
                 if self.loaded_model:
                     self.record_status.text = f"Transkrypcja ({self.loaded_model})..."
@@ -1581,7 +1581,7 @@ class WywiadApp:
                 response = client.models.generate_content(
                     model="gemini-2.0-flash",
                     contents=[
-                        "Przetranscybuj poniższe nagranie audio na tekst. Zwróć tylko transkrypcję.",
+                        "Przetranscybuj poniĹĽsze nagranie audio na tekst. ZwrĂłÄ‡ tylko transkrypcjÄ™.",
                         types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
                     ]
                 )
@@ -1621,9 +1621,9 @@ class WywiadApp:
 
         if result['error']:
             if self.record_status:
-                self.record_status.text = f"Błąd: {result['error'][:50]}"
+                self.record_status.text = f"BĹ‚Ä…d: {result['error'][:50]}"
                 self.record_status.classes(replace='text-red-600')
-            ui.notify(f"Błąd transkrypcji: {result['error']}", type='negative')
+            ui.notify(f"BĹ‚Ä…d transkrypcji: {result['error']}", type='negative')
         elif result['transcript']:
             if self.transcript_area:
                 current = self.transcript_area.value or ""
@@ -1636,15 +1636,15 @@ class WywiadApp:
                 self.record_status.text = "Gotowy"
                 self.record_status.classes(replace='text-green-600')
 
-            ui.notify("Transkrypcja zakończona!", type='positive')
+            ui.notify("Transkrypcja zakoĹ„czona!", type='positive')
 
     # === GENERATION ===
 
     async def generate_suggestions(self):
-        """Generuje sugestie pytań."""
+        """Generuje sugestie pytaĹ„."""
         transcript = self.transcript_area.value if self.transcript_area else ""
         # if not transcript.strip():
-        #     ui.notify("Brak treści wywiadu", type='warning')
+        #     ui.notify("Brak treĹ›ci wywiadu", type='warning')
         #     return
 
         if not self.llm_service:
@@ -1669,7 +1669,7 @@ class WywiadApp:
                 self.suggestion_btn.props(remove='loading')
 
     async def generate_description(self):
-        """Generuje opis stomatologiczny używając LLMService (Struktura JSON)."""
+        """Generuje opis stomatologiczny uĹĽywajÄ…c LLMService (Struktura JSON)."""
         transcript = self.transcript_area.value if self.transcript_area else ""
         if not transcript.strip():
             if self.record_status:
@@ -1678,7 +1678,7 @@ class WywiadApp:
             return
 
         if not self.llm_service:
-            ui.notify("Serwis AI nie jest dostępny", type='negative')
+            ui.notify("Serwis AI nie jest dostÄ™pny", type='negative')
             return
 
         # UI loading state
@@ -1686,21 +1686,21 @@ class WywiadApp:
             self.generate_button.props('loading')
 
         try:
-            # Pobierz aktywną specjalizację
+            # Pobierz aktywnÄ… specjalizacjÄ™
             spec_id = 1
             if get_specialization_manager:
                 spec_manager = get_specialization_manager()
                 spec_id = spec_manager.get_active().id
 
-            # Wywołanie serwisu (z nowym formatem JSON)
+            # WywoĹ‚anie serwisu (z nowym formatem JSON)
             result_json, used_model = await self.llm_service.generate_description(
                 transcript,
-                self.icd10_codes, # Deprecated, ale musi być przekazane
+                self.icd10_codes, # Deprecated, ale musi byÄ‡ przekazane
                 self.config,
                 spec_id=spec_id
             )
 
-            # Pobierz aktywną specjalizację
+            # Pobierz aktywnÄ… specjalizacjÄ™
             spec_manager = None
             spec_name = "Stomatologia"
             if get_specialization_manager:
@@ -1708,11 +1708,11 @@ class WywiadApp:
                 spec = spec_manager.get_active()
                 spec_name = spec.name
                 
-            # Dostosuj nagłówek i pole kolumny lokalizacji
-            loc_header = "Ząb" if spec_name == "Stomatologia" else "Lokalizacja"
-            loc_field = "zab"  # Używamy jednego pola w gridzie dla uproszczenia, mapujemy dane
+            # Dostosuj nagĹ‚Ăłwek i pole kolumny lokalizacji
+            loc_header = "ZÄ…b" if spec_name == "Stomatologia" else "Lokalizacja"
+            loc_field = "zab"  # UĹĽywamy jednego pola w gridzie dla uproszczenia, mapujemy dane
             
-            # Aktualizacja definicji kolumn gridu (Dynamiczne nagłówki)
+            # Aktualizacja definicji kolumn gridu (Dynamiczne nagĹ‚Ăłwki)
             new_column_defs = [
                 {
                     'headerName': '',
@@ -1742,16 +1742,16 @@ class WywiadApp:
                     new_row['nazwa'] = row.get('nazwa') or row.get('name') or row.get('desc') or ""
                     
                     # 3. Lokalizacja (mapowanie na 'zab')
-                    # Szukamy różnych wariantów jakie AI może zwrócić
+                    # Szukamy rĂłĹĽnych wariantĂłw jakie AI moĹĽe zwrĂłciÄ‡
                     loc_val = (
                         row.get('zab') or 
-                        row.get('numer zęba') or 
+                        row.get('numer zÄ™ba') or 
                         row.get('lokalizacja') or 
                         row.get('location') or 
                         row.get('lokalizacja anatomiczna') or 
                         ""
                     )
-                    # Jeśli to lista (AI czasem zwraca listę), zamień na string
+                    # JeĹ›li to lista (AI czasem zwraca listÄ™), zamieĹ„ na string
                     if isinstance(loc_val, list):
                         loc_val = ", ".join(map(str, loc_val))
                     new_row[loc_field] = str(loc_val)
@@ -1765,14 +1765,14 @@ class WywiadApp:
                         ""
                     )
                     
-                    # Zachowaj ID jeśli jest (dla checkboxów)
+                    # Zachowaj ID jeĹ›li jest (dla checkboxĂłw)
                     if 'id' in row:
                         new_row['id'] = row['id']
                         
                     cleaned.append(new_row)
                 return cleaned
 
-            # Wypełnij gridy
+            # WypeĹ‚nij gridy
             diagnozy = clean_data(result_json.get('diagnozy', []))
             procedury = clean_data(result_json.get('procedury', []))
             
@@ -1788,7 +1788,7 @@ class WywiadApp:
                 self.diagnosis_grid.options['rowData'] = diagnozy
                 self.diagnosis_grid.update()
                 self.diagnosis_grid.run_grid_method('setColumnDefs', new_column_defs)
-                # Wymus załadowanie danych przez API (fix dla "No Rows To Show")
+                # Wymus zaĹ‚adowanie danych przez API (fix dla "No Rows To Show")
                 self.diagnosis_grid.run_grid_method('setRowData', diagnozy)
                 self.diagnosis_grid.run_grid_method('refreshHeader')
                 _schedule_size_to_fit(self.diagnosis_grid)
@@ -1828,23 +1828,23 @@ class WywiadApp:
 
             # Info o fallbacku
             if "Fallback" in used_model:
-                ui.notify(f"Użyto modelu zapasowego: {used_model}", type='warning', timeout=5000)
+                ui.notify(f"UĹĽyto modelu zapasowego: {used_model}", type='warning', timeout=5000)
 
             print(f"[UI] Description generated successfully using {used_model}", flush=True)
 
         except ValueError as e:
-            # Błędy logiczne (brak klucza, zły JSON)
+            # BĹ‚Ä™dy logiczne (brak klucza, zĹ‚y JSON)
             ui.notify(str(e), type='warning')
             if self.record_status:
-                self.record_status.text = "Błąd danych"
+                self.record_status.text = "BĹ‚Ä…d danych"
                 self.record_status.classes(replace='text-red-600')
 
         except Exception as e:
-            # Błędy sieciowe / API
+            # BĹ‚Ä™dy sieciowe / API
             error_msg = str(e)
             print(f"[UI] Generation error: {e}", flush=True)
             
-            # Obsługa Rate Limit (429 / RESOURCE_EXHAUSTED)
+            # ObsĹ‚uga Rate Limit (429 / RESOURCE_EXHAUSTED)
             if "429" in error_msg or "rate_limit" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
                 # Sprawdzamy co mamy w configu zeby dac dobra rade
                 gen_model = self.config.get("generation_model", "Auto")
@@ -1858,12 +1858,12 @@ class WywiadApp:
                 ui.notify(msg, type='negative', close_button=True, timeout=0)
                 
                 if self.record_status:
-                    self.record_status.text = "Błąd: Limit (429)"
+                    self.record_status.text = "BĹ‚Ä…d: Limit (429)"
                     self.record_status.classes(replace='text-red-600')
             else:
-                ui.notify(f"Błąd generowania: {error_msg[:100]}", type='negative')
+                ui.notify(f"BĹ‚Ä…d generowania: {error_msg[:100]}", type='negative')
                 if self.record_status:
-                    self.record_status.text = "Błąd generowania"
+                    self.record_status.text = "BĹ‚Ä…d generowania"
                     self.record_status.classes(replace='text-red-600')
 
         finally:
@@ -1899,7 +1899,7 @@ class WywiadApp:
         procedures = await self.procedure_grid.get_selected_rows() if self.procedure_grid else []
 
         if not diagnoses and not procedures:
-            ui.notify("Zaznacz przynajmniej jedną diagnozę lub procedurę", type='warning')
+            ui.notify("Zaznacz przynajmniej jednÄ… diagnozÄ™ lub procedurÄ™", type='warning')
             return
 
         try:
@@ -1911,7 +1911,7 @@ class WywiadApp:
                 model_used=self.last_model_used
             )
         except ImportError as e:
-            ui.notify(f"Moduł zapisywania niedostępny: {e}", type='negative')
+            ui.notify(f"ModuĹ‚ zapisywania niedostÄ™pny: {e}", type='negative')
 
 
     def _update_claude_status(self):
@@ -1926,28 +1926,28 @@ class WywiadApp:
 
         # 1. Wymuszone Gemini
         if gen_model == "Gemini":
-            self.claude_status_label.text = 'Claude: Wyłączony (wybrano Gemini)'
+            self.claude_status_label.text = 'Claude: WyĹ‚Ä…czony (wybrano Gemini)'
             self.claude_status_label.classes('text-gray-400 text-sm', remove='text-green-600 text-orange-600')
             return
 
-        # 2. Session Key (Najwyższy priorytet)
+        # 2. Session Key (NajwyĹĽszy priorytet)
         if session_key:
             self.claude_status_label.text = 'Claude: Session Key aktywny'
             self.claude_status_label.classes('text-green-600 text-sm', remove='text-orange-600 text-gray-400')
         
         # 3. OAuth Token
         elif claude_token:
-            # W Auto: jeśli mamy Gemini Key i brak Session Key -> Ignorujemy OAuth
+            # W Auto: jeĹ›li mamy Gemini Key i brak Session Key -> Ignorujemy OAuth
             if gen_model == "Auto" and gemini_key:
-                self.claude_status_label.text = 'Claude: OAuth (nieużywany - woli Gemini)'
+                self.claude_status_label.text = 'Claude: OAuth (nieuĹĽywany - woli Gemini)'
                 self.claude_status_label.classes('text-gray-500 text-sm', remove='text-green-600 text-orange-600')
             else:
-                self.claude_status_label.text = 'Claude: OAuth token dostępny'
+                self.claude_status_label.text = 'Claude: OAuth token dostÄ™pny'
                 self.claude_status_label.classes('text-orange-600 text-sm', remove='text-green-600 text-gray-400')
         
-        # 4. Brak dostępu
+        # 4. Brak dostÄ™pu
         else:
-            self.claude_status_label.text = 'Claude: Niedostępny'
+            self.claude_status_label.text = 'Claude: NiedostÄ™pny'
             self.claude_status_label.classes('text-gray-400 text-sm', remove='text-green-600 text-orange-600')
 
     def _save_session_from_dialog(self, session_key: str, dialog):
@@ -1964,11 +1964,11 @@ class WywiadApp:
             ui.notify("Wpisz session key", type='warning')
 
     def _auto_get_key(self):
-        """Uruchamia Edge z załadowanym rozszerzeniem (metoda --load-extension)."""
+        """Uruchamia Edge z zaĹ‚adowanym rozszerzeniem (metoda --load-extension)."""
         with ui.dialog() as dialog, ui.card():
-            ui.label('UWAGA: Ta operacja musi zamknąć przeglądarkę Edge!')
-            ui.label('Zapisz swoją pracę w innych oknach Edge przed kontynuowaniem.')
-            ui.label('Po kliknięciu "OK", Edge otworzy się na chwilę, pobierze klucz i prześle go do aplikacji.')
+            ui.label('UWAGA: Ta operacja musi zamknÄ…Ä‡ przeglÄ…darkÄ™ Edge!')
+            ui.label('Zapisz swojÄ… pracÄ™ w innych oknach Edge przed kontynuowaniem.')
+            ui.label('Po klikniÄ™ciu "OK", Edge otworzy siÄ™ na chwilÄ™, pobierze klucz i przeĹ›le go do aplikacji.')
             
             def start_process():
                 dialog.close()
@@ -1981,12 +1981,12 @@ class WywiadApp:
         dialog.open()
 
     def _run_edge_with_extension(self):
-        """Uruchamia Edge z załadowanym rozszerzeniem używając BrowserService."""
+        """Uruchamia Edge z zaĹ‚adowanym rozszerzeniem uĹĽywajÄ…c BrowserService."""
         if not self.browser_service:
-            ui.notify("Browser Service niedostępny", type='negative')
+            ui.notify("Browser Service niedostÄ™pny", type='negative')
             return
 
-        ui.notify("Restartuję Edge...", type='warning')
+        ui.notify("RestartujÄ™ Edge...", type='warning')
         
         extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "extension"))
         
@@ -1996,12 +1996,12 @@ class WywiadApp:
                 target_url="https://claude.ai",
                 app_url="http://localhost:8089"
             )
-            ui.notify("Otwarto Edge. Zaloguj się na Claude.ai.", type='info')
+            ui.notify("Otwarto Edge. Zaloguj siÄ™ na Claude.ai.", type='info')
         except Exception as e:
-            ui.notify(f"Błąd uruchamiania Edge: {e}", type='negative')
+            ui.notify(f"BĹ‚Ä…d uruchamiania Edge: {e}", type='negative')
 
     def _open_gemini_studio(self):
-        """Otwiera Google AI Studio w przeglądarce."""
+        """Otwiera Google AI Studio w przeglÄ…darce."""
         ui.notify("Otwieram Google AI Studio... Skopiuj API key i wklej tutaj.", type='info')
         import webbrowser
         webbrowser.open("https://aistudio.google.com/app/apikey")
@@ -2037,29 +2037,29 @@ class WywiadApp:
             pass
 
     def _check_session_key_update(self):
-        """Sprawdza czy session key zmienił się w pliku config (np. przez rozszerzenie)."""
+        """Sprawdza czy session key zmieniĹ‚ siÄ™ w pliku config (np. przez rozszerzenie)."""
         try:
             # Wczytaj config z dysku bez zapisywania stanu obiektu
             disk_config = ConfigManager()
             disk_key = disk_config.get("session_key", "")
             
-            # Pobierz aktualną wartość z pamięci (config obiektu)
+            # Pobierz aktualnÄ… wartoĹ›Ä‡ z pamiÄ™ci (config obiektu)
             memory_key = self.config.get("session_key", "")
             
-            # Synchronizuj tylko jeśli:
+            # Synchronizuj tylko jeĹ›li:
             # 1. Dysk ma nowy klucz (nie pusty)
-            # 2. Klucz na dysku jest INNY niż w pamięci
-            # To ignoruje przypadek gdy user celowo wyczyścił klucz w UI
+            # 2. Klucz na dysku jest INNY niĹĽ w pamiÄ™ci
+            # To ignoruje przypadek gdy user celowo wyczyĹ›ciĹ‚ klucz w UI
             if disk_key and disk_key != memory_key:
-                print("[UI] Wykryto nowy session key z pliku! Aktualizuję UI.", flush=True)
+                print("[UI] Wykryto nowy session key z pliku! AktualizujÄ™ UI.", flush=True)
                 
-                # Aktualizuj config w pamięci
+                # Aktualizuj config w pamiÄ™ci
                 self.config["session_key"] = disk_key
                 
                 # Aktualizuj UI
                 if hasattr(self, 'session_input'):
                     self.session_input.value = disk_key
-                    self.session_input.update() # Wymuś odświeżenie elementu
+                    self.session_input.update() # WymuĹ› odĹ›wieĹĽenie elementu
                 
                 # Aktualizuj status
                 self._update_claude_status()
@@ -2073,7 +2073,7 @@ class WywiadApp:
     # === MAIN UI ===
 
     def build_ui(self):
-        """Buduje glowny interfejs używając komponentów."""
+        """Buduje glowny interfejs uĹĽywajÄ…c komponentĂłw."""
         print("[UI] build_ui() started", flush=True)
 
         # Dark mode state
@@ -2101,11 +2101,30 @@ class WywiadApp:
             # Recording Section
             create_recording_section(self)
 
-            # Sprawdź czy jest transkrypt z Live Interview (w storage użytkownika)
+            # SprawdĹş czy jest transkrypt z Live Interview (w storage uĹĽytkownika)
             live_transcript = app.storage.user.get('live_transcript', None)
-            if live_transcript and self.transcript_area:
-                self.transcript_area.value = live_transcript
-                del app.storage.user['live_transcript']  # Wyczyść po użyciu
+            live_qa_pairs = app.storage.user.get('live_qa_pairs', None)
+            if (live_transcript or live_qa_pairs) and self.transcript_area:
+                transcript_text = live_transcript or ""
+                if live_qa_pairs and "=== ZEBRANE PYTANIA I ODPOWIEDZI ===" not in transcript_text:
+                    lines = ["", "=== ZEBRANE PYTANIA I ODPOWIEDZI ===", ""]
+                    for i, pair in enumerate(live_qa_pairs, 1):
+                        question = pair.get("question", "") if isinstance(pair, dict) else ""
+                        answer = pair.get("answer", "") if isinstance(pair, dict) else ""
+                        lines.append(f"[{i}] Pytanie: {question}")
+                        lines.append(f"    Odpowiedz: {answer}")
+                        lines.append("")
+                    qa_section = "\n".join(lines)
+                    if transcript_text.strip():
+                        transcript_text = transcript_text + "\n\n" + qa_section
+                    else:
+                        transcript_text = qa_section
+
+                self.transcript_area.value = transcript_text
+                if 'live_transcript' in app.storage.user:
+                    del app.storage.user['live_transcript']
+                if 'live_qa_pairs' in app.storage.user:
+                    del app.storage.user['live_qa_pairs']
                 ui.notify("Załadowano transkrypt z Live Interview!", type='positive')
                 print(f"[UI] Loaded live transcript into main view", flush=True)
 
@@ -2121,7 +2140,7 @@ class WywiadApp:
         self._update_record_button()
         print("[UI] build_ui() DONE", flush=True)
 
-        # Auto-load modelu dla backendów offline
+        # Auto-load modelu dla backendĂłw offline
         backend_type = self.config.get("transcriber_backend", "gemini_cloud")
         if backend_type != "gemini_cloud":
             # Delay auto-load slightly to let UI render
@@ -2133,16 +2152,16 @@ class WywiadApp:
 def main():
     # Setup safe exit
     def handle_sigint(signum, frame):
-        print("\n[APP] Otrzymano sygnał przerwania. Zamykanie...", flush=True)
+        print("\n[APP] Otrzymano sygnaĹ‚ przerwania. Zamykanie...", flush=True)
         import os
         import sys
 
-        # Na Windows - natychmiastowe zamknięcie (Ctrl+C często nie działa z asyncio)
+        # Na Windows - natychmiastowe zamkniÄ™cie (Ctrl+C czÄ™sto nie dziaĹ‚a z asyncio)
         if sys.platform == 'win32':
             print("[APP] Windows force exit.", flush=True)
             os._exit(0)
 
-        # Próbujemy zamknąć ładnie
+        # PrĂłbujemy zamknÄ…Ä‡ Ĺ‚adnie
         try:
             if GLOBAL_TRANSCRIBER_MANAGER:
                 pass
@@ -2370,7 +2389,7 @@ def main():
 
     @ui.page('/')
     def index():
-        """Strona główna."""
+        """Strona gĹ‚Ăłwna."""
         app_instance = WywiadApp()
         app_instance.build_ui()
 
@@ -2378,7 +2397,7 @@ def main():
     def live_page():
         """Strona trybu Live Interview."""
         app_instance = WywiadApp()
-        # W przyszłości można tu przekazać istniejący stan, jeśli chcemy
+        # W przyszĹ‚oĹ›ci moĹĽna tu przekazaÄ‡ istniejÄ…cy stan, jeĹ›li chcemy
         view = LiveInterviewView(app_instance)
         view.create_ui()
 
@@ -2423,7 +2442,7 @@ def main():
 
             view = create_history_view(on_edit_visit=_edit_visit)
 
-    # API endpoint dla rozszerzenia przeglądarki
+    # API endpoint dla rozszerzenia przeglÄ…darki
     from fastapi import Request
     from fastapi.responses import JSONResponse
     from fastapi.middleware.cors import CORSMiddleware
@@ -2438,7 +2457,7 @@ def main():
 
     @app.post('/api/session-key')
     async def receive_session_key(request: Request):
-        """Odbiera session key z rozszerzenia przeglądarki."""
+        """Odbiera session key z rozszerzenia przeglÄ…darki."""
         try:
             data = await request.json()
             session_key = data.get('sessionKey')
@@ -2453,15 +2472,15 @@ def main():
 
     @app.get('/api/download-installer')
     async def download_installer(request: Request):
-        """Generuje i zwraca instalator rozszerzenia dla danej przeglądarki."""
+        """Generuje i zwraca instalator rozszerzenia dla danej przeglÄ…darki."""
         from fastapi.responses import Response
 
         browser = request.query_params.get('browser', 'edge')
 
-        # Ścieżka do folderu rozszerzenia
+        # ĹšcieĹĽka do folderu rozszerzenia
         extension_path = os.path.join(os.path.dirname(__file__), "extension")
 
-        # Konfiguracja dla różnych przeglądarek
+        # Konfiguracja dla rĂłĹĽnych przeglÄ…darek
         browser_config = {
             'edge': {
                 'exe': 'msedge',

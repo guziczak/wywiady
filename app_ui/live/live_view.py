@@ -860,6 +860,13 @@ class LiveInterviewView:
 
         # Zbierz pełny transkrypt
         final_transcript = self.state.full_transcript
+        qa_pairs = self._collect_qa_pairs()
+        if qa_pairs:
+            qa_section = self._format_qa_pairs_for_transcript(qa_pairs)
+            if final_transcript.strip():
+                final_transcript = final_transcript + "\n\n" + qa_section
+            else:
+                final_transcript = qa_section
 
         if self._client:
             with self._client:
@@ -918,10 +925,13 @@ class LiveInterviewView:
             transcript = self.state.diarization.get_formatted_transcript()
 
         # Dodaj zebrane pary Q+A do transkryptu
-        qa_pairs = self.state.qa_collector.pairs
+        qa_pairs = self._collect_qa_pairs()
         if qa_pairs:
             qa_section = self._format_qa_pairs_for_transcript(qa_pairs)
-            transcript = transcript + "\n\n" + qa_section
+            if transcript.strip():
+                transcript = transcript + "\n\n" + qa_section
+            else:
+                transcript = qa_section
             print(f"[LIVE] Added {len(qa_pairs)} Q+A pairs to transcript", flush=True)
 
         if self._client:
@@ -930,6 +940,19 @@ class LiveInterviewView:
                 print(f"[LIVE] Navigating next with {len(transcript)} chars", flush=True)
                 ui.navigate.to('/')
 
+    def _collect_qa_pairs(self):
+        """Zbiera pary Q+A z aktualnego stanu lub storage."""
+        pairs = self.state.qa_collector.pairs
+        if pairs:
+            return pairs
+        if not self._client:
+            return []
+        try:
+            with self._client:
+                return app.storage.user.get('live_qa_pairs', []) or []
+        except Exception:
+            return []
+
     def _format_qa_pairs_for_transcript(self, pairs) -> str:
         """Formatuje pary Q+A jako sekcję do transkryptu."""
         if not pairs:
@@ -937,8 +960,14 @@ class LiveInterviewView:
 
         lines = ["", "=== ZEBRANE PYTANIA I ODPOWIEDZI ===", ""]
         for i, pair in enumerate(pairs, 1):
-            lines.append(f"[{i}] Pytanie: {pair.question}")
-            lines.append(f"    Odpowiedź: {pair.answer}")
+            if isinstance(pair, dict):
+                question = pair.get("question", "")
+                answer = pair.get("answer", "")
+            else:
+                question = getattr(pair, "question", "")
+                answer = getattr(pair, "answer", "")
+            lines.append(f"[{i}] Pytanie: {question}")
+            lines.append(f"    Odpowiedź: {answer}")
             lines.append("")
 
         return "\n".join(lines)
@@ -1332,6 +1361,21 @@ class LiveInterviewView:
                 self.ai_controller.on_qa_pair_created(pair.question, pair.answer)
         except Exception as e:
             print(f"[LIVE] QA pair routing error: {e}", flush=True)
+
+        # Zapisz parę do storage (fallback dla przekazania na "/")
+        if self._client:
+            try:
+                with self._client:
+                    stored = app.storage.user.get('live_qa_pairs', []) or []
+                    if not any(p.get('id') == pair.id for p in stored if isinstance(p, dict)):
+                        stored.append({
+                            "id": pair.id,
+                            "question": pair.question,
+                            "answer": pair.answer,
+                        })
+                        app.storage.user['live_qa_pairs'] = stored
+            except Exception:
+                pass
 
     def _on_active_question_closed(self):
         """Callback: zamknięto panel aktywnego pytania."""
