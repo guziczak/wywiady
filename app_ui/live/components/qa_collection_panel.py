@@ -73,6 +73,7 @@ class QACollectionPanel:
         self._added_card_ids = set()
         # Mapa: pair_id -> element (ui.card)
         self._pair_element_map = {}
+        self._pair_label_map = {}
 
     def create(self) -> ui.element:
         """Tworzy panel kolekcji Q+A."""
@@ -276,6 +277,7 @@ class QACollectionPanel:
         # Reset maps so we can repopulate in fallback
         self._added_card_ids.clear()
         self._pair_element_map.clear()
+        self._pair_label_map.clear()
 
         # Repopulate existing cards in fallback mode
         try:
@@ -351,9 +353,11 @@ class QACollectionPanel:
             with ui.column().classes('gap-2 w-full qa-card-body'):
                 with ui.element('div').classes('qa-card-preview'):
                     ui.label('Pytanie').classes('qa-card-preview-title')
-                    ui.label(pair.question).classes('qa-card-preview-text')
+                    q_preview = ui.label(pair.question).classes('qa-card-preview-text').props('data-qa="q-preview"')
                     ui.label('Odpowiedź').classes('qa-card-preview-title qa-card-preview-title--answer')
-                    ui.label(pair.answer if (pair.answer or '').strip() else 'Brak odpowiedzi').classes('qa-card-preview-text')
+                    a_preview = ui.label(
+                        pair.answer if (pair.answer or '').strip() else 'Brak odpowiedzi'
+                    ).classes('qa-card-preview-text').props('data-qa="a-preview"')
                 with ui.row().classes('w-full items-center justify-between qa-card-head'):
                     with ui.row().classes('items-center gap-2'):
                         if order_index:
@@ -365,24 +369,31 @@ class QACollectionPanel:
                     with ui.row().classes('items-center gap-2 mb-1'):
                         ui.icon('help_outline', size='xs').classes('text-blue-500')
                         ui.label('Pytanie').classes('qa-card-label qa-card-label--question')
-                    ui.label(self._truncate(pair.question, 40)).classes(
+                    q_main = ui.label(self._truncate(pair.question, 40)).classes(
                         'qa-card-text text-slate-700'
-                    )
+                    ).props('data-qa="q-main"')
 
                 # Answer section
                 with ui.element('div').classes('w-full qa-card-section qa-card-answer'):
                     with ui.row().classes('items-center gap-2 mb-1'):
                         ui.icon('chat_bubble_outline', size='xs').classes('text-emerald-500')
                         ui.label('Odpowiedź').classes('qa-card-label qa-card-label--answer')
-                    ui.label(self._truncate(pair.answer, 50)).classes(
+                    a_main = ui.label(self._truncate(pair.answer, 50)).classes(
                         'qa-card-text text-slate-600'
-                    )
+                    ).props('data-qa="a-main"')
             
             # Decoration (Corner Fold or ID)
             with ui.element('div').classes(
                 'absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400'
             ):
                 pass
+
+        self._pair_label_map[pair.id] = {
+            'q_preview': q_preview,
+            'a_preview': a_preview,
+            'q_main': q_main,
+            'a_main': a_main,
+        }
 
         return card
 
@@ -534,6 +545,58 @@ class QACollectionPanel:
             return text
         return text[:max_len - 3] + '...'
 
+    def _update_visual_card(self, pair: 'QAPair') -> None:
+        """Aktualizuje treść karty Q+A w UI (fallback + 3D)."""
+        if not pair:
+            return
+
+        question = pair.question or ""
+        answer = pair.answer or ""
+        answer_preview = answer.strip() or "Brak odpowiedzi"
+        question_main = self._truncate(question, 40)
+        answer_main = self._truncate(answer, 50)
+
+        labels = self._pair_label_map.get(pair.id)
+        if labels:
+            try:
+                labels['q_preview'].text = question
+                labels['a_preview'].text = answer_preview
+                labels['q_main'].text = question_main
+                labels['a_main'].text = answer_main
+            except Exception:
+                pass
+
+        card_el = self._pair_element_map.get(pair.id)
+        if not card_el or not self._client:
+            return
+
+        element_id = f"c{card_el.id}"
+        payload = {
+            "q_preview": question,
+            "a_preview": answer_preview,
+            "q_main": question_main,
+            "a_main": answer_main,
+        }
+        try:
+            with self._client:
+                ui.run_javascript(
+                    f"""(() => {{
+                        const card = document.getElementById('{element_id}');
+                        if (!card) return;
+                        const data = {json.dumps(payload)};
+                        const setText = (selector, value) => {{
+                            const el = card.querySelector(selector);
+                            if (el) el.textContent = value;
+                        }};
+                        setText('[data-qa="q-preview"]', data.q_preview);
+                        setText('[data-qa="a-preview"]', data.a_preview);
+                        setText('[data-qa="q-main"]', data.q_main);
+                        setText('[data-qa="a-main"]', data.a_main);
+                    }})()"""
+                )
+        except Exception:
+            pass
+
     # === Modal i Logika Biznesowa (Bez zmian) ===
 
     def _open_edit_modal(self, pair: 'QAPair'):
@@ -567,10 +630,10 @@ class QACollectionPanel:
     def _save_pair_edit(self, pair_id: str, new_answer: str):
         if self.state.qa_collector.update_answer(pair_id, new_answer):
             if self._edit_dialog: self._edit_dialog.close()
-            # Tutaj moglibyśmy zaktualizować tekst na karcie 3D, ale to wymagałoby 
-            # znalezienia elementu w DOM. Na razie prosty notify.
+            pair = self.state.qa_collector.get_by_id(pair_id)
+            if pair:
+                self._update_visual_card(pair)
             ui.notify('Zapisano zmiany', type='positive')
-            # W przyszłości: self.three_stage.update_card_content(...)
 
     def _delete_pair(self, pair_id: str):
         if self.state.qa_collector.remove(pair_id):
@@ -608,6 +671,8 @@ class QACollectionPanel:
             
             # Cleanup maps
             del self._pair_element_map[pair_id]
+            if pair_id in self._pair_label_map:
+                del self._pair_label_map[pair_id]
             if pair_id in self._added_card_ids:
                 self._added_card_ids.remove(pair_id)
 
