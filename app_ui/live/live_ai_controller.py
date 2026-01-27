@@ -430,8 +430,21 @@ class AIController:
                     self.config,
                     spec_ids=self.current_spec_ids
                 )
-                if not cards:
-                    cards = self._fallback_cards_for_mode(mode)
+                has_support = False
+                for item in cards or []:
+                    if isinstance(item, dict):
+                        kind = (item.get("type") or item.get("kind") or "").strip().lower()
+                    elif isinstance(item, Suggestion):
+                        kind = (item.kind or "").strip().lower()
+                    else:
+                        kind = ""
+                    if kind in ("check", "script"):
+                        has_support = True
+                        break
+                if not cards or not has_support:
+                    cards = self._fallback_cards_for_mode(ConversationMode.DECISION)
+                    if cards:
+                        print("[AI] Decision cards fallback used", flush=True)
                 if cards:
                     self.state.set_suggestions(cards)
                     print(f"[AI] Generated {len(cards)} decision cards", flush=True)

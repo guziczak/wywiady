@@ -87,6 +87,12 @@ class IntentRouter:
             except Exception:
                 pass
 
+        if force:
+            self._pending_mode = None
+            self._pending_streak = 0
+            self._last_result = chosen
+            return chosen
+
         return self._stabilize(chosen)
 
     def _stabilize(self, candidate: IntentResult) -> IntentResult:
